@@ -1,0 +1,155 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --surface-0: #0a0a0f;
+  --surface-1: #111118;
+  --surface-2: #1a1a24;
+  --surface-3: #22222f;
+  --surface-4: #2d2d3d;
+  --accent-cyan: #00e5ff;
+  --accent-green: #00ff88;
+  --accent-amber: #ffb300;
+  --accent-red: #ff4444;
+  --text-primary: #f0f0f8;
+  --text-secondary: #8888aa;
+  --border: #2d2d3d;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+/* App page (map + 3D viewer) must be fixed-height, no scroll */
+html.app-page,
+body.app-page {
+  height: 100%;
+  overflow: hidden;
+}
+html.app-page #__next,
+body.app-page #__next {
+  height: 100%;
+}
+
+/* All other pages scroll freely */
+html:not(.app-page), body:not(.app-page) {
+  height: auto;
+  overflow-x: hidden;
+}
+
+/* MapLibre overrides */
+.maplibregl-map { font-family: 'DM Sans', sans-serif; }
+.maplibregl-ctrl-group { background: var(--surface-2) !important; border: 1px solid var(--border) !important; }
+.maplibregl-ctrl-group button { color: var(--text-primary) !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--surface-1); }
+::-webkit-scrollbar-thumb { background: var(--surface-4); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-cyan); }
+
+/* Glow utilities */
+.glow-cyan { box-shadow: 0 0 20px rgba(0,229,255,0.15); }
+.glow-green { box-shadow: 0 0 20px rgba(0,255,136,0.15); }
+.text-glow-cyan { text-shadow: 0 0 20px rgba(0,229,255,0.5); }
+
+/* Panel */
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.panel-section {
+  border-bottom: 1px solid var(--border);
+  padding: 16px;
+}
+
+.panel-section:last-child { border-bottom: none; }
+
+/* ── Splash page animations ── */
+@keyframes logoReveal {
+  0%   { opacity: 0; transform: scale(0.5) translateY(30px); filter: brightness(4) blur(12px); }
+  35%  { opacity: 1; transform: scale(1.1) translateY(0);    filter: brightness(2) blur(0px); }
+  55%  { transform: scale(0.95); filter: brightness(1); }
+  75%  { transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1) translateY(0); filter: brightness(1); }
+}
+
+@keyframes logoGlow {
+  0%   { box-shadow: 0 0 100px rgba(0,229,255,0.9), 0 0 40px rgba(0,255,136,0.6); }
+  50%  { box-shadow: 0 0 60px rgba(0,229,255,0.5), 0 0 20px rgba(0,229,255,0.3); }
+  100% { box-shadow: 0 0 48px rgba(0,229,255,0.35), 0 0 12px rgba(0,229,255,0.2); }
+}
+
+@keyframes ringExpand {
+  0%   { opacity: 0.8; transform: scale(0.4); }
+  100% { opacity: 0;   transform: scale(2.2); }
+}
+
+@keyframes splashFadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.splash-logo-wrap {
+  animation: logoReveal 2s cubic-bezier(0.22,1,0.36,1) both;
+}
+.splash-logo-img {
+  animation: logoGlow 2s ease-out both;
+}
+.splash-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(0,229,255,0.5);
+  animation: ringExpand 1.4s ease-out both;
+  pointer-events: none;
+}
+.splash-content {
+  animation: splashFadeIn 0.7s ease both;
+}
+
+/* Logo animations in splash */
+@keyframes logoBreath {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 1px rgba(0,229,255,0.3), 0 0 60px rgba(0,229,255,0.4), 0 0 120px rgba(0,229,255,0.15); }
+  50%       { transform: scale(1.04); box-shadow: 0 0 0 1px rgba(0,229,255,0.5), 0 0 80px rgba(0,229,255,0.55), 0 0 160px rgba(0,229,255,0.22); }
+}
+@keyframes logoFloat {
+  0%, 100% { transform: scale(1) rotate(0deg);     filter: brightness(1) saturate(1.15); }
+  25%       { transform: scale(1.02) rotate(0.8deg); filter: brightness(1.06) saturate(1.2); }
+  75%       { transform: scale(0.99) rotate(-0.6deg); filter: brightness(0.97) saturate(1.1); }
+}
+@keyframes logoShimmer {
+  0%   { transform: translateX(-160%) skewX(-15deg); opacity: 0; }
+  15%  { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { transform: translateX(260%) skewX(-15deg); opacity: 0; }
+}
+@keyframes logoCyanPulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.9; }
+}
+
+@keyframes splashOrbit {
+  0%   { opacity: 0.9; transform: translate(-50%,-50%) scale(0.3); }
+  60%  { opacity: 0.5; }
+  100% { opacity: 0;   transform: translate(-50%,-50%) scale(2.8); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@keyframes animate-pulse-slow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+.animate-pulse-slow { animation: animate-pulse-slow 3s ease-in-out infinite; }
