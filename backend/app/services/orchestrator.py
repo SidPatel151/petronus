@@ -111,7 +111,26 @@ class GenerationOrchestrator:
             }
 
             design_brief = await get_design_brief(spec_dict, site_ctx_dict, neighbor_analysis)
-            log.append(f"Design brief: shape={design_brief.get('shape')} w={design_brief.get('width_m')}m d={design_brief.get('depth_m')}m | source={design_brief.get('source')}")
+            log.append(f"Design brief: shape={design_brief.get('shape')} mat={design_brief.get('facade_material')} w={design_brief.get('width_m')}m d={design_brief.get('depth_m')}m | source={design_brief.get('source')}")
+
+            # Merge brief's facade_material back into neighbor_style so the
+            # facade generator and frontend both use the Claude-recommended material
+            FACADE_COLORS = {
+                "brick": "#b5651d", "concrete": "#9ca3af", "glass": "#bfdbfe",
+                "wood": "#a67c52", "stone": "#b8a99a", "metal": "#94a3b8",
+                "stucco": "#d6cbb8", "plaster": "#e8dcc8",
+            }
+            brief_mat = design_brief.get("facade_material")
+            if brief_mat and brief_mat in FACADE_COLORS:
+                neighbor_style["dominant_material"] = brief_mat
+                neighbor_style["facade_color"] = FACADE_COLORS[brief_mat]
+            if design_brief.get("balcony_depth_m", 0) > 0:
+                neighbor_style["has_balconies"] = True
+                neighbor_style["balcony_depth_m"] = design_brief["balcony_depth_m"]
+            neighbor_style["window_ratio"] = design_brief.get("window_ratio", 0.35)
+            neighbor_style["horizontal_bands"] = design_brief.get("horizontal_bands", True)
+            neighbor_style["balcony_every_n_floors"] = design_brief.get("balcony_every_n_floors", 1)
+
         except Exception as e:
             design_brief = None
             log.append(f"Design brief failed ({str(e)[:60]}) — using neighbor dims directly")
@@ -141,8 +160,9 @@ class GenerationOrchestrator:
 
         # Step 5: Facade details
         self.progress_cb(60, "Generating facade details…")
-        facade_meshes = self.facade_gen.generate(chosen, walls, levels, neighbor_style)
+        facade_meshes = self.facade_gen.generate(chosen, walls, levels, neighbor_style, design_brief)
         model.neighbor_style = neighbor_style
+        model.design_brief = design_brief
         model.meshes = facade_meshes  # type: ignore
         log.append(f"Facade: {len(facade_meshes)} detail meshes (windows, balconies, parapet)")
 

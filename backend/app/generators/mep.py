@@ -11,10 +11,12 @@ from app.models.schemas import MEPElement, Room, Wall, ProjectSpec, Level
 class MEPRouter:
 
     def route(self, rooms: List[Room], walls: List[Wall], levels: List[Level], spec: ProjectSpec) -> List[MEPElement]:
+        fine = (spec.fine_details or {}) if hasattr(spec, 'fine_details') else {}
         elements = []
         elements.extend(self._route_plumbing(rooms, levels))
         elements.extend(self._route_electrical(rooms, levels))
         elements.extend(self._route_hvac(rooms, levels, spec.hvac_preference))
+        elements.extend(self._route_fixtures(rooms, levels, fine))
         return elements
 
     # ── Plumbing ──────────────────────────────────────────────────────────────
@@ -169,6 +171,81 @@ class MEPRouter:
                         elements.append(MEPElement(
                             id=f"drop_{uuid.uuid4().hex[:6]}", system="hvac", type="supply_duct",
                             start=[cx, ceil_y, trunk_z], end=[cx, ceil_y, cz], level=lvl))
+
+        return elements
+
+    def _route_fixtures(self, rooms: List[Room], levels: List[Level], fine: dict) -> List[MEPElement]:
+        """Place detailed fixtures: outlets, fire alarms, exhaust fans, plumbing fixtures."""
+        elements = []
+        floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
+        outlets_per_room = int(fine.get("outlets_per_room", 3))
+        do_alarms = fine.get("fire_alarms", True)
+        do_exhaust = fine.get("exhaust_fans", True)
+        do_sprinklers = fine.get("fire_sprinklers", False)
+
+        for room in rooms:
+            lvl = room.level
+            if lvl >= len(levels):
+                continue
+            floor_y = lvl * floor_h
+            cx, cz = self._centroid(room)
+            bds = self._bounds(room)
+
+            # ── Electrical outlets along walls (evenly spaced around perimeter) ──
+            pts = room.polygon
+            if outlets_per_room > 0 and len(pts) >= 2:
+                step = max(1, len(pts) // outlets_per_room)
+                for i in range(0, len(pts), step):
+                    ox = (pts[i][0] + pts[(i+1) % len(pts)][0]) / 2
+                    oz = (pts[i][1] + pts[(i+1) % len(pts)][1]) / 2
+                    elements.append(MEPElement(
+                        id=f"outlet_{uuid.uuid4().hex[:6]}", system="electrical", type="outlet",
+                        start=[ox, floor_y + 0.4, oz], level=lvl))
+
+            # ── Fire alarm in each corridor + unit ──
+            if do_alarms and room.type in ("corridor", "unit", "bedroom", "living"):
+                elements.append(MEPElement(
+                    id=f"alarm_{uuid.uuid4().hex[:6]}", system="electrical", type="fire_alarm",
+                    start=[cx, floor_y + floor_h - 0.15, cz], level=lvl))
+
+            # ── Sprinkler heads in all rooms ──
+            if do_sprinklers:
+                elements.append(MEPElement(
+                    id=f"sprinkler_{uuid.uuid4().hex[:6]}", system="plumbing", type="sprinkler",
+                    start=[cx, floor_y + floor_h - 0.12, cz], level=lvl))
+
+            # ── Bathroom fixtures: toilet + sink + shower ──
+            if room.type == "bathroom":
+                w = bds[2] - bds[0]
+                d = bds[3] - bds[1]
+                # Toilet near corner
+                elements.append(MEPElement(
+                    id=f"toilet_{uuid.uuid4().hex[:5]}", system="plumbing", type="toilet",
+                    start=[bds[0] + 0.45, floor_y + 0.01, bds[1] + 0.45], level=lvl))
+                # Sink along wall
+                elements.append(MEPElement(
+                    id=f"sink_{uuid.uuid4().hex[:5]}", system="plumbing", type="sink",
+                    start=[bds[0] + w*0.7, floor_y + 0.01, bds[1] + 0.35], level=lvl))
+                # Shower in opposite corner
+                elements.append(MEPElement(
+                    id=f"shower_{uuid.uuid4().hex[:5]}", system="plumbing", type="shower",
+                    start=[bds[2] - 0.6, floor_y + 0.01, bds[3] - 0.6], level=lvl))
+                # Exhaust fan
+                if do_exhaust:
+                    elements.append(MEPElement(
+                        id=f"exhaust_{uuid.uuid4().hex[:5]}", system="hvac", type="exhaust_fan",
+                        start=[cx, floor_y + floor_h - 0.2, cz], level=lvl))
+
+            # ── Kitchen fixture: sink ──
+            if room.type == "kitchen":
+                bds = self._bounds(room)
+                elements.append(MEPElement(
+                    id=f"kitchen_sink_{uuid.uuid4().hex[:5]}", system="plumbing", type="sink",
+                    start=[bds[0] + 0.5, floor_y + 0.01, bds[3] - 0.45], level=lvl))
+                if do_exhaust:
+                    elements.append(MEPElement(
+                        id=f"range_hood_{uuid.uuid4().hex[:5]}", system="hvac", type="exhaust_fan",
+                        start=[cx, floor_y + floor_h - 0.3, cz], level=lvl))
 
         return elements
 

@@ -18,7 +18,7 @@ VALID SPEC FIELDS you can change:
 - stories: int (1-10)
 - floor_to_floor_height_ft: float (8-14)
 - structural_system: "wood" | "steel" | "concrete"
-- priority: "cost" | "speed" | "daylight"
+- priority: "cost" | "time" | "space" | "light"
 - target_gross_area_sqft: float
 - unit_count: int
 - hvac_preference: "mini_split" | "rooftop"

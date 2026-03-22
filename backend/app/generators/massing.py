@@ -290,6 +290,30 @@ class MassingGenerator:
                 "level": floor_i, "color": "#c0c8d8",
             })
 
+        # ── Flat roof slab ──
+        roof_y = stories * floor_height_m
+        roof_verts = []
+        roof_faces = []
+        for x, z in coords:
+            gy = self._ground_y(x, z, grad_x, grad_z)
+            roof_verts.append([x, roof_y, z])
+        # Fan triangulation from centroid
+        rcx = sum(v[0] for v in roof_verts) / len(roof_verts)
+        rcy = roof_y
+        rcz = sum(v[2] for v in roof_verts) / len(roof_verts)
+        center_r = len(roof_verts)
+        roof_verts.append([rcx, rcy, rcz])
+        for i in range(n):
+            j = (i + 1) % n
+            roof_faces.append([i, j, center_r])
+            roof_faces.append([center_r, j, i])  # double-sided
+        meshes.append({
+            "element_id": f"{prefix}_roof",
+            "element_type": "roof",
+            "vertices": roof_verts, "faces": roof_faces,
+            "level": stories - 1, "color": "#475569",
+        })
+
         return meshes
 
     def _terrain_and_overlap(self, footprint: Polygon, neighbors: List[Polygon],

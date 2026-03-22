@@ -14,8 +14,12 @@ class HVACPreference(str, Enum):
     rooftop = "rooftop"
 
 class PriorityType(str, Enum):
-    speed = "speed"
     cost = "cost"
+    time = "time"       # fast construction
+    space = "space"     # maximize living area
+    light = "light"     # natural daylight
+    # legacy aliases kept for backward compat
+    speed = "speed"
     daylight = "daylight"
 
 class ParkingStrategy(str, Enum):
@@ -72,6 +76,12 @@ class ProjectSpec(BaseModel):
     hvac_preference: HVACPreference = HVACPreference.mini_split
     parking_strategy: ParkingStrategy = ParkingStrategy.ignore
     priority: PriorityType = PriorityType.cost
+    material_overrides: Optional[Dict[str, str]] = None
+    # keys: walls, roof, floors, windows, foundation, interior_walls
+    # values: "wood"|"concrete"|"brick"|"metal"|"glass"|"stone"|"stucco"|"ai"
+    fine_details: Optional[Dict[str, Any]] = None
+    # keys: outlets_per_room (int), fire_sprinklers (bool), ev_charging (bool),
+    #       exhaust_fans (bool), fire_alarms (bool)
 
 # ── Geometry primitives ────────────────────────────────────────────────────
 
@@ -161,6 +171,7 @@ class BuildingModel(BaseModel):
     mep_elements: List[MEPElement] = []
     meshes: List[Dict[str, Any]] = []
     neighbor_style: Optional[Dict[str, Any]] = None
+    design_brief: Optional[Dict[str, Any]] = None
     issues: List[ComplianceIssue] = []
     generation_log: List[str] = []
 

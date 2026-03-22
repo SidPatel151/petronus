@@ -106,15 +106,22 @@ class FacadeGenerator:
         walls: List[Wall],
         levels: List[Level],
         neighbor_style: Optional[Dict] = None,
+        design_brief: Optional[Dict] = None,
     ) -> List[Dict]:
         style = neighbor_style or {}
+        brief = design_brief or {}
         floor_h = 3.0
         stories = len(levels)
         facade_color = style.get("facade_color", "#d6cbb8")
         win_color = style.get("window_color", WINDOW_COLOR)
-        # Slightly darker spandrel/band color
         band_color = self._darken(facade_color, 0.75)
         balcony_color = self._darken(facade_color, 0.65)
+
+        # Brief overrides drive visual character to match neighbors
+        window_ratio   = float(brief.get("window_ratio")   or style.get("window_ratio",   0.35))
+        balcony_depth  = float(brief.get("balcony_depth_m") or style.get("balcony_depth_m", 1.0))
+        bal_every_n    = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
+        add_bands      = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
 
         meshes: List[Dict] = []
         ext_walls = [w for w in walls if w.is_exterior and w.level == 0]
@@ -134,28 +141,32 @@ class FacadeGenerator:
             for lvl in range(stories):
                 base_y = lvl * floor_h
 
-                # ── Horizontal floor band (spandrel panel below each window) ──
-                band_h = floor_h * 0.20
-                band_verts = [
-                    [s[0] + nx * face_offset,          base_y,          s[1] + nz * face_offset],
-                    [e[0] + nx * face_offset,          base_y,          e[1] + nz * face_offset],
-                    [e[0] + nx * face_offset,          base_y + band_h, e[1] + nz * face_offset],
-                    [s[0] + nx * face_offset,          base_y + band_h, s[1] + nz * face_offset],
-                ]
-                meshes.append({
-                    "element_id": f"band_{lvl}_{uuid.uuid4().hex[:4]}",
-                    "element_type": "floor_band",
-                    "vertices": band_verts,
-                    "faces": [[0, 1, 2], [0, 2, 3]],
-                    "level": 0,
-                    "color": band_color,
-                })
+                # ── Horizontal floor band (spandrel) — skip if brief says no bands ──
+                if add_bands:
+                    band_h = floor_h * 0.20
+                    band_verts = [
+                        [s[0] + nx * face_offset,          base_y,          s[1] + nz * face_offset],
+                        [e[0] + nx * face_offset,          base_y,          e[1] + nz * face_offset],
+                        [e[0] + nx * face_offset,          base_y + band_h, e[1] + nz * face_offset],
+                        [s[0] + nx * face_offset,          base_y + band_h, s[1] + nz * face_offset],
+                    ]
+                    meshes.append({
+                        "element_id": f"band_{lvl}_{uuid.uuid4().hex[:4]}",
+                        "element_type": "floor_band",
+                        "vertices": band_verts,
+                        "faces": [[0, 1, 2], [0, 2, 3]],
+                        "level": 0,
+                        "color": band_color,
+                    })
 
-                # ── Windows ──
-                num_windows = max(1, int(wall_len / 2.8))
-                win_w = min(1.1, wall_len / num_windows * 0.55)
-                win_h = floor_h * 0.42
-                win_sill = base_y + floor_h * 0.28
+                # ── Windows — density driven by window_ratio from brief ──
+                # window_ratio controls what fraction of wall length is glass
+                win_spacing = max(1.4, 2.8 * (1.0 - window_ratio))
+                num_windows = max(1, int(wall_len / win_spacing))
+                win_w = min(wall_len / num_windows * window_ratio * 2.0, wall_len / num_windows * 0.80)
+                win_w = max(0.6, min(win_w, 2.2))
+                win_h = floor_h * (0.35 + window_ratio * 0.3)   # taller windows = more glass
+                win_sill = base_y + floor_h * (0.28 - window_ratio * 0.05)
 
                 for i in range(num_windows):
                     t = (i + 0.5) / num_windows
@@ -188,9 +199,50 @@ class FacadeGenerator:
                             "level": 0, "color": "#1e293b",
                         })
 
-                # ── Balconies on levels 1+ (not ground floor) ──
-                if lvl > 0:
-                    bal_depth = 1.0
+                # ── Door on ground floor only ──
+                if lvl == 0 and wall_len >= 2.0:
+                    door_w = 1.05
+                    door_h = 2.15
+                    # Place door at 1/4 of wall length (not center, to avoid conflicting with windows)
+                    t_door = 0.25
+                    dcx = s[0] + t_door * dx
+                    dcz = s[1] + t_door * dz
+                    hdw = door_w / 2
+                    door_sill = base_y
+                    door_fo = face_offset + 0.01
+                    # Door panel
+                    meshes.append({
+                        "element_id": f"door_{uuid.uuid4().hex[:6]}",
+                        "element_type": "door",
+                        "vertices": [
+                            [dcx - ux*hdw + nx*door_fo, door_sill,            dcz - uz*hdw + nz*door_fo],
+                            [dcx + ux*hdw + nx*door_fo, door_sill,            dcz + uz*hdw + nz*door_fo],
+                            [dcx + ux*hdw + nx*door_fo, door_sill + door_h,   dcz + uz*hdw + nz*door_fo],
+                            [dcx - ux*hdw + nx*door_fo, door_sill + door_h,   dcz - uz*hdw + nz*door_fo],
+                        ],
+                        "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+                        "level": 0,
+                        "color": "#7c5c3a",
+                    })
+                    # Door frame
+                    ft = 0.06
+                    meshes.append({
+                        "element_id": f"door_frame_{uuid.uuid4().hex[:5]}",
+                        "element_type": "door_frame",
+                        "vertices": [
+                            [dcx - ux*(hdw+ft) + nx*door_fo, door_sill,              dcz - uz*(hdw+ft) + nz*door_fo],
+                            [dcx + ux*(hdw+ft) + nx*door_fo, door_sill,              dcz + uz*(hdw+ft) + nz*door_fo],
+                            [dcx + ux*(hdw+ft) + nx*door_fo, door_sill + door_h+ft,  dcz + uz*(hdw+ft) + nz*door_fo],
+                            [dcx - ux*(hdw+ft) + nx*door_fo, door_sill + door_h+ft,  dcz - uz*(hdw+ft) + nz*door_fo],
+                        ],
+                        "faces": [[0, 1, 2], [0, 2, 3]],
+                        "level": 0,
+                        "color": "#334155",
+                    })
+
+                # ── Balconies — only on floors matching bal_every_n, skip if depth=0 ──
+                if lvl > 0 and balcony_depth > 0 and (lvl % bal_every_n == 0):
+                    bal_depth = balcony_depth
                     bal_h = 0.12       # slab thickness
                     rail_h = 0.9       # railing height
                     rail_t = 0.04

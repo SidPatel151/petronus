@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type LayerKey = 'architecture' | 'structure' | 'plumbing' | 'electrical' | 'hvac' | 'issues' | 'neighbors' | 'power_grid';
+export type LayerKey = 'architecture' | 'structure' | 'roof' | 'plumbing' | 'electrical' | 'hvac' | 'fixtures' | 'issues' | 'neighbors' | 'power_grid';
 
 export interface SiteMarker { lat: number; lon: number; address?: string; }
 export interface BuildingModel {
@@ -49,7 +49,7 @@ export const useAppStore = create<AppState>((set) => ({
   clickedBuilding: null, chatMessages: [],
   spec: { stories: 2, floor_to_floor_height_ft: 10, structural_system: 'wood', hvac_preference: 'mini_split', parking_strategy: 'ignore', priority: 'cost' },
   jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null,
-  activeLayers: { architecture: true, structure: true, plumbing: true, electrical: true, hvac: true, issues: true, neighbors: true, power_grid: true },
+  activeLayers: { architecture: true, structure: true, roof: true, plumbing: true, electrical: true, hvac: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
   selectedMassing: 0, selectedIssueId: null,
   setSelectedSite: (site) => set({ selectedSite: site }),
   setSiteContext: (ctx) => set({ siteContext: ctx }),

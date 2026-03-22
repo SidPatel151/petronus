@@ -102,33 +102,166 @@ function WallMesh({ wall, matColor, texName, roughness, metalness }: {
   );
 }
 
-// ── MEP line ───────────────────────────────────────────────────────────
+// ── MEP line — 3D pipes/ducts/conduit ─────────────────────────────────
 function MEPLine({ el }: { el: any }) {
   if (!el.start || !el.end) return null;
-  const pts = useMemo(() => new Float32Array([
-    el.start[0], el.start[1], el.start[2],
-    el.end[0], el.end[1], el.end[2],
-  ]), [el]);
+
+  const [x0, y0, z0] = el.start;
+  const [x1, y1, z1] = el.end;
+  const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+  const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (length < 0.01) return null;
+
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
+
+  // Pipe/duct radius by system and type
+  const isPlumbing = el.system === 'plumbing';
+  const isHVAC = el.system === 'hvac';
+  const radius = isPlumbing
+    ? (el.type === 'riser' ? 0.07 : el.type === 'waste_branch' ? 0.06 : 0.04)
+    : isHVAC
+    ? (el.type === 'supply_duct' ? 0.18 : 0.06)
+    : 0.03; // electrical conduit
 
   const color = COLORS[el.system] || '#888';
+
+  // Rotation: default CylinderGeometry is along Y — rotate to point from start→end
+  const geometry = useMemo(() => {
+    const geo = new THREE.CylinderGeometry(radius, radius, length, 8, 1);
+    return geo;
+  }, [radius, length]);
+
+  // Compute quaternion to orient cylinder from start to end
+  const quaternion = useMemo(() => {
+    const dir = new THREE.Vector3(dx, dy, dz).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const q = new THREE.Quaternion();
+    if (Math.abs(dir.dot(up)) < 0.999) {
+      q.setFromUnitVectors(up, dir);
+    } else if (dir.y < 0) {
+      q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+    }
+    return q;
+  }, [dx, dy, dz]);
+
   return (
-    <line>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[pts, 3]} />
-      </bufferGeometry>
-      <lineBasicMaterial color={color} />
-    </line>
+    <mesh position={[cx, cy, cz]} quaternion={quaternion} geometry={geometry}>
+      {isHVAC ? (
+        <meshStandardMaterial color={color} roughness={0.5} metalness={0.3} transparent opacity={0.85} />
+      ) : isPlumbing ? (
+        <meshStandardMaterial color={color} roughness={0.4} metalness={0.5} />
+      ) : (
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.25} roughness={0.6} metalness={0.2} />
+      )}
+    </mesh>
   );
 }
 
-// ── MEP point (fixtures, panels, etc) ─────────────────────────────────
+// ── MEP point (fixtures, panels, outlets, alarms, etc) ────────────────
 function MEPPoint({ el }: { el: any }) {
   if (!el.start) return null;
+  const [x, y, z] = el.start;
   const color = COLORS[el.type] || COLORS[el.system] || '#888';
+  const type = el.type;
+
+  if (type === 'toilet') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh position={[0, 0.22, 0]}><boxGeometry args={[0.45, 0.44, 0.65]} /><meshStandardMaterial color="#e8e8e8" roughness={0.3} /></mesh>
+        <mesh position={[0, 0.5, -0.2]}><boxGeometry args={[0.42, 0.15, 0.28]} /><meshStandardMaterial color="#ddd" roughness={0.2} /></mesh>
+      </group>
+    );
+  }
+  if (type === 'sink') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh position={[0, 0.82, 0]}><boxGeometry args={[0.55, 0.07, 0.42]} /><meshStandardMaterial color="#d0d8e0" roughness={0.15} metalness={0.1} /></mesh>
+        <mesh position={[0, 0.42, 0]}><boxGeometry args={[0.06, 0.84, 0.06]} /><meshStandardMaterial color="#aaa" metalness={0.7} roughness={0.2} /></mesh>
+      </group>
+    );
+  }
+  if (type === 'shower') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh position={[0, 0.06, 0]}><boxGeometry args={[0.9, 0.08, 0.9]} /><meshStandardMaterial color="#c8d8e8" roughness={0.1} metalness={0.05} transparent opacity={0.6} /></mesh>
+        <mesh position={[0, 1.0, 0]}><cylinderGeometry args={[0.015, 0.015, 2.0, 6]} /><meshStandardMaterial color="#999" metalness={0.8} roughness={0.2} /></mesh>
+      </group>
+    );
+  }
+  if (type === 'outlet') {
+    return (
+      <mesh position={[x, y, z]}>
+        <boxGeometry args={[0.1, 0.14, 0.03]} />
+        <meshStandardMaterial color="#f5f5f0" roughness={0.8} />
+      </mesh>
+    );
+  }
+  if (type === 'fire_alarm') {
+    return (
+      <mesh position={[x, y, z]}>
+        <cylinderGeometry args={[0.1, 0.1, 0.04, 12]} />
+        <meshStandardMaterial color="#dd2200" emissive="#aa1100" emissiveIntensity={0.4} roughness={0.5} />
+      </mesh>
+    );
+  }
+  if (type === 'sprinkler') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh><cylinderGeometry args={[0.04, 0.04, 0.08, 8]} /><meshStandardMaterial color="#888" metalness={0.7} roughness={0.3} /></mesh>
+        <mesh position={[0, -0.06, 0]}><sphereGeometry args={[0.06, 8, 8]} /><meshStandardMaterial color="#cc3300" /></mesh>
+      </group>
+    );
+  }
+  if (type === 'exhaust_fan') {
+    return (
+      <mesh position={[x, y, z]}>
+        <boxGeometry args={[0.25, 0.06, 0.25]} />
+        <meshStandardMaterial color="#334155" roughness={0.7} />
+      </mesh>
+    );
+  }
+  // Generic: panel, lighting_point, mini_split_head, rooftop_unit
+  const size = type === 'panel' ? 0.3 : type === 'rooftop_unit' ? 1.2 : 0.18;
   return (
-    <mesh position={[el.start[0], el.start[1], el.start[2]]}>
-      <sphereGeometry args={[0.2, 8, 8]} />
-      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} />
+    <mesh position={[x, y, z]}>
+      {type === 'panel' ? <boxGeometry args={[0.1, 0.6, 0.4]} /> : <sphereGeometry args={[size / 2, 8, 8]} />}
+      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
+    </mesh>
+  );
+}
+
+// ── Door mesh ──────────────────────────────────────────────────────────
+function DoorMesh({ mesh }: { mesh: any }) {
+  const geometry = useMemo(() => {
+    try {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mesh.vertices.flat()), 3));
+      geo.setIndex(new THREE.BufferAttribute(new Uint16Array(mesh.faces.flat()), 1));
+      geo.computeVertexNormals();
+      return geo;
+    } catch { return null; }
+  }, [mesh.vertices, mesh.faces]);
+  if (!geometry) return null;
+  const isDoor = mesh.element_type === 'door';
+  return (
+    <mesh geometry={geometry} castShadow>
+      <meshStandardMaterial
+        color={isDoor ? (mesh.color || '#7c5c3a') : '#1e293b'}
+        roughness={isDoor ? 0.7 : 0.4}
+        metalness={isDoor ? 0.05 : 0.1}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
+// ── Roof mesh ──────────────────────────────────────────────────────────
+function RoofMesh({ mesh }: { mesh: any }) {
+  const geometry = useBufferGeo(mesh.vertices, mesh.faces);
+  if (!geometry) return null;
+  return (
+    <mesh geometry={geometry} castShadow receiveShadow>
+      <meshStandardMaterial color={mesh.color || '#374151'} roughness={0.9} metalness={0.05} side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -444,11 +577,14 @@ function Scene() {
   const matColor = MATERIAL_COLORS[(spec as any)?.structural_system] || '#94a3b8';
   const FLOOR_H = 3.0;
 
-  // Resolve texture based on structural system + what neighbors are built from
+  // Resolve texture: prefer design_brief facade_material (Claude's recommendation),
+  // fall back to neighbor_style dominant_material (OSM data)
+  const briefMat = buildingModel?.design_brief?.facade_material ?? '';
   const neighborMat = buildingModel?.neighbor_style?.dominant_material ?? '';
+  const effectiveMat = briefMat || neighborMat;
   const { texName, roughness: texRoughness, metalness: texMetalness } = useMemo(
-    () => resolveTexture((spec as any)?.structural_system ?? 'wood', neighborMat),
-    [(spec as any)?.structural_system, neighborMat]
+    () => resolveTexture((spec as any)?.structural_system ?? 'wood', effectiveMat),
+    [(spec as any)?.structural_system, effectiveMat]
   );
 
   return (
@@ -493,25 +629,36 @@ function Scene() {
             <WallMesh key={w.id} wall={w} matColor={matColor}
               texName={texName} roughness={texRoughness} metalness={texMetalness} />
           ))}
+          {/* MEP: pipes, ducts, conduit, fixtures */}
           {buildingModel.mep_elements.map((el: any) => {
+            const FIXTURE_TYPES = ['toilet','sink','shower','outlet','fire_alarm','sprinkler','exhaust_fan','kitchen_sink','range_hood'];
+            const isFixture = FIXTURE_TYPES.includes(el.type);
+            if (isFixture) {
+              if (!activeLayers['fixtures']) return null;
+              return <MEPPoint key={el.id} el={el} />;
+            }
             if (!activeLayers[el.system as LayerKey]) return null;
             return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
           })}
-          {/* Massing meshes: terrain, floor bands, footprint, overlap */}
+
+          {/* Massing meshes: terrain, floor bands, footprint, overlap, roof */}
           {(buildingModel.massing_options?.[buildingModel.chosen_massing_index]?.meshes || []).map((m: any, i: number) => {
             if (m.element_type === 'terrain') return <TerrainMesh key={`t_${i}`} mesh={m} />;
             if (m.element_type === 'floor_band') return <FloorBandMesh key={`fb_${i}`} mesh={m} />;
             if (m.element_type === 'overlap') return <OverlapMesh key={`ov_${i}`} mesh={m} />;
             if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
+            if (m.element_type === 'roof') return activeLayers['roof'] ? <RoofMesh key={`rf_${i}`} mesh={m} /> : null;
             return null;
           })}
 
-          {/* Facade details: windows, parapet */}
-          {activeLayers['architecture'] && (buildingModel.meshes || [])
-            .filter((m: any) => m.element_type !== 'terrain')
-            .map((mesh: any, i: number) => (
-              <FacadeMesh key={`facade_${i}`} mesh={mesh} floorH={FLOOR_H} />
-            ))}
+          {/* Facade details: windows, doors, parapet */}
+          {(buildingModel.meshes || []).map((mesh: any, i: number) => {
+            if (mesh.element_type === 'door' || mesh.element_type === 'door_frame') {
+              return activeLayers['architecture'] ? <DoorMesh key={`d_${i}`} mesh={mesh} /> : null;
+            }
+            if (!activeLayers['architecture']) return null;
+            return <FacadeMesh key={`facade_${i}`} mesh={mesh} floorH={FLOOR_H} />;
+          })}
 
           {activeLayers['issues'] && buildingModel.issues.map((issue: any) => {
             if (!issue.location) return null;
@@ -541,15 +688,23 @@ function Scene() {
   );
 }
 
-const LAYER_LABELS: { key: LayerKey; label: string; color: string }[] = [
-  { key: 'neighbors', label: 'Neighbors', color: '#64748b' },
-  { key: 'power_grid', label: 'Power Grid', color: '#facc15' },
-  { key: 'architecture', label: 'Architecture', color: '#94a3b8' },
-  { key: 'structure', label: 'Structure', color: '#a855f7' },
-  { key: 'plumbing', label: 'Plumbing', color: '#3b82f6' },
-  { key: 'electrical', label: 'Electrical', color: '#f59e0b' },
-  { key: 'hvac', label: 'HVAC', color: '#10b981' },
-  { key: 'issues', label: 'Issues', color: '#ef4444' },
+const LAYER_GROUPS: { group: string; layers: { key: LayerKey; label: string; color: string }[] }[] = [
+  { group: 'Building', layers: [
+    { key: 'architecture', label: 'Walls & Windows', color: '#94a3b8' },
+    { key: 'roof',         label: 'Roof', color: '#475569' },
+    { key: 'structure',    label: 'Structural', color: '#a855f7' },
+  ]},
+  { group: 'MEP', layers: [
+    { key: 'plumbing',   label: 'Plumbing Pipes', color: '#3b82f6' },
+    { key: 'electrical', label: 'Electrical Conduit', color: '#f59e0b' },
+    { key: 'hvac',       label: 'HVAC Ducts', color: '#10b981' },
+    { key: 'fixtures',   label: 'Fixtures & Outlets', color: '#60a5fa' },
+  ]},
+  { group: 'Site', layers: [
+    { key: 'neighbors',  label: 'Neighbors', color: '#64748b' },
+    { key: 'power_grid', label: 'Power Grid', color: '#facc15' },
+    { key: 'issues',     label: 'Issues', color: '#ef4444' },
+  ]},
 ];
 
 export default function BuildingViewer() {
@@ -581,17 +736,22 @@ export default function BuildingViewer() {
       </Canvas>
 
       {/* Layer toggles */}
-      <div className="absolute top-4 right-4 panel p-3 space-y-1.5 animate-fade-in">
-        <div className="text-[var(--text-secondary)] font-mono text-xs uppercase tracking-wider mb-2">Layers</div>
-        {LAYER_LABELS.map(({ key, label, color }) => (
-          <button key={key} onClick={() => toggleLayer(key)} className="flex items-center gap-2 w-full text-left">
-            <div className="w-3 h-3 rounded-sm flex-shrink-0 transition-opacity"
-              style={{ background: color, opacity: activeLayers[key] ? 1 : 0.2 }} />
-            <span className="text-xs font-mono transition-colors"
-              style={{ color: activeLayers[key] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-              {label}
-            </span>
-          </button>
+      <div className="absolute top-4 right-4 panel p-3 space-y-2 animate-fade-in" style={{ minWidth: '160px' }}>
+        <div className="text-[var(--text-secondary)] font-mono text-xs uppercase tracking-wider mb-1">Layers</div>
+        {LAYER_GROUPS.map(({ group, layers }) => (
+          <div key={group}>
+            <div className="text-[9px] font-mono text-[var(--text-secondary)] uppercase tracking-widest opacity-50 mb-1 mt-1">{group}</div>
+            {layers.map(({ key, label, color }) => (
+              <button key={key} onClick={() => toggleLayer(key)} className="flex items-center gap-2 w-full text-left py-0.5">
+                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-opacity"
+                  style={{ background: color, opacity: activeLayers[key] ? 1 : 0.2 }} />
+                <span className="text-[11px] font-mono transition-colors"
+                  style={{ color: activeLayers[key] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                  {label}
+                </span>
+              </button>
+            ))}
+          </div>
         ))}
       </div>
 

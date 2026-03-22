@@ -135,6 +135,161 @@ function BuildingPopup({ building, onClose }: { building: any; onClose: () => vo
   );
 }
 
+const MAP_LAYERS = [
+  { id: 'buildings',    layers: ['buildings-fill','buildings-outline'], color: '#334155', label: 'Buildings',     fill: true },
+  { id: 'parcel',       layers: ['parcel-fill','parcel-line'],          color: '#00e5ff', label: 'Parcel',        dash: true },
+  { id: 'buildable',    layers: ['buildable-fill','buildable-line'],    color: '#00ff88', label: 'Buildable zone' },
+  { id: 'roads',        layers: ['roads-line'],                         color: '#ffb300', label: 'Roads' },
+  { id: 'pipelines',    layers: ['pipes-line'],                         color: '#60a5fa', label: 'Sewage / Pipes', dash: true },
+  { id: 'power',        layers: ['power-line','power-connection-line'], color: '#f59e0b', label: 'Power Lines' },
+  { id: 'hydrants',     layers: ['hydrants-circle'],                    color: '#ff4444', label: 'Fire Hydrants',  circle: true },
+  { id: 'places',       layers: ['places-circle'],                      color: '#94a3b8', label: 'Amenities',      circle: true },
+];
+
+function MapLayerToggles({ mapRef }: { mapRef: React.MutableRefObject<any> }) {
+  const [visible, setVisible] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(MAP_LAYERS.map(l => [l.id, true]))
+  );
+
+  const toggle = (id: string) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const next = !visible[id];
+    setVisible(v => ({ ...v, [id]: next }));
+    const entry = MAP_LAYERS.find(l => l.id === id);
+    entry?.layers.forEach(layerId => {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', next ? 'visible' : 'none');
+    });
+  };
+
+  return (
+    <div className="absolute bottom-8 right-4 panel p-3 text-xs space-y-1 min-w-[160px]">
+      <div className="text-[var(--text-secondary)] font-mono uppercase tracking-wider text-[10px] mb-2">Map Layers</div>
+      {MAP_LAYERS.map(({ id, color, label, fill, dash, circle }) => (
+        <button key={id} onClick={() => toggle(id)} className="flex items-center gap-2 w-full text-left py-0.5">
+          {circle ? (
+            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 transition-opacity" style={{ background: color, opacity: visible[id] ? 1 : 0.2 }} />
+          ) : fill ? (
+            <div className="w-4 h-2.5 rounded-sm flex-shrink-0 transition-opacity" style={{ background: color, opacity: visible[id] ? 0.7 : 0.15 }} />
+          ) : (
+            <div className="w-4 flex-shrink-0 transition-opacity" style={{ borderTop: `2px ${dash ? 'dashed' : 'solid'} ${color}`, opacity: visible[id] ? 1 : 0.2 }} />
+          )}
+          <span className="text-[11px] font-mono transition-colors"
+            style={{ color: visible[id] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+            {label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LocationSearch({ onGo }: { onGo: (lat: number, lon: number) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Detect "lat, lon" or "lon, lat" coordinate patterns
+  const parseCoords = (q: string): { lat: number; lon: number } | null => {
+    const m = q.trim().match(/^(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)$/);
+    if (!m) return null;
+    const a = parseFloat(m[1]), b = parseFloat(m[2]);
+    // Determine which is lat and which is lon by range
+    if (a >= -90 && a <= 90 && b >= -180 && b <= 180) return { lat: a, lon: b };
+    if (b >= -90 && b <= 90 && a >= -180 && a <= 180) return { lat: b, lon: a };
+    return null;
+  };
+
+  const search = async (q: string) => {
+    if (!q.trim() || q.trim().length < 3) { setResults([]); return; }
+
+    // Direct coordinate input — show as immediate result, no API call
+    const coords = parseCoords(q);
+    if (coords) {
+      setResults([{
+        place_id: 'coords',
+        lat: String(coords.lat), lon: String(coords.lon),
+        display_name: `${coords.lat.toFixed(6)}, ${coords.lon.toFixed(6)}`,
+        _isCoords: true,
+      }]);
+      setOpen(true);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      const data = await res.json();
+      setResults(data);
+      setOpen(true);
+    } catch { setResults([]); }
+    setLoading(false);
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const q = e.target.value;
+    setQuery(q);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => search(q), 400);
+  };
+
+  const pick = (r: any) => {
+    onGo(parseFloat(r.lat), parseFloat(r.lon));
+    setQuery(r._isCoords ? r.display_name : r.display_name.split(',').slice(0, 2).join(','));
+    setOpen(false);
+    setResults([]);
+  };
+
+  return (
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 w-80">
+      <div className="relative flex items-center">
+        <input
+          value={query}
+          onChange={handleChange}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Address, place, or lat, lon…"
+          className="w-full bg-[var(--surface-1)] border border-[var(--border)] rounded-lg px-3 py-2 pl-8 text-xs font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] shadow-lg transition-colors"
+          style={{ backdropFilter: 'blur(8px)' }}
+        />
+        <div className="absolute left-2.5 text-[var(--text-secondary)] pointer-events-none">
+          {loading ? <span className="animate-spin inline-block">◌</span> : '⌕'}
+        </div>
+      </div>
+      {open && results.length > 0 && (
+        <div className="mt-1 bg-[var(--surface-1)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden">
+          {results.map((r: any) => (
+            <button
+              key={r.place_id}
+              onClick={() => pick(r)}
+              className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-[var(--surface-2)] transition-colors border-b border-[var(--border)] last:border-0"
+            >
+              {r._isCoords ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[var(--accent-cyan)] text-[10px]">⊕</span>
+                  <div>
+                    <div className="text-[var(--text-primary)]">Go to coordinates</div>
+                    <div className="text-[10px] text-[var(--accent-cyan)] opacity-80">{r.display_name}</div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[var(--text-primary)] truncate">{r.display_name.split(',').slice(0, 2).join(',')}</div>
+                  <div className="text-[10px] text-[var(--text-secondary)] opacity-60 truncate">{r.display_name}</div>
+                </>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const CA_CENTER: [number, number] = [-119.4179, 36.7783];
 
 const MAP_STYLE: any = {
@@ -148,7 +303,10 @@ export default function SiteMap() {
   const containerRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const [clickedBuilding, setClickedBuildingLocal] = useState<any | null>(null);
+
   const { selectedSite, setSelectedSite, setSiteContext, setInfrastructure, setNeighborConstraints, setFeasibilityData, setClickedBuilding } = useAppStore();
+
+  const selectSiteRef = useRef<(lat: number, lon: number) => void>(() => {});
 
   const setClickedBuilding2 = (b: any) => {
     setClickedBuildingLocal(b);
@@ -237,9 +395,7 @@ export default function SiteMap() {
       if (src) src.setData(data);
     };
 
-    map.on('click', async (e) => {
-      const { lng, lat } = e.lngLat;
-
+    const handleSiteSelect = async (lat: number, lng: number) => {
       if (markerRef.current) markerRef.current.remove();
       const el = document.createElement('div');
       el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#00e5ff;border:3px solid white;box-shadow:0 0 12px rgba(0,229,255,0.6);';
@@ -255,7 +411,6 @@ export default function SiteMap() {
         setSiteContext(ctx);
         setInfrastructure(infra);
 
-        // Always update — clears stale data from previous site clicks
         setGeoJSON('parcel', ctx.parcel_polygon ? { type: 'Feature', geometry: ctx.parcel_polygon, properties: {} } : { type: 'FeatureCollection', features: [] });
         setGeoJSON('buildable', ctx.buildable_envelope_2d ? { type: 'Feature', geometry: ctx.buildable_envelope_2d, properties: {} } : { type: 'FeatureCollection', features: [] });
         setGeoJSON('hydrants',         { type: 'FeatureCollection', features: infra.fire_hydrants   || [] });
@@ -265,14 +420,12 @@ export default function SiteMap() {
         setGeoJSON('buildings',        { type: 'FeatureCollection', features: infra.buildings       || [] });
         setGeoJSON('power_connection', infra.power_connection || { type: 'FeatureCollection', features: [] });
         setGeoJSON('places',           { type: 'FeatureCollection', features: infra.places          || [] });
-        // Power poles as separate circles
         if (!map.getSource('power_poles')) {
           map.addSource('power_poles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
           map.addLayer({ id: 'power-poles-circle', type: 'circle', source: 'power_poles',
             paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-width': 2, 'circle-stroke-color': '#1a1a24' } });
         }
         (map.getSource('power_poles') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: infra.power_poles || [] });
-        // Manholes
         if (!map.getSource('manholes')) {
           map.addSource('manholes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
           map.addLayer({ id: 'manholes-circle', type: 'circle', source: 'manholes',
@@ -280,7 +433,6 @@ export default function SiteMap() {
         }
         (map.getSource('manholes') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: infra.manholes || [] });
 
-        // Fetch neighbors and legal feasibility in parallel
         const [neighbors] = await Promise.all([
           api.getNeighbors(lat, lng, ctx.parcel_polygon),
           api.getFeasibility(lat, lng, ctx.parcel_polygon)
@@ -292,6 +444,13 @@ export default function SiteMap() {
       } catch (err) {
         console.error('Site data error:', err);
       }
+    };
+
+    selectSiteRef.current = handleSiteSelect;
+
+    map.on('click', async (e) => {
+      const { lng, lat } = e.lngLat;
+      await handleSiteSelect(lat, lng);
     });
 
     mapRef.current = map;
@@ -301,34 +460,11 @@ export default function SiteMap() {
   return (
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
+      <LocationSearch onGo={(lat, lon) => selectSiteRef.current(lat, lon)} />
       {clickedBuilding && <BuildingPopup building={clickedBuilding} onClose={() => { setClickedBuildingLocal(null); setClickedBuilding(null); }} />}
 
-      {/* Legend */}
-      <div className="absolute bottom-8 right-4 panel p-3 text-xs space-y-1.5">
-        <div className="text-[var(--text-secondary)] font-mono uppercase tracking-wider mb-2">Legend</div>
-        {[
-          { color: '#334155', label: 'Existing buildings', fill: true },
-          { color: '#00e5ff', label: 'Parcel boundary', dash: true },
-          { color: '#00ff88', label: 'Buildable envelope' },
-          { color: '#ffb300', label: 'Roads' },
-          { color: '#60a5fa', label: 'Pipelines' },
-          { color: '#f59e0b', label: 'Power lines' },
-          { color: '#facc15', label: 'Power grid connection', dash: true },
-          { color: '#ff4444', label: 'Fire hydrants', circle: true },
-          { color: '#94a3b8', label: 'Nearby places', circle: true },
-        ].map((item) => (
-          <div key={item.label} className="flex items-center gap-2">
-            {item.circle ? (
-              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: item.color }} />
-            ) : item.fill ? (
-              <div className="w-5 h-3 rounded-sm flex-shrink-0 opacity-60" style={{ background: item.color }} />
-            ) : (
-              <div className="w-5 flex-shrink-0" style={{ borderTop: `2px ${item.dash ? 'dashed' : 'solid'} ${item.color}` }} />
-            )}
-            <span className="text-[var(--text-secondary)]">{item.label}</span>
-          </div>
-        ))}
-      </div>
+      {/* Utility Layer Toggles */}
+      <MapLayerToggles mapRef={mapRef} />
 
       {!selectedSite && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
