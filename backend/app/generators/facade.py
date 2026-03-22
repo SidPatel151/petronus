@@ -1,7 +1,14 @@
 """
 FacadeGenerator
-Windows, balconies, floor bands, top-floor setback, roof parapet.
+Windows, balconies, floor bands, roof, parapet, arch-style trim.
 All Y coordinates are absolute local meters (lvl * floor_h).
+
+FAKE DATA NOTE:
+  - window_style / dominant_arch_style / dominant_roof_shape come from OSM tags
+    (building:architecture, roof:shape). These tags exist on <5% of OSM buildings in the US.
+    When missing, extract_neighbor_style returns "modern" / "flat" / "standard" defaults.
+  - has_balconies likewise almost never exists in OSM — defaults to False.
+  - All of this is real when present; fabricated when not.
 """
 import math
 import uuid
@@ -35,13 +42,11 @@ def extract_neighbor_style(buildings: List[Dict]) -> Dict[str, Any]:
             try: heights.append(float(h))
             except: pass
 
-        # Estimate width/depth from bounding box of geometry
         try:
             coords = b.get("geometry", {}).get("coordinates", [[]])[0]
             if len(coords) >= 3:
                 xs = [c[0] for c in coords]
                 ys = [c[1] for c in coords]
-                # degrees → rough meters
                 w = (max(xs) - min(xs)) * 111320 * math.cos(math.radians(ys[0]))
                 d = (max(ys) - min(ys)) * 111320
                 if 2 < w < 200: widths.append(w)
@@ -117,11 +122,46 @@ class FacadeGenerator:
         band_color = self._darken(facade_color, 0.75)
         balcony_color = self._darken(facade_color, 0.65)
 
+        # ── Resolve arch style — drives geometry decisions ──────────────────
+        arch_style = style.get("dominant_arch_style", "modern")
+
         # Brief overrides drive visual character to match neighbors
-        window_ratio   = float(brief.get("window_ratio")   or style.get("window_ratio",   0.35))
-        balcony_depth  = float(brief.get("balcony_depth_m") or style.get("balcony_depth_m", 1.0))
-        bal_every_n    = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
-        add_bands      = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
+        window_ratio  = float(brief.get("window_ratio")    or style.get("window_ratio",   0.35))
+        balcony_depth = float(brief.get("balcony_depth_m") or style.get("balcony_depth_m", 1.0))
+        bal_every_n   = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
+        add_bands     = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
+
+        # ── Arch style overrides ─────────────────────────────────────────────
+        face_offset = 0.09  # base flush offset
+        if arch_style in ("craftsman", "victorian", "tudor"):
+            # Deep facade relief, taller bands, narrow windows
+            face_offset = 0.15
+            band_h_frac = 0.30
+            add_bands = True
+        elif arch_style in ("modern", "minimalist", "contemporary"):
+            # Clean flat facade, no spandrel bands, large windows
+            add_bands = False
+            window_ratio = max(window_ratio, 0.55)
+            band_h_frac = 0.0
+        elif arch_style in ("colonial", "spanish", "mediterranean"):
+            # Moderate bands, symmetrical windows, arched suggestion
+            face_offset = 0.12
+            band_h_frac = 0.22
+            add_bands = True
+        else:
+            band_h_frac = 0.20
+
+        # ── Window style from neighbors ─────────────────────────────────────
+        window_style = style.get("window_style", "standard")
+        if window_style == "tall_narrow":
+            win_h_frac = 0.65
+            win_w_cap  = 0.85
+        elif window_style == "wide":
+            win_h_frac = 0.38
+            win_w_cap  = 2.2
+        else:  # standard
+            win_h_frac = 0.50
+            win_w_cap  = 1.8
 
         meshes: List[Dict] = []
         ext_walls = [w for w in walls if w.is_exterior and w.level == 0]
@@ -134,21 +174,20 @@ class FacadeGenerator:
                 continue
 
             ux, uz = dx / wall_len, dz / wall_len
-            # Outward normal for CCW Shapely polygon: rotate wall direction +90° CW
-            nx, nz = uz, -ux
-            face_offset = 0.09  # flush with outer wall face
+            nx, nz = uz, -ux  # outward normal (CCW polygon)
 
             for lvl in range(stories):
                 base_y = lvl * floor_h
 
-                # ── Horizontal floor band (spandrel) — skip if brief says no bands ──
-                if add_bands:
-                    band_h = floor_h * 0.20
+                # ── Horizontal floor band (spandrel) ──────────────────────
+                if add_bands and band_h_frac > 0:
+                    bh = floor_h * band_h_frac
+                    fo = face_offset + (0.04 if arch_style in ("craftsman", "victorian", "tudor") else 0)
                     band_verts = [
-                        [s[0] + nx * face_offset,          base_y,          s[1] + nz * face_offset],
-                        [e[0] + nx * face_offset,          base_y,          e[1] + nz * face_offset],
-                        [e[0] + nx * face_offset,          base_y + band_h, e[1] + nz * face_offset],
-                        [s[0] + nx * face_offset,          base_y + band_h, s[1] + nz * face_offset],
+                        [s[0] + nx * fo, base_y,      s[1] + nz * fo],
+                        [e[0] + nx * fo, base_y,      e[1] + nz * fo],
+                        [e[0] + nx * fo, base_y + bh, e[1] + nz * fo],
+                        [s[0] + nx * fo, base_y + bh, s[1] + nz * fo],
                     ]
                     meshes.append({
                         "element_id": f"band_{lvl}_{uuid.uuid4().hex[:4]}",
@@ -159,14 +198,32 @@ class FacadeGenerator:
                         "color": band_color,
                     })
 
-                # ── Windows — density driven by window_ratio from brief ──
-                # window_ratio controls what fraction of wall length is glass
+                    # Craftsman/Victorian: add a second thin accent strip above the band
+                    if arch_style in ("craftsman", "victorian"):
+                        accent_y = base_y + bh + 0.05
+                        accent_h = 0.06
+                        acc_verts = [
+                            [s[0] + nx * fo, accent_y,          s[1] + nz * fo],
+                            [e[0] + nx * fo, accent_y,          e[1] + nz * fo],
+                            [e[0] + nx * fo, accent_y + accent_h, e[1] + nz * fo],
+                            [s[0] + nx * fo, accent_y + accent_h, s[1] + nz * fo],
+                        ]
+                        meshes.append({
+                            "element_id": f"accent_{lvl}_{uuid.uuid4().hex[:4]}",
+                            "element_type": "floor_band",
+                            "vertices": acc_verts,
+                            "faces": [[0, 1, 2], [0, 2, 3]],
+                            "level": 0,
+                            "color": self._darken(facade_color, 0.55),
+                        })
+
+                # ── Windows ──────────────────────────────────────────────
                 win_spacing = max(1.4, 2.8 * (1.0 - window_ratio))
                 num_windows = max(1, int(wall_len / win_spacing))
-                win_w = min(wall_len / num_windows * window_ratio * 2.0, wall_len / num_windows * 0.80)
-                win_w = max(0.6, min(win_w, 2.2))
-                win_h = floor_h * (0.35 + window_ratio * 0.3)   # taller windows = more glass
-                win_sill = base_y + floor_h * (0.28 - window_ratio * 0.05)
+                raw_win_w   = wall_len / num_windows * window_ratio * 2.0
+                win_w       = max(0.55, min(raw_win_w, win_w_cap))
+                win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)
+                win_sill    = base_y + floor_h * (0.28 - window_ratio * 0.05)
 
                 for i in range(num_windows):
                     t = (i + 0.5) / num_windows
@@ -189,42 +246,40 @@ class FacadeGenerator:
                         "color": win_color,
                     })
 
-                    # Window frame
-                    ft = 0.04
+                    # Window frame — thicker for traditional styles
+                    ft = 0.07 if arch_style in ("craftsman", "victorian", "colonial") else 0.04
                     for fv, ff in self._frame_quads(wcx, wcz, win_sill, win_h, win_w, ux, uz, nx, nz, face_offset, ft):
                         meshes.append({
                             "element_id": f"frm_{uuid.uuid4().hex[:6]}",
                             "element_type": "window_frame",
                             "vertices": fv, "faces": ff,
-                            "level": 0, "color": "#1e293b",
+                            "level": 0,
+                            "color": "#1e293b" if arch_style in ("modern", "minimalist") else "#f5f0e8",
                         })
 
-                # ── Door on ground floor only ──
+                # ── Door on ground floor only ─────────────────────────────
                 if lvl == 0 and wall_len >= 2.0:
                     door_w = 1.05
                     door_h = 2.15
-                    # Place door at 1/4 of wall length (not center, to avoid conflicting with windows)
                     t_door = 0.25
                     dcx = s[0] + t_door * dx
                     dcz = s[1] + t_door * dz
                     hdw = door_w / 2
                     door_sill = base_y
                     door_fo = face_offset + 0.01
-                    # Door panel
                     meshes.append({
                         "element_id": f"door_{uuid.uuid4().hex[:6]}",
                         "element_type": "door",
                         "vertices": [
-                            [dcx - ux*hdw + nx*door_fo, door_sill,            dcz - uz*hdw + nz*door_fo],
-                            [dcx + ux*hdw + nx*door_fo, door_sill,            dcz + uz*hdw + nz*door_fo],
-                            [dcx + ux*hdw + nx*door_fo, door_sill + door_h,   dcz + uz*hdw + nz*door_fo],
-                            [dcx - ux*hdw + nx*door_fo, door_sill + door_h,   dcz - uz*hdw + nz*door_fo],
+                            [dcx - ux*hdw + nx*door_fo, door_sill,          dcz - uz*hdw + nz*door_fo],
+                            [dcx + ux*hdw + nx*door_fo, door_sill,          dcz + uz*hdw + nz*door_fo],
+                            [dcx + ux*hdw + nx*door_fo, door_sill + door_h, dcz + uz*hdw + nz*door_fo],
+                            [dcx - ux*hdw + nx*door_fo, door_sill + door_h, dcz - uz*hdw + nz*door_fo],
                         ],
                         "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
                         "level": 0,
                         "color": "#7c5c3a",
                     })
-                    # Door frame
                     ft = 0.06
                     meshes.append({
                         "element_id": f"door_frame_{uuid.uuid4().hex[:5]}",
@@ -240,17 +295,16 @@ class FacadeGenerator:
                         "color": "#334155",
                     })
 
-                # ── Balconies — only on floors matching bal_every_n, skip if depth=0 ──
+                # ── Balconies ─────────────────────────────────────────────
                 if lvl > 0 and balcony_depth > 0 and (lvl % bal_every_n == 0):
                     bal_depth = balcony_depth
-                    bal_h = 0.12       # slab thickness
-                    rail_h = 0.9       # railing height
+                    bal_h  = 0.12
+                    rail_h = 0.9
                     rail_t = 0.04
-                    bal_y = base_y + floor_h * 0.05  # slab sits just above floor line
-                    proj = face_offset + bal_depth
+                    bal_y  = base_y + floor_h * 0.05
+                    proj   = face_offset + bal_depth
 
-                    # Split wall into per-unit balcony bays
-                    bay_w = min(3.2, wall_len)
+                    bay_w  = min(3.2, wall_len)
                     n_bays = max(1, int(wall_len / bay_w))
                     for b in range(n_bays):
                         t0 = b / n_bays
@@ -261,35 +315,33 @@ class FacadeGenerator:
                         bx1 = s[0] + (t1 * wall_len - margin) * ux
                         bz1 = s[1] + (t1 * wall_len - margin) * uz
 
-                        # Slab
                         meshes.append({
                             "element_id": f"bal_slab_{uuid.uuid4().hex[:5]}",
                             "element_type": "balcony",
                             "level": 0,
                             "color": balcony_color,
                             "vertices": [
-                                [bx0 + nx*face_offset, bal_y,        bz0 + nz*face_offset],
-                                [bx1 + nx*face_offset, bal_y,        bz1 + nz*face_offset],
-                                [bx1 + nx*proj,        bal_y,        bz1 + nz*proj],
-                                [bx0 + nx*proj,        bal_y,        bz0 + nz*proj],
-                                [bx0 + nx*face_offset, bal_y+bal_h,  bz0 + nz*face_offset],
-                                [bx1 + nx*face_offset, bal_y+bal_h,  bz1 + nz*face_offset],
-                                [bx1 + nx*proj,        bal_y+bal_h,  bz1 + nz*proj],
-                                [bx0 + nx*proj,        bal_y+bal_h,  bz0 + nz*proj],
+                                [bx0 + nx*face_offset, bal_y,       bz0 + nz*face_offset],
+                                [bx1 + nx*face_offset, bal_y,       bz1 + nz*face_offset],
+                                [bx1 + nx*proj,        bal_y,       bz1 + nz*proj],
+                                [bx0 + nx*proj,        bal_y,       bz0 + nz*proj],
+                                [bx0 + nx*face_offset, bal_y+bal_h, bz0 + nz*face_offset],
+                                [bx1 + nx*face_offset, bal_y+bal_h, bz1 + nz*face_offset],
+                                [bx1 + nx*proj,        bal_y+bal_h, bz1 + nz*proj],
+                                [bx0 + nx*proj,        bal_y+bal_h, bz0 + nz*proj],
                             ],
                             "faces": [
-                                [0,1,2],[0,2,3],           # bottom
-                                [4,6,5],[4,7,6],           # top
-                                [0,4,5],[0,5,1],           # back
-                                [2,6,7],[2,7,3],           # front
-                                [0,3,7],[0,7,4],           # left
-                                [1,5,6],[1,6,2],           # right
+                                [0,1,2],[0,2,3],
+                                [4,6,5],[4,7,6],
+                                [0,4,5],[0,5,1],
+                                [2,6,7],[2,7,3],
+                                [0,3,7],[0,7,4],
+                                [1,5,6],[1,6,2],
                             ],
                         })
 
-                        # Front railing
-                        rx = (bx0 + bx1) / 2
-                        rz = (bz0 + bz1) / 2
+                        rx  = (bx0 + bx1) / 2
+                        rz  = (bz0 + bz1) / 2
                         rlen = math.sqrt((bx1-bx0)**2 + (bz1-bz0)**2)
                         rhw = rlen / 2
                         meshes.append({
@@ -298,70 +350,261 @@ class FacadeGenerator:
                             "level": 0,
                             "color": "#334155",
                             "vertices": [
-                                [rx - ux*rhw + nx*proj,      bal_y+bal_h,          rz - uz*rhw + nz*proj],
-                                [rx + ux*rhw + nx*proj,      bal_y+bal_h,          rz + uz*rhw + nz*proj],
-                                [rx + ux*rhw + nx*proj,      bal_y+bal_h+rail_h,   rz + uz*rhw + nz*proj],
-                                [rx - ux*rhw + nx*proj,      bal_y+bal_h+rail_h,   rz - uz*rhw + nz*proj],
-                                [rx - ux*rhw + nx*(proj-rail_t), bal_y+bal_h,      rz - uz*rhw + nz*(proj-rail_t)],
-                                [rx + ux*rhw + nx*(proj-rail_t), bal_y+bal_h,      rz + uz*rhw + nz*(proj-rail_t)],
-                                [rx + ux*rhw + nx*(proj-rail_t), bal_y+bal_h+rail_h, rz + uz*rhw + nz*(proj-rail_t)],
-                                [rx - ux*rhw + nx*(proj-rail_t), bal_y+bal_h+rail_h, rz - uz*rhw + nz*(proj-rail_t)],
+                                [rx - ux*rhw + nx*proj,          bal_y+bal_h,          rz - uz*rhw + nz*proj],
+                                [rx + ux*rhw + nx*proj,          bal_y+bal_h,          rz + uz*rhw + nz*proj],
+                                [rx + ux*rhw + nx*proj,          bal_y+bal_h+rail_h,   rz + uz*rhw + nz*proj],
+                                [rx - ux*rhw + nx*proj,          bal_y+bal_h+rail_h,   rz - uz*rhw + nz*proj],
+                                [rx - ux*rhw + nx*(proj-rail_t), bal_y+bal_h,          rz - uz*rhw + nz*(proj-rail_t)],
+                                [rx + ux*rhw + nx*(proj-rail_t), bal_y+bal_h,          rz + uz*rhw + nz*(proj-rail_t)],
+                                [rx + ux*rhw + nx*(proj-rail_t), bal_y+bal_h+rail_h,   rz + uz*rhw + nz*(proj-rail_t)],
+                                [rx - ux*rhw + nx*(proj-rail_t), bal_y+bal_h+rail_h,   rz - uz*rhw + nz*(proj-rail_t)],
                             ],
                             "faces": [[0,1,2],[0,2,3],[5,4,7],[5,7,6],[3,2,6],[3,6,7],[0,3,7],[0,7,4],[1,5,6],[1,6,2]],
                         })
 
-        # ── Top-floor setback (penthouse effect) ──────────────────────────
+        # ── Top-floor setback ────────────────────────────────────────────────
         if stories >= 2:
             self._add_setback_cap(meshes, massing_option, stories, floor_h, facade_color)
 
-        # ── Roof parapet ──────────────────────────────────────────────────
-        roof_y = stories * floor_h
-        par_h = 0.65
-        par_t = 0.20
-        footprint = massing_option.get("footprint", [])
-        n_pts = len(footprint)
-        if n_pts >= 3:
-            n = n_pts - 1 if (footprint[0] == footprint[-1]) else n_pts
-            for i in range(n):
-                x0, z0 = footprint[i][0], footprint[i][1]
-                x1, z1 = footprint[(i+1) % n][0], footprint[(i+1) % n][1]
-                seg = math.sqrt((x1-x0)**2 + (z1-z0)**2)
-                if seg < 0.1:
-                    continue
-                ux2, uz2 = (x1-x0)/seg, (z1-z0)/seg
-                nx2, nz2 = uz2, -ux2
-                verts = [
-                    [x0,             roof_y,         z0],
-                    [x1,             roof_y,         z1],
-                    [x1,             roof_y + par_h, z1],
-                    [x0,             roof_y + par_h, z0],
-                    [x0 + nx2*par_t, roof_y,         z0 + nz2*par_t],
-                    [x1 + nx2*par_t, roof_y,         z1 + nz2*par_t],
-                    [x1 + nx2*par_t, roof_y + par_h, z1 + nz2*par_t],
-                    [x0 + nx2*par_t, roof_y + par_h, z0 + nz2*par_t],
-                ]
-                meshes.append({
-                    "element_id": f"par_{i}",
-                    "element_type": "parapet",
-                    "vertices": verts,
-                    "faces": [[0,1,2],[0,2,3],[5,4,7],[5,7,6],[3,2,6],[3,6,7],[0,3,7],[0,7,4],[1,5,6],[1,6,2]],
-                    "level": 0,
-                    "color": facade_color,
-                })
+        # ── Roof: pitched or flat parapet ────────────────────────────────────
+        add_pitched = style.get("add_pitched_roof", False)
+        dominant_roof = style.get("dominant_roof_shape", "flat")
+        if add_pitched:
+            self._add_pitched_roof(meshes, massing_option, stories, floor_h, facade_color, dominant_roof)
+        else:
+            self._add_flat_parapet(meshes, massing_option, stories, floor_h, facade_color)
 
         return meshes
 
-    def _add_setback_cap(self, meshes, massing_option, stories, floor_h, color):
-        """Inset the top floor slightly to create a penthouse/setback effect."""
+    # ── Flat parapet (original logic, extracted) ──────────────────────────────
+    def _add_flat_parapet(self, meshes, massing_option, stories, floor_h, facade_color):
+        roof_y = stories * floor_h
+        par_h  = 0.65
+        par_t  = 0.20
         footprint = massing_option.get("footprint", [])
         n_pts = len(footprint)
         if n_pts < 3:
             return
-        inset = 0.8  # meters setback on each side
+        n = n_pts - 1 if (footprint[0] == footprint[-1]) else n_pts
+        for i in range(n):
+            x0, z0 = footprint[i][0], footprint[i][1]
+            x1, z1 = footprint[(i+1) % n][0], footprint[(i+1) % n][1]
+            seg = math.sqrt((x1-x0)**2 + (z1-z0)**2)
+            if seg < 0.1:
+                continue
+            ux2, uz2 = (x1-x0)/seg, (z1-z0)/seg
+            nx2, nz2 = uz2, -ux2
+            verts = [
+                [x0,             roof_y,         z0],
+                [x1,             roof_y,         z1],
+                [x1,             roof_y + par_h, z1],
+                [x0,             roof_y + par_h, z0],
+                [x0 + nx2*par_t, roof_y,         z0 + nz2*par_t],
+                [x1 + nx2*par_t, roof_y,         z1 + nz2*par_t],
+                [x1 + nx2*par_t, roof_y + par_h, z1 + nz2*par_t],
+                [x0 + nx2*par_t, roof_y + par_h, z0 + nz2*par_t],
+            ]
+            meshes.append({
+                "element_id": f"par_{i}",
+                "element_type": "parapet",
+                "vertices": verts,
+                "faces": [[0,1,2],[0,2,3],[5,4,7],[5,7,6],[3,2,6],[3,6,7],[0,3,7],[0,7,4],[1,5,6],[1,6,2]],
+                "level": 0,
+                "color": facade_color,
+            })
+
+    # ── Pitched roof (gabled or hipped) ──────────────────────────────────────
+    def _add_pitched_roof(self, meshes, massing_option, stories, floor_h, facade_color, roof_type="gabled"):
+        footprint = massing_option.get("footprint", [])
+        n_pts = len(footprint)
+        if n_pts < 3:
+            return
+
+        roof_y = stories * floor_h
+        n = n_pts - 1 if (footprint[0] == footprint[-1]) else n_pts
+        pts = [[footprint[i][0], footprint[i][1]] for i in range(n)]
+
+        # Bounding box → determine long axis for ridge
+        xs = [p[0] for p in pts]
+        zs = [p[1] for p in pts]
+        min_x, max_x = min(xs), max(xs)
+        min_z, max_z = min(zs), max(zs)
+        w = max_x - min_x
+        d = max_z - min_z
+        cx = (min_x + max_x) / 2
+        cz = (min_z + max_z) / 2
+
+        # Ridge height: ~30% of the shorter span (typical residential pitch)
+        ridge_h = min(w, d) * 0.30
+        roof_color = self._darken(facade_color, 0.55)
+
+        if roof_type in ("hipped", "hip"):
+            # Hip roof: 4 triangular/trapezoidal faces converging to a ridge at centre
+            inset = min(w, d) * 0.18
+            ridge_y = roof_y + ridge_h
+
+            # Eave corners at roof base
+            corners = [
+                [min_x, min_z], [max_x, min_z],
+                [max_x, max_z], [min_x, max_z],
+            ]
+            # Ridge corners (inset)
+            ridge_pts = [
+                [min_x + inset, cz],
+                [max_x - inset, cz],
+            ] if w >= d else [
+                [cx, min_z + inset],
+                [cx, max_z - inset],
+            ]
+
+            # Build faces: front, back, left, right slopes
+            if w >= d:
+                # Ridge runs along X; front/back are trapezoids, sides are triangles
+                faces_verts = [
+                    # Front slope
+                    [corners[0], corners[1],
+                     [ridge_pts[1][0], min_z, ridge_pts[1][1]],  # not used but pad
+                     [ridge_pts[0][0], min_z, ridge_pts[0][1]]],
+                    # Back slope
+                    [corners[3], corners[2],
+                     [ridge_pts[1][0], max_z, ridge_pts[1][1]],
+                     [ridge_pts[0][0], max_z, ridge_pts[0][1]]],
+                ]
+                # Simple trapezoid front/back slopes + triangular gable ends
+                def hip_face(a, b, rb, ra):
+                    v = [
+                        [a[0], roof_y,   a[1]],
+                        [b[0], roof_y,   b[1]],
+                        [rb[0], ridge_y, rb[1]],
+                        [ra[0], ridge_y, ra[1]],
+                    ]
+                    return v, [[0,1,2],[0,2,3]]
+
+                r0 = [ridge_pts[0][0], ridge_pts[0][1]]
+                r1 = [ridge_pts[1][0], ridge_pts[1][1]]
+
+                for (a, b, ra, rb) in [
+                    (corners[0], corners[1], r0, r1),   # front
+                    (corners[2], corners[3], r1, r0),   # back
+                ]:
+                    v, f = hip_face(a, b, ra, rb)
+                    meshes.append({
+                        "element_id": f"roof_slope_{uuid.uuid4().hex[:4]}",
+                        "element_type": "roof",
+                        "vertices": v, "faces": f,
+                        "level": 0, "color": roof_color,
+                    })
+
+                # Triangular end slopes
+                for (tip, base_a, base_b) in [
+                    (r0, corners[0], corners[3]),
+                    (r1, corners[1], corners[2]),
+                ]:
+                    v = [
+                        [base_a[0], roof_y,   base_a[1]],
+                        [base_b[0], roof_y,   base_b[1]],
+                        [tip[0],    ridge_y,  tip[1]],
+                    ]
+                    meshes.append({
+                        "element_id": f"roof_end_{uuid.uuid4().hex[:4]}",
+                        "element_type": "roof",
+                        "vertices": v, "faces": [[0,1,2],[2,1,0]],
+                        "level": 0, "color": roof_color,
+                    })
+        else:
+            # Gabled roof: 2 rectangular sloping faces + 2 triangular gable ends
+            if w >= d:
+                # Ridge runs along X axis
+                ridge_y = roof_y + ridge_h
+                # Front slope: from min_z eave → ridge at cz
+                meshes.append({
+                    "element_id": f"roof_front_{uuid.uuid4().hex[:4]}",
+                    "element_type": "roof",
+                    "vertices": [
+                        [min_x, roof_y,   min_z],
+                        [max_x, roof_y,   min_z],
+                        [max_x, ridge_y,  cz],
+                        [min_x, ridge_y,  cz],
+                    ],
+                    "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
+                    "level": 0, "color": roof_color,
+                })
+                # Back slope
+                meshes.append({
+                    "element_id": f"roof_back_{uuid.uuid4().hex[:4]}",
+                    "element_type": "roof",
+                    "vertices": [
+                        [min_x, roof_y,   max_z],
+                        [max_x, roof_y,   max_z],
+                        [max_x, ridge_y,  cz],
+                        [min_x, ridge_y,  cz],
+                    ],
+                    "faces": [[0,2,1],[0,3,2],[1,2,0],[2,3,0]],
+                    "level": 0, "color": roof_color,
+                })
+                # Gable ends (triangles)
+                for ex in [min_x, max_x]:
+                    meshes.append({
+                        "element_id": f"roof_gable_{uuid.uuid4().hex[:4]}",
+                        "element_type": "roof",
+                        "vertices": [
+                            [ex, roof_y,   min_z],
+                            [ex, roof_y,   max_z],
+                            [ex, ridge_y,  cz],
+                        ],
+                        "faces": [[0,1,2],[2,1,0]],
+                        "level": 0, "color": self._darken(facade_color, 0.75),
+                    })
+            else:
+                # Ridge runs along Z axis
+                ridge_y = roof_y + ridge_h
+                meshes.append({
+                    "element_id": f"roof_left_{uuid.uuid4().hex[:4]}",
+                    "element_type": "roof",
+                    "vertices": [
+                        [min_x, roof_y,   min_z],
+                        [min_x, roof_y,   max_z],
+                        [cx,    ridge_y,  max_z],
+                        [cx,    ridge_y,  min_z],
+                    ],
+                    "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
+                    "level": 0, "color": roof_color,
+                })
+                meshes.append({
+                    "element_id": f"roof_right_{uuid.uuid4().hex[:4]}",
+                    "element_type": "roof",
+                    "vertices": [
+                        [max_x, roof_y,   min_z],
+                        [max_x, roof_y,   max_z],
+                        [cx,    ridge_y,  max_z],
+                        [cx,    ridge_y,  min_z],
+                    ],
+                    "faces": [[0,2,1],[0,3,2],[1,2,0],[2,3,0]],
+                    "level": 0, "color": roof_color,
+                })
+                for ez in [min_z, max_z]:
+                    meshes.append({
+                        "element_id": f"roof_gable_{uuid.uuid4().hex[:4]}",
+                        "element_type": "roof",
+                        "vertices": [
+                            [min_x, roof_y,   ez],
+                            [max_x, roof_y,   ez],
+                            [cx,    ridge_y,  ez],
+                        ],
+                        "faces": [[0,1,2],[2,1,0]],
+                        "level": 0, "color": self._darken(facade_color, 0.75),
+                    })
+
+    # ── Top-floor setback ─────────────────────────────────────────────────────
+    def _add_setback_cap(self, meshes, massing_option, stories, floor_h, color):
+        footprint = massing_option.get("footprint", [])
+        n_pts = len(footprint)
+        if n_pts < 3:
+            return
+        inset = 0.8
         top_base = (stories - 1) * floor_h
         n = n_pts - 1 if (footprint[n_pts-1] == footprint[0]) else n_pts
 
-        # Compute centroid for inward offset direction
         cx = sum(footprint[i][0] for i in range(n)) / n
         cz = sum(footprint[i][1] for i in range(n)) / n
 
@@ -372,7 +615,6 @@ class FacadeGenerator:
             d = math.sqrt(dx*dx + dz*dz) or 1
             inner.append([x + dx/d * inset, z + dz/d * inset])
 
-        # Vertical faces bridging original footprint → inset at top_base level
         for i in range(n):
             j = (i+1) % n
             verts = [
@@ -391,7 +633,6 @@ class FacadeGenerator:
             })
 
     def _darken(self, hex_color: str, factor: float) -> str:
-        """Darken a hex color by factor (0–1)."""
         try:
             h = hex_color.lstrip('#')
             if len(h) != 6:
@@ -403,7 +644,7 @@ class FacadeGenerator:
             return hex_color
 
     def _frame_quads(self, wcx, wcz, sill, win_h, win_w, ux, uz, nx, nz, fo, ft):
-        hw = win_w / 2
+        hw  = win_w / 2
         top = sill + win_h
         return [
             ([  # Bottom bar

@@ -4,6 +4,7 @@ SiteContextService - OSM + FEMA + neighbor buildings + constraints
 import asyncio
 import httpx
 import math
+import urllib.parse
 from shapely.geometry import shape, Polygon, mapping
 from shapely.ops import transform
 import pyproj
@@ -12,7 +13,12 @@ from app.models.schemas import SiteContext, LatLon
 from app.services.hazard_lookup import HazardLookupService
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-FEMA_URL = "https://msc.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"
+FEMA_URL     = "https://msc.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"
+
+# California Energy Commission ArcGIS — confirmed working 2025
+CEC_BASE     = "https://services3.arcgis.com/bWPjFyq029ChCGur/arcgis/rest/services"
+CEC_PLANTS   = f"{CEC_BASE}/Power_Plant/FeatureServer/0/query"
+CEC_GAS_AREA = f"{CEC_BASE}/Natural_Gas_Service_Area/FeatureServer/0/query"
 DEFAULT_SETBACKS = {"front": 15.0, "rear": 20.0, "left": 5.0, "right": 5.0}
 
 
@@ -79,7 +85,11 @@ class SiteContextService:
                   "places": [], "power_poles": []}
         try:
             async with httpx.AsyncClient(timeout=28) as client:
-                resp = await client.post(OVERPASS_URL, data={"data": query})
+                resp = await client.post(
+                    OVERPASS_URL,
+                    content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
                 if resp.status_code != 200 or not resp.content:
                     result["power_connection"] = None
                     return result
@@ -156,7 +166,94 @@ class SiteContextService:
                 })
 
         result["power_connection"] = self._get_power_connection(latlon, result["power_lines"])
+
+        # CEC real data — run in parallel
+        plants, gas_utility = await asyncio.gather(
+            self._get_nearby_power_plants(latlon, radius_m),
+            self._get_gas_utility(latlon),
+        )
+        result["power_plants"] = plants
+        result["gas_utility"]  = gas_utility   # e.g. {"name": "Pacific Gas & Electric", "abbr": "PG&E"}
+
         return result
+
+    async def _get_nearby_power_plants(self, latlon: LatLon, radius_m: int) -> List[Dict]:
+        """
+        Query CEC ArcGIS for power plants within radius.
+        Source: California Energy Commission — real, updated annually.
+        """
+        deg = (radius_m * 5) / 111320  # wider radius for plants — nearest may be km away
+        bbox = {
+            "xmin": latlon.lon - deg, "ymin": latlon.lat - deg,
+            "xmax": latlon.lon + deg, "ymax": latlon.lat + deg,
+            "spatialReference": {"wkid": 4326},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(CEC_PLANTS, params={
+                    "geometry":     str(bbox).replace("'", '"'),
+                    "geometryType": "esriGeometryEnvelope",
+                    "inSR":         "4326",
+                    "spatialRel":   "esriSpatialRelIntersects",
+                    "outFields":    "PlantName,PriEnergySource,Capacity_Latest,County,CECPlantID",
+                    "outSR":        "4326",
+                    "f":            "json",
+                })
+                if resp.status_code != 200:
+                    return []
+                features = resp.json().get("features", [])
+                plants = []
+                for f in features:
+                    a = f.get("attributes", {})
+                    g = f.get("geometry", {})
+                    if not g:
+                        continue
+                    plants.append({
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [g["x"], g["y"]]},
+                        "properties": {
+                            "name":     a.get("PlantName", "Unknown Plant"),
+                            "fuel":     a.get("PriEnergySource", ""),
+                            "capacity_mw": a.get("Capacity_Latest"),
+                            "county":   a.get("County", ""),
+                            "source":   "CEC",
+                        },
+                    })
+                return plants
+        except Exception:
+            return []
+
+    async def _get_gas_utility(self, latlon: LatLon) -> Optional[Dict]:
+        """
+        Query CEC ArcGIS for the gas utility serving this location.
+        Source: California Energy Commission — real service territory polygons.
+        Returns e.g. {"name": "Pacific Gas & Electric", "abbr": "PG&E", "category": "IOU"}
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(CEC_GAS_AREA, params={
+                    "geometry":     f"{latlon.lon},{latlon.lat}",
+                    "geometryType": "esriGeometryPoint",
+                    "inSR":         "4326",
+                    "spatialRel":   "esriSpatialRelIntersects",
+                    "outFields":    "SERVICE,ABR,CATEGORY",
+                    "returnGeometry": "false",
+                    "f":            "json",
+                })
+                if resp.status_code != 200:
+                    return None
+                features = resp.json().get("features", [])
+                if not features:
+                    return None
+                a = features[0].get("attributes", {})
+                return {
+                    "name":     a.get("SERVICE", "Unknown"),
+                    "abbr":     a.get("ABR", ""),
+                    "category": a.get("CATEGORY", ""),
+                    "source":   "CEC",
+                }
+        except Exception:
+            return None
 
     def _get_power_connection(self, latlon: LatLon, power_lines: list) -> Optional[Dict]:
         """Find nearest point on any power line and return a GeoJSON LineString connector."""
@@ -204,7 +301,11 @@ class SiteContextService:
         """
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(OVERPASS_URL, data={"data": query})
+                resp = await client.post(
+                    OVERPASS_URL,
+                    content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
                 data = resp.json() if resp.status_code == 200 and resp.content else {"elements": []}
         except Exception:
             data = {"elements": []}
@@ -431,7 +532,11 @@ class SiteContextService:
         """
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(OVERPASS_URL, data={"data": query})
+                resp = await client.post(
+                    OVERPASS_URL,
+                    content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
                 if resp.status_code != 200 or not resp.content:
                     return self._box_polygon(latlon, 30, 30)
                 data = resp.json()

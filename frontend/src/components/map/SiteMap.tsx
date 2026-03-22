@@ -136,14 +136,17 @@ function BuildingPopup({ building, onClose }: { building: any; onClose: () => vo
 }
 
 const MAP_LAYERS = [
-  { id: 'buildings',    layers: ['buildings-fill','buildings-outline'], color: '#334155', label: 'Buildings',     fill: true },
-  { id: 'parcel',       layers: ['parcel-fill','parcel-line'],          color: '#00e5ff', label: 'Parcel',        dash: true },
-  { id: 'buildable',    layers: ['buildable-fill','buildable-line'],    color: '#00ff88', label: 'Buildable zone' },
-  { id: 'roads',        layers: ['roads-line'],                         color: '#ffb300', label: 'Roads' },
-  { id: 'pipelines',    layers: ['pipes-line'],                         color: '#60a5fa', label: 'Sewage / Pipes', dash: true },
-  { id: 'power',        layers: ['power-line','power-connection-line'], color: '#f59e0b', label: 'Power Lines' },
-  { id: 'hydrants',     layers: ['hydrants-circle'],                    color: '#ff4444', label: 'Fire Hydrants',  circle: true },
-  { id: 'places',       layers: ['places-circle'],                      color: '#94a3b8', label: 'Amenities',      circle: true },
+  { id: 'buildings',     layers: ['buildings-fill','buildings-outline'],  color: '#334155', label: 'Buildings',       fill: true },
+  { id: 'parcel',        layers: ['parcel-fill','parcel-line'],           color: '#00e5ff', label: 'Parcel',          dash: true },
+  { id: 'buildable',     layers: ['buildable-fill','buildable-line'],     color: '#00ff88', label: 'Buildable zone' },
+  { id: 'roads',         layers: ['roads-line'],                          color: '#ffb300', label: 'Roads' },
+  { id: 'pipelines',     layers: ['pipes-line'],                          color: '#60a5fa', label: 'Sewage / Pipes',  dash: true },
+  { id: 'power',         layers: ['power-line','power-connection-line'],  color: '#f59e0b', label: 'Power Lines' },
+  { id: 'power_poles',   layers: ['power-poles-circle'],                  color: '#f59e0b', label: 'Power Poles',     circle: true },
+  { id: 'power_plants',  layers: ['power-plants-circle'],                 color: '#fb923c', label: 'Power Plants',    circle: true },
+  { id: 'hydrants',      layers: ['hydrants-circle'],                     color: '#ff4444', label: 'Fire Hydrants',   circle: true },
+  { id: 'manholes',      layers: ['manholes-circle'],                     color: '#6b7280', label: 'Manholes',        circle: true },
+  { id: 'places',        layers: ['places-circle'],                       color: '#94a3b8', label: 'Amenities',       circle: true },
 ];
 
 function MapLayerToggles({ mapRef }: { mapRef: React.MutableRefObject<any> }) {
@@ -321,7 +324,7 @@ export default function SiteMap() {
 
     map.on('load', () => {
       const emptyColl: any = { type: 'FeatureCollection', features: [] };
-      ['hydrants', 'pipes', 'roads', 'power', 'parcel', 'buildable', 'buildings', 'power_connection', 'places'].forEach(id => {
+      ['hydrants', 'pipes', 'roads', 'power', 'parcel', 'buildable', 'buildings', 'power_connection', 'places', 'power_poles', 'manholes', 'power_plants'].forEach(id => {
         map.addSource(id, { type: 'geojson', data: emptyColl });
       });
 
@@ -359,6 +362,33 @@ export default function SiteMap() {
         }
       });
 
+      // Power poles
+      map.addLayer({ id: 'power-poles-circle', type: 'circle', source: 'power_poles',
+        paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-width': 2, 'circle-stroke-color': '#1a1a24' } });
+      // Manholes
+      map.addLayer({ id: 'manholes-circle', type: 'circle', source: 'manholes',
+        paint: { 'circle-radius': 4, 'circle-color': '#6b7280', 'circle-stroke-width': 1, 'circle-stroke-color': '#374151' } });
+      // Power plants (larger, orange, colored by fuel type expression)
+      map.addLayer({ id: 'power-plants-circle', type: 'circle', source: 'power_plants',
+        paint: {
+          'circle-radius': 10,
+          'circle-color': [
+            'match', ['get', 'fuel'],
+            'Solar',   '#facc15',
+            'Wind',    '#34d399',
+            'Hydro',   '#38bdf8',
+            'Nuclear', '#a78bfa',
+            'Gas',     '#fb923c',
+            'Coal',    '#6b7280',
+            'Biomass', '#84cc16',
+            '#fb923c',
+          ] as any,
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#fff',
+          'circle-opacity': 0.9,
+        }
+      });
+
       // Click on existing buildings → show info popup
       map.on('mouseenter', 'buildings-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'buildings-fill', () => { map.getCanvas().style.cursor = ''; });
@@ -369,8 +399,8 @@ export default function SiteMap() {
         if (f) setClickedBuilding2(f);
       });
 
-      // Popups for hydrants and places
-      ['hydrants-circle', 'places-circle', 'power-poles-circle'].forEach(layerId => {
+      // Popups for hydrants, places, poles, manholes
+      ['hydrants-circle', 'places-circle', 'power-poles-circle', 'manholes-circle'].forEach(layerId => {
         map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
         map.on('click', layerId, (e: any) => {
@@ -381,12 +411,40 @@ export default function SiteMap() {
           const coords = (f.geometry as any).coordinates;
           const label = layerId === 'hydrants-circle' ? '🚒 Fire Hydrant'
             : layerId === 'power-poles-circle' ? '⚡ Power Pole'
+            : layerId === 'manholes-circle' ? '🔘 Manhole'
             : `📍 ${props.display_name || props.place_type || 'Place'}`;
           new maplibregl.Popup({ closeButton: false, className: 'petronus-popup' })
             .setLngLat(coords)
             .setHTML(`<div style="font-family:monospace;font-size:11px;background:#111118;color:#f0f0f8;padding:6px 8px;border-radius:6px;border:1px solid #2d2d3d">${label}</div>`)
             .addTo(map);
         });
+      });
+
+      // Power plant popups — larger detail card
+      map.on('mouseenter', 'power-plants-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'power-plants-circle', () => { map.getCanvas().style.cursor = ''; });
+      map.on('click', 'power-plants-circle', (e: any) => {
+        e.preventDefault();
+        const f = e.features?.[0];
+        if (!f) return;
+        const p = f.properties || {};
+        const coords = (f.geometry as any).coordinates;
+        const fuelEmoji: Record<string, string> = {
+          Solar: '☀️', Wind: '💨', Hydro: '💧', Nuclear: '⚛️',
+          Gas: '🔥', Coal: '🏭', Biomass: '🌿',
+        };
+        const emoji = fuelEmoji[p.fuel] || '⚡';
+        new maplibregl.Popup({ closeButton: true, className: 'petronus-popup' })
+          .setLngLat(coords)
+          .setHTML(`
+            <div style="font-family:monospace;font-size:11px;background:#111118;color:#f0f0f8;padding:10px 12px;border-radius:8px;border:1px solid #2d2d3d;min-width:160px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px">${emoji} ${p.name || 'Power Plant'}</div>
+              <div style="color:#94a3b8">Fuel: <span style="color:#fb923c">${p.fuel || '—'}</span></div>
+              ${p.capacity_mw ? `<div style="color:#94a3b8">Capacity: <span style="color:#facc15">${Number(p.capacity_mw).toFixed(1)} MW</span></div>` : ''}
+              <div style="margin-top:4px;font-size:9px;color:#475569">Source: CA Energy Commission</div>
+            </div>
+          `)
+          .addTo(map);
       });
     });
 
@@ -420,18 +478,13 @@ export default function SiteMap() {
         setGeoJSON('buildings',        { type: 'FeatureCollection', features: infra.buildings       || [] });
         setGeoJSON('power_connection', infra.power_connection || { type: 'FeatureCollection', features: [] });
         setGeoJSON('places',           { type: 'FeatureCollection', features: infra.places          || [] });
-        if (!map.getSource('power_poles')) {
-          map.addSource('power_poles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-          map.addLayer({ id: 'power-poles-circle', type: 'circle', source: 'power_poles',
-            paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-width': 2, 'circle-stroke-color': '#1a1a24' } });
-        }
-        (map.getSource('power_poles') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: infra.power_poles || [] });
-        if (!map.getSource('manholes')) {
-          map.addSource('manholes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-          map.addLayer({ id: 'manholes-circle', type: 'circle', source: 'manholes',
-            paint: { 'circle-radius': 4, 'circle-color': '#6b7280', 'circle-stroke-width': 1, 'circle-stroke-color': '#374151' } });
-        }
-        (map.getSource('manholes') as maplibregl.GeoJSONSource)?.setData({ type: 'FeatureCollection', features: infra.manholes || [] });
+        setGeoJSON('power_poles',      { type: 'FeatureCollection', features: infra.power_poles     || [] });
+        setGeoJSON('manholes',         { type: 'FeatureCollection', features: infra.manholes        || [] });
+        setGeoJSON('power_plants',     { type: 'FeatureCollection', features: (infra.power_plants || []).map((p: any) => ({
+          type: 'Feature',
+          geometry: p.geometry || { type: 'Point', coordinates: [lng, lat] },
+          properties: p.properties || p,
+        })) });
 
         const [neighbors] = await Promise.all([
           api.getNeighbors(lat, lng, ctx.parcel_polygon),

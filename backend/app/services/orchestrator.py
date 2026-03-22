@@ -33,7 +33,7 @@ class GenerationOrchestrator:
 
         # Step 1: Site context + infrastructure in parallel
         self.progress_cb(5, "Fetching site context and infrastructure…")
-        log.append("Fetching site context from OSM + FEMA (parallel with infrastructure)")
+        log.append("Fetching site context from OSM + FEMA (parallel)")
 
         site_ctx, infra = await asyncio.gather(
             self.site_svc.build_context(
@@ -77,6 +77,7 @@ class GenerationOrchestrator:
         neighbor_buildings = [b for b in all_buildings if _dist_to_site(b) > 8]
         neighbor_style = extract_neighbor_style(all_buildings)  # style from all including replaced
         replaced_count = len(all_buildings) - len(neighbor_buildings)
+
         log.append(
             f"Neighbors: {len(neighbor_buildings)} buildings ({replaced_count} excluded as replaced) | "
             f"Dominant material: {neighbor_style.get('dominant_material', 'unknown')} | "
@@ -195,3 +196,4 @@ class GenerationOrchestrator:
             return await self.site_svc.get_nearby_infrastructure(spec.site.latlon, radius_m=200)
         except Exception:
             return {}
+

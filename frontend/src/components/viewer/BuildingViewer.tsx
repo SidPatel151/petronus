@@ -1,10 +1,133 @@
 'use client';
 import { useRef, useMemo, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { useLoader } from '@react-three/fiber';
+import { OrbitControls, Grid, Environment, MeshTransmissionMaterial } from '@react-three/drei';
 import * as THREE from 'three';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { useAppStore, LayerKey } from '@/lib/store';
 import { getTexture, resolveTexture } from '@/lib/textures';
+
+// ── PBR texture sets — add more as textures are downloaded ────────────
+const PBR_SETS: Record<string, {
+  diff: string; nor: string; roughJpg?: string;
+  repeatX: number; repeatY: number;
+}> = {
+  brick: {
+    diff: '/textures/brick_wall_10_diff_4k.jpg',
+    nor:  '/textures/brick_wall_10_nor_gl_4k.exr',
+    // rough is EXR-only — skipped, using float roughness instead
+    repeatX: 3, repeatY: 5,
+  },
+  stucco: {
+    diff: '/textures/painted_plaster_wall_diff_4k.jpg',
+    nor:  '/textures/painted_plaster_wall_nor_gl_4k.exr',
+    repeatX: 4, repeatY: 5,
+  },
+  wood: {
+    diff: '/textures/plank_flooring_04_diff_4k.jpg',
+    nor:  '/textures/plank_flooring_04_nor_gl_4k.exr',
+    repeatX: 2, repeatY: 8,
+  },
+  stone: {
+    diff:     '/textures/marble_01_diff_4k.jpg',
+    nor:      '/textures/marble_01_nor_gl_4k.exr',
+    roughJpg: '/textures/marble_01_rough_4k.jpg',
+    repeatX: 4, repeatY: 5,
+  },
+  marble: {
+    diff:     '/textures/marble_01_diff_4k.jpg',
+    nor:      '/textures/marble_01_nor_gl_4k.exr',
+    roughJpg: '/textures/marble_01_rough_4k.jpg',
+    repeatX: 3, repeatY: 3,
+  },
+  roof_tiles: {
+    diff:     '/textures/grey_roof_tiles_02_diff_4k.jpg',
+    nor:      '/textures/grey_roof_tiles_02_nor_gl_4k.exr',
+    roughJpg: '/textures/grey_roof_tiles_02_rough_4k.jpg',
+    repeatX: 5, repeatY: 5,
+  },
+  interior_tiles: {
+    diff: '/textures/interior_tiles_diff_4k.jpg',
+    nor:  '/textures/interior_tiles_nor_gl_4k.exr',
+    repeatX: 3, repeatY: 3,
+  },
+};
+
+// Loads diff + nor (EXR) only — for materials without a JPG roughness map
+function usePBRSetNoRough(name: string) {
+  const set = PBR_SETS[name];
+  const diff = useLoader(THREE.TextureLoader, set?.diff ?? '/textures/brick_wall_10_diff_4k.jpg');
+  const nor  = useLoader(EXRLoader,           set?.nor  ?? '/textures/brick_wall_10_nor_gl_4k.exr');
+  const rx = set?.repeatX ?? 3, ry = set?.repeatY ?? 5;
+  [diff, nor].forEach(t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); });
+  diff.colorSpace = THREE.SRGBColorSpace;
+  return { diff, nor, rough: null };
+}
+
+// Loads diff + nor (EXR) + rough (JPG) — for materials that have a JPG roughness map
+function usePBRSetWithRough(name: string) {
+  const set = PBR_SETS[name];
+  const diff  = useLoader(THREE.TextureLoader, set?.diff     ?? '/textures/marble_01_diff_4k.jpg');
+  const nor   = useLoader(EXRLoader,           set?.nor      ?? '/textures/marble_01_nor_gl_4k.exr');
+  const rough = useLoader(THREE.TextureLoader, set?.roughJpg ?? '/textures/marble_01_rough_4k.jpg');
+  const rx = set?.repeatX ?? 4, ry = set?.repeatY ?? 5;
+  [diff, nor, rough].forEach(t => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rx, ry); });
+  diff.colorSpace = THREE.SRGBColorSpace;
+  return { diff, nor, rough };
+}
+
+// Procedural canvas texture fallback — always renders, never conditionally calls hooks
+function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1 }: {
+  texName: string; fallbackColor: string;
+  roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
+}) {
+  const tex = useMemo(() => { try { return getTexture(texName); } catch { return null; } }, [texName]);
+  return (
+    <meshStandardMaterial
+      map={tex ?? undefined} color={tex ? '#ffffff' : fallbackColor}
+      roughness={roughness} metalness={metalness}
+      transparent={transparent} opacity={opacity}
+    />
+  );
+}
+
+// Pure dispatcher — no hooks, just renders one child or the other
+function PBRMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1 }: {
+  texName: string; fallbackColor: string;
+  roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
+}) {
+  const set = PBR_SETS[texName];
+  if (set) {
+    if (set.roughJpg) {
+      return <PBRMaterialInnerWithRough texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />;
+    }
+    return <PBRMaterialInnerNoRough texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />;
+  }
+  return <ProceduralMaterial texName={texName} fallbackColor={fallbackColor} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />;
+}
+
+// Inner component for PBR sets without a JPG rough map
+function PBRMaterialInnerNoRough({ texName, roughness, metalness, transparent, opacity }: {
+  texName: string; roughness: number; metalness: number; transparent: boolean; opacity: number;
+}) {
+  const { diff, nor } = usePBRSetNoRough(texName);
+  return (
+    <meshStandardMaterial map={diff} normalMap={nor}
+      roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />
+  );
+}
+
+// Inner component for PBR sets with a JPG rough map
+function PBRMaterialInnerWithRough({ texName, roughness, metalness, transparent, opacity }: {
+  texName: string; roughness: number; metalness: number; transparent: boolean; opacity: number;
+}) {
+  const { diff, nor, rough } = usePBRSetWithRough(texName);
+  return (
+    <meshStandardMaterial map={diff} normalMap={nor} roughnessMap={rough}
+      roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />
+  );
+}
 
 const COLORS: Record<string, string> = {
   unit: '#1e3a5f', living: '#1e3a5f', bedroom: '#1a3352',
@@ -42,11 +165,6 @@ function RoomMesh({ room, matColor, texName, roughness, metalness }: {
     } catch { return null; }
   }, [room.polygon, room.type]);
 
-  const texture = useMemo(() => {
-    if (room.type !== 'unit' || !texName) return null;
-    try { return getTexture(texName); } catch { return null; }
-  }, [texName, room.type]);
-
   if (!geometry) return null;
   const subRoomColors: Record<string,string> = {
     bedroom: '#1a3a5c', living: '#1e3a4a', kitchen: '#2a3a2a',
@@ -57,12 +175,12 @@ function RoomMesh({ room, matColor, texName, roughness, metalness }: {
 
   return (
     <mesh geometry={geometry} position={[0, yBase, 0]} receiveShadow castShadow>
-      <meshStandardMaterial
-        map={texture ?? undefined}
-        color={texture ? '#ffffff' : color}
-        transparent opacity={isStructural ? 0.92 : 0.75}
+      <PBRMaterial
+        texName={texName ?? ''}
+        fallbackColor={color}
         roughness={roughness ?? 0.85}
         metalness={metalness ?? 0.0}
+        transparent opacity={isStructural ? 0.92 : 0.75}
       />
     </mesh>
   );
@@ -78,11 +196,6 @@ function WallMesh({ wall, matColor, texName, roughness, metalness }: {
   const length = Math.sqrt(dx * dx + dz * dz);
   if (length < 0.01) return null;
 
-  const texture = useMemo(() => {
-    if (!wall.is_exterior || !texName) return null;
-    try { return getTexture(texName); } catch { return null; }
-  }, [texName, wall.is_exterior]);
-
   const height = (wall.height_ft || 9) * 0.3048;
   const angle = Math.atan2(dz, dx);
   const cx = (s[0] + e[0]) / 2, cz = (s[1] + e[1]) / 2;
@@ -92,9 +205,9 @@ function WallMesh({ wall, matColor, texName, roughness, metalness }: {
   return (
     <mesh position={[cx, yBase, cz]} rotation={[0, -angle, 0]} castShadow>
       <boxGeometry args={[length, height, 0.2]} />
-      <meshStandardMaterial
-        map={texture ?? undefined}
-        color={texture && wall.is_exterior ? '#ffffff' : color}
+      <PBRMaterial
+        texName={wall.is_exterior ? (texName ?? '') : ''}
+        fallbackColor={color}
         roughness={roughness ?? 0.9}
         metalness={metalness ?? 0.0}
       />
@@ -261,7 +374,7 @@ function RoofMesh({ mesh }: { mesh: any }) {
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <meshStandardMaterial color={mesh.color || '#374151'} roughness={0.9} metalness={0.05} side={THREE.DoubleSide} />
+      <PBRMaterial texName="roof_tiles" fallbackColor={mesh.color || '#374151'} roughness={0.85} metalness={0.05} />
     </mesh>
   );
 }
@@ -282,20 +395,42 @@ function FacadeMesh({ mesh }: { mesh: any; floorH?: number }) {
 
   if (!geometry) return null;
   const isWindow = mesh.element_type === 'window';
-  const isGlass = isWindow;
   const isBalcony = mesh.element_type === 'balcony';
   const isRail = mesh.element_type === 'balcony_rail';
 
+  if (isWindow) {
+    return (
+      <mesh geometry={geometry} castShadow={false} receiveShadow={false}>
+        <MeshTransmissionMaterial
+          color="#90caf9"
+          transmission={0.92}
+          roughness={0.04}
+          thickness={0.15}
+          ior={1.45}
+          transmissionSampler
+          samples={4}
+          envMapIntensity={1.5}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+    );
+  }
+  if (mesh.element_type === 'window_frame') {
+    return (
+      <mesh geometry={geometry} castShadow receiveShadow>
+        <meshStandardMaterial color="#1a2535" roughness={0.3} metalness={0.5} side={THREE.DoubleSide} />
+      </mesh>
+    );
+  }
+
   return (
-    <mesh geometry={geometry} castShadow={!isGlass} receiveShadow>
+    <mesh geometry={geometry} castShadow receiveShadow>
       <meshStandardMaterial
         color={mesh.color || '#94a3b8'}
-        transparent={isGlass}
-        opacity={isGlass ? 0.55 : 1}
-        roughness={isGlass ? 0.05 : isRail ? 0.4 : isBalcony ? 0.7 : 0.82}
-        metalness={isGlass ? 0.2 : isRail ? 0.6 : 0.0}
+        roughness={isRail ? 0.4 : isBalcony ? 0.7 : 0.82}
+        metalness={isRail ? 0.6 : 0.0}
         side={THREE.DoubleSide}
-        depthWrite={!isGlass}
       />
     </mesh>
   );
@@ -369,6 +504,31 @@ function toLocal(lon: number, lat: number, siteCenter: [number, number]): [numbe
   const x = (lon - siteCenter[0]) * 111320 * Math.cos(siteCenter[1] * Math.PI / 180);
   const z = (lat - siteCenter[1]) * 111320;
   return [x, z];
+}
+
+// ── Power plant 3D marker ──────────────────────────────────────────────
+function PowerPlant({ feature, siteCenter }: { feature: any; siteCenter: [number, number] }) {
+  const coords = feature.geometry?.coordinates;
+  if (!coords) return null;
+  const [x, z] = toLocal(coords[0], coords[1], siteCenter);
+  if (Math.abs(x) > 2000 || Math.abs(z) > 2000) return null;
+  const fuel = (feature.properties?.fuel || '').toUpperCase();
+  const color = fuel === 'SUN' ? '#facc15' : fuel === 'WND' ? '#34d399' : fuel === 'GAS' ? '#f97316' : fuel === 'NUC' ? '#a78bfa' : '#94a3b8';
+  return (
+    <group position={[x, 0, z]}>
+      {/* Stack */}
+      <mesh position={[0, 8, 0]}>
+        <cylinderGeometry args={[1.5, 2, 16, 8]} />
+        <meshStandardMaterial color="#64748b" roughness={0.8} />
+      </mesh>
+      {/* Indicator sphere */}
+      <mesh position={[0, 17, 0]}>
+        <sphereGeometry args={[2, 10, 10]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.6} />
+      </mesh>
+      <pointLight position={[0, 18, 0]} intensity={0.4} color={color} distance={80} />
+    </group>
+  );
 }
 
 // ── Fire hydrant 3D ────────────────────────────────────────────────────
@@ -577,14 +737,23 @@ function Scene() {
   const matColor = MATERIAL_COLORS[(spec as any)?.structural_system] || '#94a3b8';
   const FLOOR_H = 3.0;
 
-  // Resolve texture: prefer design_brief facade_material (Claude's recommendation),
-  // fall back to neighbor_style dominant_material (OSM data)
+  // Resolve wall texture: material_overrides.walls > design_brief (Claude AI) > neighbor_style (OSM)
+  const wallOverride = (spec as any)?.material_overrides?.walls ?? '';
   const briefMat = buildingModel?.design_brief?.facade_material ?? '';
   const neighborMat = buildingModel?.neighbor_style?.dominant_material ?? '';
-  const effectiveMat = briefMat || neighborMat;
+  const effectiveMat = (wallOverride && wallOverride !== 'ai') ? wallOverride : (briefMat || neighborMat);
   const { texName, roughness: texRoughness, metalness: texMetalness } = useMemo(
     () => resolveTexture((spec as any)?.structural_system ?? 'wood', effectiveMat),
     [(spec as any)?.structural_system, effectiveMat]
+  );
+
+  // Resolve floor texture separately from wall texture
+  const floorOverride = (spec as any)?.material_overrides?.floors ?? '';
+  const { texName: floorTexName, roughness: floorRoughness, metalness: floorMetalness } = useMemo(
+    () => (floorOverride && floorOverride !== 'ai')
+      ? resolveTexture('wood', floorOverride)
+      : { texName: 'interior_tiles', roughness: 0.55, metalness: 0.0 },
+    [floorOverride]
   );
 
   return (
@@ -613,6 +782,9 @@ function Scene() {
       {infrastructure?.power_poles?.map((f: any, i: number) => (
         <PowerPole key={`pp_${i}`} feature={f} siteCenter={siteCenter} />
       ))}
+      {activeLayers['power_grid'] && infrastructure?.power_plants?.map((f: any, i: number) => (
+        <PowerPlant key={`plant_${i}`} feature={f} siteCenter={siteCenter} />
+      ))}
       {infrastructure?.manholes?.map((f: any, i: number) => (
         <Manhole key={`mh_${i}`} feature={f} siteCenter={siteCenter} />
       ))}
@@ -620,11 +792,16 @@ function Scene() {
       {/* Generated building */}
       {buildingModel && (
         <>
-          {activeLayers['architecture'] && buildingModel.rooms.map((r: any) => (
-            <RoomMesh key={r.id} room={r} matColor={matColor}
-              texName={['unit','corridor','stair'].includes(r.type) ? texName : undefined}
-              roughness={texRoughness} metalness={texMetalness} />
-          ))}
+          {activeLayers['architecture'] && buildingModel.rooms.map((r: any) => {
+            const isStructural = ['unit','corridor','stair'].includes(r.type);
+            const isFloorRoom  = ['bedroom','living','kitchen','bathroom','dining'].includes(r.type);
+            return (
+              <RoomMesh key={r.id} room={r} matColor={matColor}
+                texName={isStructural ? texName : isFloorRoom ? floorTexName : undefined}
+                roughness={isStructural ? texRoughness : isFloorRoom ? floorRoughness : 0.85}
+                metalness={isStructural ? texMetalness : isFloorRoom ? floorMetalness : 0.0} />
+            );
+          })}
           {activeLayers['architecture'] && buildingModel.walls.map((w: any) => (
             <WallMesh key={w.id} wall={w} matColor={matColor}
               texName={texName} roughness={texRoughness} metalness={texMetalness} />
@@ -708,7 +885,7 @@ const LAYER_GROUPS: { group: string; layers: { key: LayerKey; label: string; col
 ];
 
 export default function BuildingViewer() {
-  const { activeLayers, toggleLayer, buildingModel, neighborConstraints, feasibilityData } = useAppStore();
+  const { activeLayers, toggleLayer, buildingModel, neighborConstraints, feasibilityData, infrastructure } = useAppStore();
   const terrain = buildingModel?.site_context?.terrain;
   const feasibility = neighborConstraints?.feasibility;
 
@@ -721,14 +898,15 @@ export default function BuildingViewer() {
       >
         <color attach="background" args={['#0a0a0f']} />
         <fog attach="fog" args={['#0a0a0f', 100, 300]} />
-        <ambientLight intensity={0.35} />
-        <hemisphereLight args={['#c8d8f0', '#3a4a30', 0.6]} />
-        <directionalLight position={[40, 60, 30]} intensity={1.4} castShadow
+        <ambientLight intensity={0.5} />
+        <hemisphereLight args={['#c8d8f0', '#3a4a30', 0.7]} />
+        <directionalLight position={[40, 60, 30]} intensity={1.6} castShadow
           shadow-mapSize={[2048, 2048]} shadow-camera-far={300}
           shadow-camera-left={-80} shadow-camera-right={80}
           shadow-camera-top={80} shadow-camera-bottom={-80} />
-        <directionalLight position={[-20, 30, -20]} intensity={0.4} color="#b0c8ff" />
+        <directionalLight position={[-20, 30, -20]} intensity={0.5} color="#b0c8ff" />
         <pointLight position={[0, 5, 0]} intensity={0.2} color="#00e5ff" distance={60} />
+        <Environment preset="city" background={false} />
         <Suspense fallback={null}>
           <Scene />
         </Suspense>
@@ -806,6 +984,22 @@ export default function BuildingViewer() {
                 </div>
               );
             })()}
+          {/* Real utility data from CEC */}
+          {infrastructure?.gas_utility && (
+            <div className="mt-1 pt-1 border-t border-[var(--border)]">
+              <div className="text-[10px] font-mono text-[var(--text-secondary)] uppercase tracking-wider mb-1">Utilities</div>
+              <div className="text-[10px] font-mono" style={{ color: 'var(--text-primary)' }}>
+                ⛽ Gas: {infrastructure.gas_utility.abbr || infrastructure.gas_utility.name}
+                <span className="opacity-50 ml-1">({infrastructure.gas_utility.category})</span>
+              </div>
+              {infrastructure.power_plants?.length > 0 && (
+                <div className="text-[10px] font-mono text-[var(--text-secondary)]">
+                  ⚡ Nearest plant: {infrastructure.power_plants[0].properties.name} ({infrastructure.power_plants[0].properties.fuel})
+                </div>
+              )}
+              <div className="text-[9px] font-mono opacity-40 mt-0.5">Source: CA Energy Commission</div>
+            </div>
+          )}
           {feasibility.issues?.map((issue: string, i: number) => (
             <div key={i} className="mt-1 text-[10px] font-mono text-[var(--accent-red)]">⚠ {issue}</div>
           ))}

@@ -242,12 +242,19 @@ export function resolveTexture(structuralSystem: string, facadeMaterial = ''): {
   const mat = facadeMaterial.toLowerCase();
 
   // Explicit facade material wins — this is what Claude recommended to match neighbors
-  if (mat.includes('brick'))                          return { texName: 'brick',    roughness: 0.92, metalness: 0.0  };
-  if (mat.includes('stone'))                          return { texName: 'stone',    roughness: 0.95, metalness: 0.0  };
-  if (mat.includes('wood') || mat.includes('timber')) return { texName: 'wood',     roughness: 0.85, metalness: 0.0  };
-  if (mat.includes('stucco') || mat.includes('plaster')) return { texName: 'stucco', roughness: 0.90, metalness: 0.0 };
-  if (mat.includes('concrete'))                       return { texName: 'concrete', roughness: 0.88, metalness: 0.0  };
-  if (mat.includes('steel') || mat.includes('metal')) return { texName: 'steel',    roughness: 0.35, metalness: 0.55 };
+  // Glass as a full cladding only makes sense for steel-frame curtain wall buildings
+  if (mat.includes('glass') && structuralSystem !== 'steel') {
+    // Ignore — fall through to structural system default (wood → stucco, concrete → concrete)
+  } else if (mat.includes('glass')) {
+    return { texName: 'steel', roughness: 0.25, metalness: 0.7 }; // curtain wall = steel panels + glass
+  }
+  if (mat.includes('brick'))                              return { texName: 'brick',    roughness: 0.92, metalness: 0.0  };
+  if (mat.includes('marble'))                             return { texName: 'marble',   roughness: 0.25, metalness: 0.05 };
+  if (mat.includes('stone'))                              return { texName: 'stone',    roughness: 0.95, metalness: 0.0  };
+  if (mat.includes('wood') || mat.includes('timber'))    return { texName: 'wood',     roughness: 0.85, metalness: 0.0  };
+  if (mat.includes('stucco') || mat.includes('plaster')) return { texName: 'stucco',   roughness: 0.90, metalness: 0.0  };
+  if (mat.includes('concrete'))                          return { texName: 'concrete', roughness: 0.88, metalness: 0.0  };
+  if (mat.includes('steel') || mat.includes('metal'))    return { texName: 'steel',    roughness: 0.35, metalness: 0.55 };
 
   // Fall back to structural system
   if (structuralSystem === 'steel')    return { texName: 'steel',    roughness: 0.35, metalness: 0.55 };
