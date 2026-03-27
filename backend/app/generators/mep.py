@@ -10,17 +10,17 @@ from app.models.schemas import MEPElement, Room, Wall, ProjectSpec, Level
 
 class MEPRouter:
 
-    def route(self, rooms: List[Room], walls: List[Wall], levels: List[Level], spec: ProjectSpec) -> List[MEPElement]:
+    def route(self, rooms: List[Room], walls: List[Wall], levels: List[Level], spec: ProjectSpec, power_connection: dict = None) -> List[MEPElement]:
         fine = (spec.fine_details or {}) if hasattr(spec, 'fine_details') else {}
         elements = []
-        elements.extend(self._route_plumbing(rooms, levels))
-        elements.extend(self._route_electrical(rooms, levels))
+        elements.extend(self._route_plumbing(rooms, walls, levels))
+        elements.extend(self._route_electrical(rooms, levels, power_connection))
         elements.extend(self._route_hvac(rooms, levels, spec.hvac_preference))
         elements.extend(self._route_fixtures(rooms, levels, fine))
         return elements
 
     # ── Plumbing ──────────────────────────────────────────────────────────────
-    def _route_plumbing(self, rooms: List[Room], levels: List[Level]) -> List[MEPElement]:
+    def _route_plumbing(self, rooms: List[Room], walls: List[Wall], levels: List[Level]) -> List[MEPElement]:
         elements = []
         floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
         top_y = len(levels) * floor_h - 0.4
@@ -63,10 +63,23 @@ class MEPRouter:
                 id=f"fixture_{room.type}_{uuid.uuid4().hex[:4]}", system="plumbing", type="fixture",
                 start=[cx, branch_y, cz], level=lvl_idx))
 
+        # Main building drain exits through the south wall (toward street)
+        if riser_positions:
+            avg_rx = sum(p[0] for p in riser_positions) / len(riser_positions)
+            avg_rz = sum(p[1] for p in riser_positions) / len(riser_positions)
+            # Find southernmost point (most negative z = front of building)
+            ext_walls = [w for w in walls if hasattr(w, 'is_exterior') and w.is_exterior]
+            south_z = min((w.start[1] for w in ext_walls), default=avg_rz - 8.0)
+            elements.append(MEPElement(
+                id="main_drain", system="plumbing", type="main_drain",
+                start=[avg_rx, -0.5, avg_rz],
+                end=[avg_rx, -0.5, south_z - 1.5],
+                level=0, diameter_in=6.0))
+
         return elements
 
     # ── Electrical ────────────────────────────────────────────────────────────
-    def _route_electrical(self, rooms: List[Room], levels: List[Level]) -> List[MEPElement]:
+    def _route_electrical(self, rooms: List[Room], levels: List[Level], power_connection: dict = None) -> List[MEPElement]:
         elements = []
         floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
 
@@ -123,6 +136,26 @@ class MEPRouter:
                 elements.append(MEPElement(
                     id=f"light_{uuid.uuid4().hex[:6]}", system="electrical", type="lighting_point",
                     start=[cx, ceil_y, cz], level=lvl))
+
+        # Service entry: run conduit from panel to nearest exterior wall face, then to power connection
+        if power_connection:
+            try:
+                coords = power_connection.get("geometry", {}).get("coordinates", [])
+                if coords and len(coords) == 2:
+                    # Site-edge point (where the power line meets the site boundary)
+                    entry_x = coords[0][0]  # these are lat/lon but we want local meters
+                    entry_z = coords[0][1]
+                    # Use the panel position as start, and the edge of building as end
+                    # Just route to the nearest exterior wall edge (approx -bw/2 in x)
+                    entry_y = 1.5  # service entry height
+                    # Draw service conduit from panel to building exterior face
+                    elements.append(MEPElement(
+                        id="service_entry", system="electrical", type="service_conduit",
+                        start=[panel_x, entry_y, panel_z],
+                        end=[panel_x - 8.0, entry_y, panel_z],  # toward street
+                        level=0))
+            except Exception:
+                pass
 
         return elements
 

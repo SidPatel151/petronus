@@ -170,7 +170,8 @@ class GenerationOrchestrator:
         # Step 6: MEP routing
         self.progress_cb(72, "Routing MEP systems…")
         log.append("Routing plumbing, electrical, HVAC")
-        mep_elements = self.mep_router.route(rooms, walls, levels, spec)
+        power_conn = infra.get("power_connection") if infra else None
+        mep_elements = self.mep_router.route(rooms, walls, levels, spec, power_connection=power_conn)
         model.mep_elements = mep_elements
         plumbing = len([e for e in mep_elements if e.system == "plumbing"])
         electrical = len([e for e in mep_elements if e.system == "electrical"])

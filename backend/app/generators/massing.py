@@ -80,8 +80,8 @@ class MassingGenerator:
 
         options = [
             self._option_rectangle(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
-            self._option_l_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
-            self._option_bar(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
+            self._option_stepped(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
+            self._option_u_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
         ]
         levels = self._build_levels(stories, spec.floor_to_floor_height_ft)
         return options, levels
@@ -142,43 +142,58 @@ class MassingGenerator:
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_l_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        bw = tw
-        bh = td
-        full = box(-bw/2, -bh/2, bw/2, bh/2)
-        cutout = box(bw * 0.1, bh * 0.1, bw/2, bh/2)
-        footprint = full.difference(cutout)
-        if footprint.is_empty or not envelope_local.buffer(1).contains(footprint):
+    def _option_stepped(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
+        # Base floor uses full footprint, upper floors step back 2m on front+right
+        bw, bd = tw, td
+        footprint = box(-bw/2, -bd/2, bw/2, bd/2)
+        if not envelope_local.buffer(1).contains(footprint):
             footprint = envelope_local.buffer(-0.5)
-        total_area = footprint.area * stories
-        coords = list(footprint.exterior.coords)
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_b", mat_color, grad_x, grad_z)
+        # Upper tier is inset 2m on front and right
+        upper_w = max(bw - 2.0, bw * 0.7)
+        upper_d = max(bd - 2.0, bd * 0.7)
+        upper_footprint = box(-upper_w/2, -upper_d/2, upper_w/2, upper_d/2)
+
+        # Generate lower + upper meshes separately
+        lower_stories = max(1, stories // 2)
+        upper_stories = stories - lower_stories
+        meshes = self._extrude_footprint(footprint, lower_stories, floor_height_m, "massing_b_low", mat_color, grad_x, grad_z)
+        if upper_stories > 0:
+            y_offset = lower_stories * floor_height_m
+            upper_meshes = self._extrude_footprint(upper_footprint, upper_stories, floor_height_m, "massing_b_up", mat_color, grad_x, grad_z)
+            # Shift upper meshes up by lower floor height
+            for m in upper_meshes:
+                if "vertices" in m:
+                    m["vertices"] = [[v[0], v[1] + y_offset, v[2]] for v in m["vertices"]]
+            meshes += upper_meshes
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
+        total_area = footprint.area * lower_stories + upper_footprint.area * upper_stories
         return {
-            "label": "B", "name": "L-Shape / Courtyard",
-            "description": "L-shape massing — better daylight and outdoor space",
-            "footprint": coords,
+            "label": "B", "name": "Stepped Massing",
+            "description": "Upper floors set back — terraces + varied roofline",
+            "footprint": list(footprint.exterior.coords),
             "total_area_m2": total_area, "stories": stories, "floor_height_m": floor_height_m,
             "meshes": meshes,
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_bar(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        # Bar: wider than deep, matches neighbor width
-        bar_length = tw * 1.2
-        bar_depth = max(td * 0.6, 8.0)
-        bounds = envelope_local.bounds
-        bar_length = min(bar_length, (bounds[2] - bounds[0]) * 0.90)
-        bar_depth = min(bar_depth, (bounds[3] - bounds[1]) * 0.90)
-        footprint = box(-bar_length/2, -bar_depth/2, bar_length/2, bar_depth/2)
+    def _option_u_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
+        bw, bd = tw, td
+        full = box(-bw/2, -bd/2, bw/2, bd/2)
+        # Cut a courtyard from the front center
+        court_w = bw * 0.45
+        court_d = bd * 0.40
+        cutout = box(-court_w/2, -bd/2, court_w/2, -bd/2 + court_d)
+        footprint = full.difference(cutout)
+        if footprint.is_empty or not envelope_local.buffer(1).contains(footprint):
+            footprint = full
         if not envelope_local.buffer(1).contains(footprint):
             footprint = envelope_local.buffer(-0.5)
         total_area = footprint.area * stories
         meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
-            "label": "C", "name": "Bar Building",
-            "description": "Long bar — maximizes unit count with double-loaded corridor",
+            "label": "C", "name": "U-Shape / Forecourt",
+            "description": "U-shape with entry courtyard — classic apartment typology",
             "footprint": list(footprint.exterior.coords),
             "total_area_m2": total_area, "stories": stories, "floor_height_m": floor_height_m,
             "meshes": meshes,

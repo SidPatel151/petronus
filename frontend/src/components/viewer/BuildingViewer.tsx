@@ -237,9 +237,9 @@ function StructuralColumns({ massing, levels, structuralSystem }: {
   const yMid = totalH / 2;
 
   // Column size by structural system
-  const colW = structuralSystem === 'concrete' ? 0.45
-              : structuralSystem === 'steel'    ? 0.25
-              : 0.18; // wood
+  const colW = structuralSystem === 'concrete' ? 0.55
+              : structuralSystem === 'steel'    ? 0.30
+              : 0.22; // wood
 
   const colColor = structuralSystem === 'concrete' ? '#8C8C8C'
                  : structuralSystem === 'steel'    ? '#6B7B8D'
@@ -264,22 +264,29 @@ function StructuralColumns({ massing, levels, structuralSystem }: {
     }
   }
 
-  const colMat = <meshStandardMaterial color={colColor}
-    roughness={structuralSystem === 'concrete' ? 0.85 : 0.3}
-    metalness={structuralSystem === 'steel' ? 0.7 : 0.0} />;
+  const rough = structuralSystem === 'concrete' ? 0.85 : 0.3;
+  const metal = structuralSystem === 'steel' ? 0.7 : 0.0;
 
   return (
     <>
       {positions.map(([x, z], i) => (
         <group key={i} position={[x, yMid, z]}>
           {structuralSystem === 'steel' ? (
-            // I-beam: web + two flanges
             <>
-              <mesh castShadow><boxGeometry args={[colW, totalH, colW * 0.15]} />{colMat}</mesh>
-              <mesh castShadow><boxGeometry args={[colW * 0.15, totalH, colW]} />{colMat}</mesh>
+              <mesh castShadow>
+                <boxGeometry args={[colW, totalH, colW * 0.15]} />
+                <meshStandardMaterial color={colColor} roughness={rough} metalness={metal} />
+              </mesh>
+              <mesh castShadow>
+                <boxGeometry args={[colW * 0.15, totalH, colW]} />
+                <meshStandardMaterial color={colColor} roughness={rough} metalness={metal} />
+              </mesh>
             </>
           ) : (
-            <mesh castShadow receiveShadow><boxGeometry args={[colW, totalH, colW]} />{colMat}</mesh>
+            <mesh castShadow receiveShadow>
+              <boxGeometry args={[colW, totalH, colW]} />
+              <meshStandardMaterial color={colColor} roughness={rough} metalness={metal} />
+            </mesh>
           )}
         </group>
       ))}

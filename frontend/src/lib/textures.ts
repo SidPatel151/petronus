@@ -45,24 +45,45 @@ function createConcreteTexture(): THREE.Texture {
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.fillStyle = '#9ca3af';
+  // Dark form-cast concrete base
+  ctx.fillStyle = '#6b7280';
   ctx.fillRect(0, 0, W, H);
 
-  // Horizontal formwork pour lines
-  for (let y = 80; y < H; y += 80) {
-    ctx.fillStyle = 'rgba(0,0,0,0.09)';
-    ctx.fillRect(0, y - 1, W, 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    ctx.fillRect(0, y + 1, W, 1);
+  // Heavy formwork panel joints (every 120px horizontal, 160px vertical)
+  ctx.strokeStyle = '#374151';
+  ctx.lineWidth = 3;
+  for (let x = 0; x <= W; x += 120) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
   }
-  // Vertical panel joints
-  for (let x = 160; x < W; x += 160) {
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
-    ctx.fillRect(x - 1, 0, 2, H);
+  for (let y = 0; y <= H; y += 160) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
 
-  addNoise(ctx, W, H, 18);
-  return makeTexture(canvas, 4, 4);
+  // Tie hole marks at panel intersections
+  ctx.fillStyle = '#1f2937';
+  for (let x = 0; x <= W; x += 120) {
+    for (let y = 0; y <= H; y += 160) {
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Subtle aggregate variation within panels
+  for (let x = 0; x < W; x += 120) {
+    for (let y = 0; y < H; y += 160) {
+      const v = (Math.random() - 0.5) * 20;
+      ctx.fillStyle = `rgba(${107+v|0},${114+v|0},${128+v|0},0.3)`;
+      ctx.fillRect(x + 4, y + 4, 112, 152);
+    }
+  }
+
+  // Pour lines (horizontal streaks from settling)
+  for (let y = 20; y < H; y += 30 + Math.random() * 20) {
+    ctx.fillStyle = `rgba(0,0,0,${0.03 + Math.random() * 0.04})`;
+    ctx.fillRect(0, y, W, 1 + Math.random() * 2);
+  }
+
+  addNoise(ctx, W, H, 10);
+  return makeTexture(canvas, 3, 4);
 }
 
 // ── Wood siding ─────────────────────────────────────────────────────────────
