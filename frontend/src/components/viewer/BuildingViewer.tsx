@@ -146,24 +146,33 @@ const MATERIAL_COLORS: Record<string, string> = {
 };
 
 // ── Room: extrude polygon on XZ plane, Y is up ─────────────────────────
+const FLOOR_ROOM_TYPES = new Set(['bedroom','living','kitchen','bathroom','dining']);
+
 function RoomMesh({ room, matColor, texName, roughness, metalness }: {
   room: any; matColor: string; texName?: string; roughness?: number; metalness?: number;
 }) {
   if (!room.polygon?.length) return null;
   const isStructural = ['unit', 'corridor', 'stair'].includes(room.type);
+  const isFloor = FLOOR_ROOM_TYPES.has(room.type);
+
   const geometry = useMemo(() => {
     try {
-      const shape = new THREE.Shape();
       const pts = room.polygon;
-      shape.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
-      shape.closePath();
-      const depth = ['unit', 'corridor', 'stair'].includes(room.type) ? 2.8 : 0.12;
-      const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+      const s = new THREE.Shape();
+      s.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+      s.closePath();
+      if (isFloor) {
+        // Flat floor plane — ShapeGeometry gives normalized [0,1] UVs = proper tiling
+        const geo = new THREE.ShapeGeometry(s);
+        geo.rotateX(-Math.PI / 2);
+        return geo;
+      }
+      const geo = new THREE.ExtrudeGeometry(s, { depth: 2.8, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
       return geo;
     } catch { return null; }
-  }, [room.polygon, room.type]);
+  }, [room.polygon, isFloor]);
 
   if (!geometry) return null;
   const subRoomColors: Record<string,string> = {
@@ -171,16 +180,18 @@ function RoomMesh({ room, matColor, texName, roughness, metalness }: {
     bathroom: '#1a2a3a', dining: '#2a2a1a',
   };
   const color = room.type === 'unit' ? matColor : subRoomColors[room.type] || COLORS[room.type] || '#1a2030';
-  const yBase = (room.level || 0) * 3.0;
+  // Floor planes sit 2cm above the structural slab so they're not z-fighting
+  const yBase = (room.level || 0) * 3.0 + (isFloor ? 0.02 : 0);
 
   return (
-    <mesh geometry={geometry} position={[0, yBase, 0]} receiveShadow castShadow>
+    <mesh geometry={geometry} position={[0, yBase, 0]} receiveShadow castShadow={!isFloor}>
       <PBRMaterial
         texName={texName ?? ''}
         fallbackColor={color}
         roughness={roughness ?? 0.85}
         metalness={metalness ?? 0.0}
-        transparent opacity={isStructural ? 0.92 : 0.75}
+        transparent={isStructural}
+        opacity={isStructural ? 0.92 : 1.0}
       />
     </mesh>
   );
@@ -212,6 +223,67 @@ function WallMesh({ wall, matColor, texName, roughness, metalness }: {
         metalness={metalness ?? 0.0}
       />
     </mesh>
+  );
+}
+
+// ── Structural column ──────────────────────────────────────────────────
+function StructuralColumns({ massing, levels, structuralSystem }: {
+  massing: any; levels: any[]; structuralSystem: string;
+}) {
+  const footprint: [number, number][] = massing?.footprint || [];
+  if (footprint.length < 3) return null;
+
+  const totalH = levels.length * 3.0;
+  const yMid = totalH / 2;
+
+  // Column size by structural system
+  const colW = structuralSystem === 'concrete' ? 0.45
+              : structuralSystem === 'steel'    ? 0.25
+              : 0.18; // wood
+
+  const colColor = structuralSystem === 'concrete' ? '#8C8C8C'
+                 : structuralSystem === 'steel'    ? '#6B7B8D'
+                 : '#7a5c30';
+
+  // Collect column positions: footprint corners + midpoints on long edges (>5m)
+  const positions: [number, number][] = [];
+  const pts = footprint[footprint.length - 1][0] === footprint[0][0] &&
+              footprint[footprint.length - 1][1] === footprint[0][1]
+    ? footprint.slice(0, -1)   // drop closing duplicate
+    : footprint;
+
+  for (let i = 0; i < pts.length; i++) {
+    positions.push(pts[i]);
+    const next = pts[(i + 1) % pts.length];
+    const dx = next[0] - pts[i][0], dz = next[1] - pts[i][1];
+    const len = Math.sqrt(dx * dx + dz * dz);
+    // Add intermediate column every 5m on longer edges
+    const segs = Math.floor(len / 5);
+    for (let s = 1; s < segs; s++) {
+      positions.push([pts[i][0] + dx * s / segs, pts[i][1] + dz * s / segs]);
+    }
+  }
+
+  const colMat = <meshStandardMaterial color={colColor}
+    roughness={structuralSystem === 'concrete' ? 0.85 : 0.3}
+    metalness={structuralSystem === 'steel' ? 0.7 : 0.0} />;
+
+  return (
+    <>
+      {positions.map(([x, z], i) => (
+        <group key={i} position={[x, yMid, z]}>
+          {structuralSystem === 'steel' ? (
+            // I-beam: web + two flanges
+            <>
+              <mesh castShadow><boxGeometry args={[colW, totalH, colW * 0.15]} />{colMat}</mesh>
+              <mesh castShadow><boxGeometry args={[colW * 0.15, totalH, colW]} />{colMat}</mesh>
+            </>
+          ) : (
+            <mesh castShadow receiveShadow><boxGeometry args={[colW, totalH, colW]} />{colMat}</mesh>
+          )}
+        </group>
+      ))}
+    </>
   );
 }
 
@@ -806,6 +878,14 @@ function Scene() {
             <WallMesh key={w.id} wall={w} matColor={matColor}
               texName={texName} roughness={texRoughness} metalness={texMetalness} />
           ))}
+          {/* Structural columns at footprint corners */}
+          {activeLayers['structure'] && (
+            <StructuralColumns
+              massing={buildingModel.massing_options?.[buildingModel.chosen_massing_index]}
+              levels={buildingModel.levels}
+              structuralSystem={(spec as any)?.structural_system ?? 'wood'}
+            />
+          )}
           {/* MEP: pipes, ducts, conduit, fixtures */}
           {buildingModel.mep_elements.map((el: any) => {
             const FIXTURE_TYPES = ['toilet','sink','shower','outlet','fire_alarm','sprinkler','exhaust_fan','kitchen_sink','range_hood'];

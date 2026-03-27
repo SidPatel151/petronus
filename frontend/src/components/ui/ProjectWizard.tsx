@@ -77,7 +77,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function ProjectWizard() {
-  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel } = useAppStore();
+  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showMaterials, setShowMaterials] = useState(false);
@@ -110,10 +110,19 @@ export default function ProjectWizard() {
   const handleGenerate = async () => {
     if (!selectedSite) return;
     setLoading(true); setError('');
+
+    // If user clicked an existing building, seed its material + height into the spec
+    // so the generator matches that building's style
+    const clickedProps = clickedBuilding?.properties || {};
+    const clickedMat = (clickedProps.facade_mat || clickedProps['building:material'] || clickedProps.material || '').toLowerCase();
+    const clickedLevels = parseInt(clickedProps['building:levels'] || clickedProps.levels || '0') || 0;
+    const clickedHeight = clickedProps.height_m ? Math.round(parseFloat(clickedProps.height_m) / 3) : 0;
+    const inferredStories = clickedLevels || clickedHeight || spec.stories || 2;
+
     const fullSpec: any = {
       region_country: 'US', region_state: 'CA',
       occupancy: 'MultiFamilyResidential', permit_set: false,
-      stories,
+      stories: inferredStories,
       floor_to_floor_height_ft: spec.floor_to_floor_height_ft || 10.0,
       structural_system: spec.structural_system || 'wood',
       hvac_preference: spec.hvac_preference || 'mini_split',
@@ -121,7 +130,11 @@ export default function ProjectWizard() {
       priority: spec.priority || 'cost',
       target_gross_area_sqft: effectiveArea,
       unit_count: spec.unit_count || null,
-      material_overrides: (spec as any).material_overrides || null,
+      // Merge clicked building's material into overrides if user hasn't set walls manually
+      material_overrides: {
+        ...((spec as any).material_overrides || {}),
+        ...(clickedMat && !((spec as any).material_overrides?.walls) ? { walls: clickedMat } : {}),
+      } || null,
       fine_details: (spec as any).fine_details || null,
       site: {
         latlon: { lat: selectedSite.lat, lon: selectedSite.lon },

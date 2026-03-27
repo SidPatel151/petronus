@@ -83,6 +83,8 @@ class SiteContextService:
         result = {"fire_hydrants": [], "pipelines": [], "power_lines": [],
                   "roads": [], "manholes": [], "waterways": [], "buildings": [],
                   "places": [], "power_poles": []}
+        overpass_ok = False
+        data = {"elements": []}
         try:
             async with httpx.AsyncClient(timeout=28) as client:
                 resp = await client.post(
@@ -90,13 +92,11 @@ class SiteContextService:
                     content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
-                if resp.status_code != 200 or not resp.content:
-                    result["power_connection"] = None
-                    return result
-                data = resp.json()
+                if resp.status_code == 200 and resp.content:
+                    data = resp.json()
+                    overpass_ok = True
         except Exception:
-            result["power_connection"] = None
-            return result
+            pass  # continue to CEC queries below
 
         for el in data.get("elements", []):
             tags = el.get("tags", {})
@@ -165,7 +165,7 @@ class SiteContextService:
                     "properties": {**tags, "place_type": place_type, "display_name": name},
                 })
 
-        result["power_connection"] = self._get_power_connection(latlon, result["power_lines"])
+        result["power_connection"] = self._get_power_connection(latlon, result["power_lines"]) if overpass_ok else None
 
         # CEC real data — run in parallel
         plants, gas_utility = await asyncio.gather(

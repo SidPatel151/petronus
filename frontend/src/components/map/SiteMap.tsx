@@ -393,8 +393,7 @@ export default function SiteMap() {
       map.on('mouseenter', 'buildings-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'buildings-fill', () => { map.getCanvas().style.cursor = ''; });
       map.on('click', 'buildings-fill', (e: any) => {
-        e.preventDefault();
-        e.stopPropagation?.();
+        suppressMapClick = true;
         const f = e.features?.[0];
         if (f) setClickedBuilding2(f);
       });
@@ -404,7 +403,7 @@ export default function SiteMap() {
         map.on('mouseenter', layerId, () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', layerId, () => { map.getCanvas().style.cursor = ''; });
         map.on('click', layerId, (e: any) => {
-          e.preventDefault();
+          suppressMapClick = true;
           const f = e.features?.[0];
           if (!f) return;
           const props = f.properties || {};
@@ -424,7 +423,7 @@ export default function SiteMap() {
       map.on('mouseenter', 'power-plants-circle', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'power-plants-circle', () => { map.getCanvas().style.cursor = ''; });
       map.on('click', 'power-plants-circle', (e: any) => {
-        e.preventDefault();
+        suppressMapClick = true;
         const f = e.features?.[0];
         if (!f) return;
         const p = f.properties || {};
@@ -452,6 +451,9 @@ export default function SiteMap() {
       const src = map.getSource(id) as maplibregl.GeoJSONSource;
       if (src) src.setData(data);
     };
+
+    // Prevent the generic map click from firing when a layer feature was clicked
+    let suppressMapClick = false;
 
     const handleSiteSelect = async (lat: number, lng: number) => {
       if (markerRef.current) markerRef.current.remove();
@@ -502,6 +504,7 @@ export default function SiteMap() {
     selectSiteRef.current = handleSiteSelect;
 
     map.on('click', async (e) => {
+      if (suppressMapClick) { suppressMapClick = false; return; }
       const { lng, lat } = e.lngLat;
       await handleSiteSelect(lat, lng);
     });
