@@ -1,7 +1,26 @@
 'use client';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
 import api from '@/lib/api';
+
+// Compute sqft from a GeoJSON polygon using Shoelace on local-meter coords
+function polyAreaSqft(poly: any): number | null {
+  const coords = poly?.coordinates?.[0];
+  if (!coords || coords.length < 3) return null;
+  const cLon = coords.reduce((s: number, c: number[]) => s + c[0], 0) / coords.length;
+  const cLat = coords.reduce((s: number, c: number[]) => s + c[1], 0) / coords.length;
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(cLat * Math.PI / 180);
+  let area = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const x1 = (coords[i][0] - cLon) * mPerDegLon;
+    const y1 = (coords[i][1] - cLat) * mPerDegLat;
+    const x2 = (coords[i + 1][0] - cLon) * mPerDegLon;
+    const y2 = (coords[i + 1][1] - cLat) * mPerDegLat;
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.round(Math.abs(area / 2) * 10.7639);
+}
 
 const GOALS = [
   { key: 'cost',   label: 'Budget Optimization',  icon: '$', desc: 'Minimize build cost' },
@@ -124,6 +143,12 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 
 export default function ProjectWizard() {
   const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding, drawnParcel, buildingModel } = useAppStore();
+
+  // Use drawn parcel area when available — more accurate than OSM parcel
+  const parcelAreaSqft = useMemo(() =>
+    polyAreaSqft(drawnParcel) ?? siteContext?.area_sqft ?? null,
+    [drawnParcel, siteContext?.area_sqft]
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showMaterials, setShowMaterials] = useState(false);
@@ -151,8 +176,8 @@ export default function ProjectWizard() {
 
   // Derive a smart default area from parcel size × stories × efficiency factor
   const stories = spec.stories || 2;
-  const derivedArea = siteContext?.area_sqft
-    ? Math.round(siteContext.area_sqft * stories * 0.65 / 100) * 100
+  const derivedArea = parcelAreaSqft
+    ? Math.round(parcelAreaSqft * 0.65 / 100) * 100   // single floor footprint × 65% efficiency
     : 8000;
   const effectiveArea = spec.target_gross_area_sqft || derivedArea;
 
@@ -243,7 +268,7 @@ export default function ProjectWizard() {
             {siteContext && (
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { label: 'Area', val: `${siteContext.area_sqft?.toFixed(0)} sqft` },
+                  { label: 'Area', val: `${parcelAreaSqft?.toLocaleString() ?? siteContext.area_sqft?.toFixed(0)} sqft${drawnParcel ? ' (drawn)' : ''}` },
                   { label: 'Flood Zone', val: siteContext.flood_zone || 'X' },
                   { label: 'Seismic', val: `SDC ${siteContext.seismic_category}` + (siteContext.hazard_detail?.seismic?.source === 'USGS ASCE 7-22' ? ' ✓' : ' ~') },
                   { label: 'Wind', val: `${siteContext.wind_speed_mph} mph` + (siteContext.hazard_detail?.wind?.source === 'ATC ASCE 7-22' ? ' ✓' : ' ~') },
@@ -411,16 +436,31 @@ export default function ProjectWizard() {
               onChange={(v) => updateSpec({ target_gross_area_sqft: v })} />
             {!spec.target_gross_area_sqft && (
               <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
-                {siteContext?.area_sqft
-                  ? `Auto = parcel (${Math.round(siteContext.area_sqft).toLocaleString()} sqft) × ${stories} floors × 65%`
+                {parcelAreaSqft
+                  ? `Auto = parcel (${parcelAreaSqft.toLocaleString()} sqft${drawnParcel ? ', drawn' : ''}) × 65% efficiency`
                   : 'Set a target or select a site for auto-calc'}
               </div>
             )}
-            {spec.target_gross_area_sqft && siteContext?.area_sqft && spec.target_gross_area_sqft > siteContext.area_sqft * stories * 0.9 && (
-              <div className="text-[10px] font-mono text-[var(--accent-amber)]">
-                ⚠ Exceeds ~90% of buildable envelope — may not fit
-              </div>
-            )}
+            {spec.target_gross_area_sqft && parcelAreaSqft && (() => {
+              const singleFloorMax = parcelAreaSqft * 0.85;
+              const multiFloorMax = singleFloorMax * stories;
+              if (spec.target_gross_area_sqft > multiFloorMax) {
+                return (
+                  <div className="text-[10px] font-mono text-[var(--accent-red)]">
+                    ✗ {spec.target_gross_area_sqft.toLocaleString()} sqft exceeds {stories}-floor max (~{Math.round(multiFloorMax).toLocaleString()} sqft) — add more floors or reduce target
+                  </div>
+                );
+              }
+              if (spec.target_gross_area_sqft > singleFloorMax) {
+                const floorsNeeded = Math.ceil(spec.target_gross_area_sqft / singleFloorMax);
+                return (
+                  <div className="text-[10px] font-mono text-[var(--accent-amber)]">
+                    ⚠ Target needs ~{floorsNeeded} floors to fit on this parcel ({parcelAreaSqft.toLocaleString()} sqft land)
+                  </div>
+                );
+              }
+              return null;
+            })()}
           </div>
         </Field>
 

@@ -966,47 +966,20 @@ function Scene() {
       {/* Generated building */}
       {buildingModel && (
         <>
-          {/* ── Solid exterior shell + floor slabs — matches parcel footprint exactly ── */}
+          {/* ── Solid exterior shell ── */}
           {activeLayers['architecture'] && (() => {
             const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
             return (
-              <>
-                <MassingShell
-                  massing={massing}
-                  levels={buildingModel.levels}
-                  floorH={floorH}
-                  texName={texName}
-                  roughness={texRoughness}
-                  metalness={texMetalness}
-                />
-                {buildingModel.levels.map((_: any, i: number) => (
-                  <FloorSlab key={`slab_${i}`} massing={massing} levelIdx={i} floorH={floorH} />
-                ))}
-              </>
+              <MassingShell
+                massing={massing}
+                levels={buildingModel.levels}
+                floorH={floorH}
+                texName={texName}
+                roughness={texRoughness}
+                metalness={texMetalness}
+              />
             );
           })()}
-
-          {/* Interior rooms — floor/ceiling slabs only (unit shell replaced by MassingShell) */}
-          {activeLayers['architecture'] && buildingModel.rooms.map((r: any) => {
-            if (r.type === 'unit') return null; // exterior handled by MassingShell
-            const isFloorRoom = FLOOR_ROOM_TYPES.has(r.type);
-            if (!isFloorRoom) return null;
-            return (
-              <group key={r.id}>
-                <RoomMesh room={r} matColor={matColor} floorH={floorH}
-                  texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} />
-                <CeilingMesh room={r} floorH={floorH} />
-              </group>
-            );
-          })}
-          {/* Interior walls only — exterior wall shape is provided by the shell */}
-          {activeLayers['architecture'] && buildingModel.walls.map((w: any) => {
-            if (w.is_exterior) return null;
-            return (
-              <WallMesh key={w.id} wall={w} matColor={matColor} floorH={floorH}
-                texName={texName} roughness={texRoughness} metalness={texMetalness} />
-            );
-          })}
           {/* Structural columns at footprint corners */}
           {activeLayers['structure'] && (
             <StructuralColumns
@@ -1028,10 +1001,10 @@ function Scene() {
             return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
           })}
 
-          {/* Massing meshes: terrain, floor bands, footprint, overlap, roof */}
+          {/* Massing meshes: terrain, footprint outline, overlap, roof */}
           {(buildingModel.massing_options?.[buildingModel.chosen_massing_index]?.meshes || []).map((m: any, i: number) => {
             if (m.element_type === 'terrain') return <TerrainMesh key={`t_${i}`} mesh={m} />;
-            if (m.element_type === 'floor_band') return <FloorBandMesh key={`fb_${i}`} mesh={m} />;
+            if (m.element_type === 'floor_band') return null; // removed — was sticking outside MassingShell
             if (m.element_type === 'overlap') return <OverlapMesh key={`ov_${i}`} mesh={m} />;
             if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
             if (m.element_type === 'roof') return activeLayers['roof'] ? <RoofMesh key={`rf_${i}`} mesh={m} /> : null;
