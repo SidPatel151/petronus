@@ -913,8 +913,8 @@ function Scene() {
 
   // Resolve wall texture: material_overrides.walls > design_brief (Claude AI) > neighbor_style (OSM)
   const wallOverride = (spec as any)?.material_overrides?.walls ?? '';
-  const briefMat = buildingModel?.design_brief?.facade_material ?? '';
-  const neighborMat = buildingModel?.neighbor_style?.dominant_material ?? '';
+  const briefMat = (buildingModel as any)?.design_brief?.facade_material ?? '';
+  const neighborMat = (buildingModel as any)?.neighbor_style?.dominant_material ?? '';
   const effectiveMat = (wallOverride && wallOverride !== 'ai') ? wallOverride : (briefMat || neighborMat);
   const { texName, roughness: texRoughness, metalness: texMetalness } = useMemo(
     () => resolveTexture((spec as any)?.structural_system ?? 'wood', effectiveMat),
@@ -1270,10 +1270,10 @@ export default function BuildingViewer() {
           .reduce((s: number, r: any) => s + (r.area_sqft || 0), 0));
         const lvlCount = buildingModel.levels?.length || 1;
         const use      = (buildingModel.spec as any)?.building_use || 'multi_family';
-        const archHint = (buildingModel.design_brief as any)?.archetype
-          || (buildingModel.design_brief as any)?.shape
+        const archHint = (buildingModel as any)?.design_brief?.archetype
+          || (buildingModel as any)?.design_brief?.shape
           || '';
-        const matHint  = buildingModel.neighbor_style?.dominant_material || '';
+        const matHint  = (buildingModel as any)?.neighbor_style?.dominant_material || '';
 
         return (
           <div className="absolute top-4 left-4 panel p-3 animate-fade-in" style={{ minWidth: '180px' }}>
