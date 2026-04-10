@@ -6,8 +6,8 @@ const API = axios.create({
 });
 
 export const api = {
-  getSiteContext: (lat: number, lon: number) =>
-    API.post('/api/site/context', { lat, lon }).then(r => r.data),
+  getSiteContext: (lat: number, lon: number, parcel_polygon?: any) =>
+    API.post('/api/site/context', { lat, lon, parcel_polygon }).then(r => r.data),
   getInfrastructure: (lat: number, lon: number) =>
     API.post('/api/site/infrastructure', { lat, lon }).then(r => r.data),
   getNeighbors: (lat: number, lon: number, parcel_polygon?: any) =>

@@ -16,7 +16,11 @@ class SiteRequest(BaseModel):
 @router.post("/context")
 async def get_site_context(body: SiteRequest):
     try:
-        ctx = await svc.build_context(latlon=LatLon(lat=body.lat, lon=body.lon))
+        ctx = await svc.build_context(
+            latlon=LatLon(lat=body.lat, lon=body.lon),
+            parcel_polygon=body.parcel_polygon,
+            address=body.address,
+        )
         return ctx
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

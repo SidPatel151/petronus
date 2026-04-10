@@ -11,7 +11,7 @@ import math
 import uuid
 from typing import List, Dict, Any, Tuple, Optional
 from shapely.geometry import shape, Polygon, box, MultiPolygon
-from shapely.affinity import translate as shp_translate
+from shapely.affinity import translate as shp_translate, scale as shp_scale
 from shapely.ops import transform, unary_union
 import pyproj
 
@@ -125,11 +125,12 @@ class MassingGenerator:
     # ── Option builders ───────────────────────────────────────────────────
 
     def _option_rectangle(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        bw = tw
-        bh = td
-        footprint = box(-bw/2, -bh/2, bw/2, bh/2)
-        if not envelope_local.buffer(1).contains(footprint):
-            footprint = envelope_local.buffer(-0.5)
+        # Use parcel envelope shape, scaled down to target footprint area
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        footprint = self._fit_to_area(base, target_fp_area)
         total_area = footprint.area * stories
         meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
@@ -143,15 +144,15 @@ class MassingGenerator:
         }
 
     def _option_stepped(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        # Base floor uses full footprint, upper floors step back 2m on front+right
-        bw, bd = tw, td
-        footprint = box(-bw/2, -bd/2, bw/2, bd/2)
-        if not envelope_local.buffer(1).contains(footprint):
-            footprint = envelope_local.buffer(-0.5)
-        # Upper tier is inset 2m on front and right
-        upper_w = max(bw - 2.0, bw * 0.7)
-        upper_d = max(bd - 2.0, bd * 0.7)
-        upper_footprint = box(-upper_w/2, -upper_d/2, upper_w/2, upper_d/2)
+        # Base floor = parcel shape scaled to target area; upper floors step back further
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        footprint = self._fit_to_area(base, target_fp_area)
+        upper_footprint = self._fit_to_area(base, target_fp_area * 0.7)
+        if upper_footprint.is_empty:
+            upper_footprint = footprint
 
         # Generate lower + upper meshes separately
         lower_stories = max(1, stories // 2)
@@ -177,17 +178,22 @@ class MassingGenerator:
         }
 
     def _option_u_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        bw, bd = tw, td
-        full = box(-bw/2, -bd/2, bw/2, bd/2)
-        # Cut a courtyard from the front center
-        court_w = bw * 0.45
-        court_d = bd * 0.40
-        cutout = box(-court_w/2, -bd/2, court_w/2, -bd/2 + court_d)
-        footprint = full.difference(cutout)
-        if footprint.is_empty or not envelope_local.buffer(1).contains(footprint):
-            footprint = full
-        if not envelope_local.buffer(1).contains(footprint):
-            footprint = envelope_local.buffer(-0.5)
+        # Start with parcel shape scaled to target area, carve courtyard from front
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        scaled = self._fit_to_area(base, target_fp_area)
+        b = scaled.bounds
+        bw = b[2] - b[0]
+        bd = b[3] - b[1]
+        court_w = bw * 0.40
+        court_d = bd * 0.35
+        cx = (b[0] + b[2]) / 2
+        cutout = box(cx - court_w/2, b[1], cx + court_w/2, b[1] + court_d)
+        footprint = scaled.difference(cutout)
+        if footprint.is_empty or not footprint.is_valid:
+            footprint = scaled
         total_area = footprint.area * stories
         meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
@@ -306,15 +312,16 @@ class MassingGenerator:
             })
 
         # ── Flat roof slab ──
-        roof_y = stories * floor_height_m
+        # roof Y = ground elevation at each point + total building height
+        roof_height_rel = stories * floor_height_m
         roof_verts = []
         roof_faces = []
         for x, z in coords:
             gy = self._ground_y(x, z, grad_x, grad_z)
-            roof_verts.append([x, roof_y, z])
+            roof_verts.append([x, gy + roof_height_rel, z])
         # Fan triangulation from centroid
         rcx = sum(v[0] for v in roof_verts) / len(roof_verts)
-        rcy = roof_y
+        rcy = sum(v[1] for v in roof_verts) / len(roof_verts)
         rcz = sum(v[2] for v in roof_verts) / len(roof_verts)
         center_r = len(roof_verts)
         roof_verts.append([rcx, rcy, rcz])
@@ -445,6 +452,13 @@ class MassingGenerator:
                 continue
 
         return meshes
+
+    def _fit_to_area(self, footprint: Polygon, target_area_m2: float) -> Polygon:
+        """Scale footprint down to target_area if it's larger, preserving shape."""
+        if footprint.area <= target_area_m2:
+            return footprint
+        scale = math.sqrt(target_area_m2 / footprint.area)
+        return shp_scale(footprint, xfact=scale, yfact=scale, origin='centroid')
 
     # ── Utilities ─────────────────────────────────────────────────────────
 

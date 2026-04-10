@@ -1,31 +1,16 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from enum import Enum
 
-# ── Enums ──────────────────────────────────────────────────────────────────
-
-class StructuralSystem(str, Enum):
-    wood = "wood"
-    steel = "steel"
-    concrete = "concrete"
-
-class HVACPreference(str, Enum):
-    mini_split = "mini_split"
-    rooftop = "rooftop"
-
-class PriorityType(str, Enum):
-    cost = "cost"
-    time = "time"       # fast construction
-    space = "space"     # maximize living area
-    light = "light"     # natural daylight
-    # legacy aliases kept for backward compat
-    speed = "speed"
-    daylight = "daylight"
-
-class ParkingStrategy(str, Enum):
-    ignore = "ignore"
-    surface = "surface"
-    podium = "podium"
+# All enums live in constants.py — import and re-export for backward compat
+from app.constants import (
+    StructuralSystem,
+    HVACPreference,
+    PriorityType,
+    ParkingStrategy,
+    BuildingUse,
+    HouseArchetype,
+    DesignStyle,
+)
 
 # ── Site ───────────────────────────────────────────────────────────────────
 
@@ -65,6 +50,14 @@ class ProjectSpec(BaseModel):
     # Site
     site: SiteInput
 
+    # Building type
+    building_use: BuildingUse = BuildingUse.multi_family
+    # Residential: number of bedrooms (1–5). Drives SFR room program & sqft cap.
+    bedrooms: Optional[int] = Field(default=None, ge=1, le=5)
+    # Residential archetype hint — used by Claude brief + facade generator.
+    # e.g. "craftsman", "contemporary", "farmhouse", "cape_cod", "mediterranean"
+    house_archetype: Optional[str] = None
+
     # Building
     target_gross_area_sqft: Optional[float] = None
     unit_count: Optional[int] = None
@@ -76,10 +69,17 @@ class ProjectSpec(BaseModel):
     hvac_preference: HVACPreference = HVACPreference.mini_split
     parking_strategy: ParkingStrategy = ParkingStrategy.ignore
     priority: PriorityType = PriorityType.cost
+    style: Optional[DesignStyle] = None
     material_overrides: Optional[Dict[str, str]] = None
     # keys: walls, roof, floors, windows, foundation, interior_walls
     # values: "wood"|"concrete"|"brick"|"metal"|"glass"|"stone"|"stucco"|"ai"
     fine_details: Optional[Dict[str, Any]] = None
+
+    # Height & limit overrides from the wizard
+    max_height_ft: Optional[float] = None
+    max_floors: Optional[int] = None
+    max_bedrooms: Optional[int] = None
+    max_sqft: Optional[float] = None
     # keys: outlets_per_room (int), fire_sprinklers (bool), ev_charging (bool),
     #       exhaust_fans (bool), fire_alarms (bool)
 

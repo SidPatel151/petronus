@@ -32,32 +32,36 @@ class MEPRouter:
         # One shared riser per unique XZ cluster (group by unit — use level-0 wet rooms)
         level0_wet = [r for r in all_wet if r.level == 0] or all_wet[:1]
         # Build one riser per wet room on level 0; upper-level rooms branch off it
+        SLAB_Y = -0.4   # sub-slab drain elevation
         riser_positions: List[Tuple[float, float]] = []
         for room in level0_wet:
             rx, rz = self._centroid(room)
             riser_positions.append((rx, rz))
+            # Riser spans from sub-slab to top of building
             elements.append(MEPElement(
                 id=f"riser_{uuid.uuid4().hex[:6]}", system="plumbing", type="riser",
-                start=[rx, 0.3, rz], end=[rx, top_y, rz], level=0, diameter_in=4.0))
+                start=[rx, SLAB_Y, rz], end=[rx, top_y, rz], level=0, diameter_in=4.0))
 
         # For each wet room on every level, draw a horizontal branch FROM nearest riser TO room
         for room in all_wet:
             lvl_idx = room.level
             if lvl_idx >= len(levels):
                 continue
+            # Supply branch runs 40cm above floor slab; waste drops 10cm below that
             branch_y = lvl_idx * floor_h + 0.4
+            waste_y  = lvl_idx * floor_h - 0.1   # just below slab — feeds riser drain port
             cx, cz = self._centroid(room)
             # Nearest riser
             rx, rz = min(riser_positions, key=lambda p: (p[0]-cx)**2 + (p[1]-cz)**2)
-            # Horizontal supply branch: riser → room centroid
+            # Horizontal supply branch: riser → room centroid (both at branch_y → on the riser)
             elements.append(MEPElement(
                 id=f"supply_{uuid.uuid4().hex[:6]}", system="plumbing", type="supply_branch",
                 start=[rx, branch_y, rz], end=[cx, branch_y, cz],
                 level=lvl_idx, diameter_in=1.5))
-            # Waste branch drops below floor
+            # Waste branch: room → riser, below the floor slab so gravity drains down the riser
             elements.append(MEPElement(
                 id=f"waste_{uuid.uuid4().hex[:6]}", system="plumbing", type="waste_branch",
-                start=[cx, branch_y - 0.1, cz], end=[rx, branch_y - 0.1, rz],
+                start=[cx, waste_y, cz], end=[rx, waste_y, rz],
                 level=lvl_idx, diameter_in=3.0))
             elements.append(MEPElement(
                 id=f"fixture_{room.type}_{uuid.uuid4().hex[:4]}", system="plumbing", type="fixture",
@@ -70,10 +74,20 @@ class MEPRouter:
             # Find southernmost point (most negative z = front of building)
             ext_walls = [w for w in walls if hasattr(w, 'is_exterior') and w.is_exterior]
             south_z = min((w.start[1] for w in ext_walls), default=avg_rz - 8.0)
+
+            # Horizontal sub-slab collectors: connect each riser bottom to the main drain spine
+            for rx, rz in riser_positions:
+                if abs(rx - avg_rx) > 0.1 or abs(rz - avg_rz) > 0.1:
+                    elements.append(MEPElement(
+                        id=f"collector_{uuid.uuid4().hex[:5]}", system="plumbing", type="waste_branch",
+                        start=[rx, SLAB_Y, rz], end=[avg_rx, SLAB_Y, avg_rz],
+                        level=0, diameter_in=4.0))
+
+            # Main drain: from collector junction south to the street connection
             elements.append(MEPElement(
                 id="main_drain", system="plumbing", type="main_drain",
-                start=[avg_rx, -0.5, avg_rz],
-                end=[avg_rx, -0.5, south_z - 1.5],
+                start=[avg_rx, SLAB_Y, avg_rz],
+                end=[avg_rx, SLAB_Y, south_z - 1.5],
                 level=0, diameter_in=6.0))
 
         return elements
@@ -224,16 +238,35 @@ class MEPRouter:
             cx, cz = self._centroid(room)
             bds = self._bounds(room)
 
-            # ── Electrical outlets along walls (evenly spaced around perimeter) ──
+            # ── Electrical outlets: one per wall face, offset 0.3m from each corner ──
+            # Placed on the INTERIOR face of each wall so they're visible inside the room.
             pts = room.polygon
             if outlets_per_room > 0 and len(pts) >= 2:
-                step = max(1, len(pts) // outlets_per_room)
-                for i in range(0, len(pts), step):
-                    ox = (pts[i][0] + pts[(i+1) % len(pts)][0]) / 2
-                    oz = (pts[i][1] + pts[(i+1) % len(pts)][1]) / 2
+                n_pts = len(pts)
+                # Compute room centroid for inward offset direction
+                rcx = sum(p[0] for p in pts) / n_pts
+                rcz = sum(p[1] for p in pts) / n_pts
+                # Place one outlet per wall segment (or every other on large rooms)
+                step = max(1, n_pts // max(outlets_per_room, 2))
+                for i in range(0, n_pts, step):
+                    # Midpoint of this wall segment
+                    p0, p1 = pts[i], pts[(i + 1) % n_pts]
+                    mx = (p0[0] + p1[0]) / 2
+                    mz = (p0[1] + p1[1]) / 2
+                    # Push outlet 0.05m toward room interior (so it sits on the inner wall face)
+                    dx, dz = rcx - mx, rcz - mz
+                    dist = max(0.001, (dx*dx + dz*dz) ** 0.5)
+                    ox = mx + dx / dist * 0.05
+                    oz = mz + dz / dist * 0.05
                     elements.append(MEPElement(
                         id=f"outlet_{uuid.uuid4().hex[:6]}", system="electrical", type="outlet",
                         start=[ox, floor_y + 0.4, oz], level=lvl))
+                    # Short conduit drop from ceiling branch height down the wall to outlet
+                    elements.append(MEPElement(
+                        id=f"outlet_drop_{uuid.uuid4().hex[:5]}", system="electrical", type="conduit_trunk",
+                        start=[ox, floor_y + floor_h - 0.3, oz],
+                        end=[ox, floor_y + 0.4, oz],
+                        level=lvl))
 
             # ── Fire alarm in each corridor + unit ──
             if do_alarms and room.type in ("corridor", "unit", "bedroom", "living"):

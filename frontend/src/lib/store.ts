@@ -18,6 +18,7 @@ interface AppState {
   neighborConstraints: any | null;
   feasibilityData: any | null;
   clickedBuilding: any | null;
+  drawnParcel: any | null;  // GeoJSON Polygon drawn by user — overrides OSM parcel
   chatMessages: { role: 'user' | 'assistant'; content: string }[];
   spec: Partial<any>;
   jobId: string | null;
@@ -34,6 +35,7 @@ interface AppState {
   setNeighborConstraints: (data: any) => void;
   setFeasibilityData: (data: any) => void;
   setClickedBuilding: (b: any | null) => void;
+  setDrawnParcel: (p: any | null) => void;
   addChatMessage: (msg: { role: 'user' | 'assistant'; content: string }) => void;
   updateSpec: (partial: Partial<any>) => void;
   setJobId: (id: string | null) => void;
@@ -46,7 +48,7 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set) => ({
   selectedSite: null, siteContext: null, infrastructure: null, neighborConstraints: null, feasibilityData: null,
-  clickedBuilding: null, chatMessages: [],
+  clickedBuilding: null, drawnParcel: null, chatMessages: [],
   spec: { stories: 2, floor_to_floor_height_ft: 10, structural_system: 'wood', hvac_preference: 'mini_split', parking_strategy: 'ignore', priority: 'cost' },
   jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null,
   activeLayers: { architecture: true, structure: true, roof: true, plumbing: true, electrical: true, hvac: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
@@ -57,6 +59,7 @@ export const useAppStore = create<AppState>((set) => ({
   setNeighborConstraints: (data) => set({ neighborConstraints: data }),
   setFeasibilityData: (data) => set({ feasibilityData: data }),
   setClickedBuilding: (b) => set({ clickedBuilding: b }),
+  setDrawnParcel: (p) => set({ drawnParcel: p }),
   addChatMessage: (msg) => set((s) => ({ chatMessages: [...s.chatMessages, msg] })),
   updateSpec: (partial) => set((s) => ({ spec: { ...s.spec, ...partial } })),
   setJobId: (id) => set({ jobId: id }),

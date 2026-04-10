@@ -2,6 +2,8 @@
 SiteContextService - OSM + FEMA + neighbor buildings + constraints
 """
 import asyncio
+import hashlib
+import json as _json
 import httpx
 import math
 import urllib.parse
@@ -11,6 +13,16 @@ import pyproj
 from typing import Dict, Any, Optional, Tuple, List
 from app.models.schemas import SiteContext, LatLon
 from app.services.hazard_lookup import HazardLookupService
+
+# Optional Redis cache for Overpass results (24h TTL)
+try:
+    import redis.asyncio as _aioredis
+    from app.core.config import settings as _settings
+    _redis_client = _aioredis.from_url(_settings.REDIS_URL, decode_responses=True)
+except Exception:
+    _redis_client = None
+
+_OVERPASS_TTL = 86400  # 24 hours
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 FEMA_URL     = "https://msc.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query"
@@ -85,18 +97,37 @@ class SiteContextService:
                   "places": [], "power_poles": []}
         overpass_ok = False
         data = {"elements": []}
-        try:
-            async with httpx.AsyncClient(timeout=28) as client:
-                resp = await client.post(
-                    OVERPASS_URL,
-                    content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                if resp.status_code == 200 and resp.content:
-                    data = resp.json()
-                    overpass_ok = True
-        except Exception:
-            pass  # continue to CEC queries below
+
+        # Check Redis cache first (key = hash of bbox string, TTL 24h)
+        _cache_key = f"overpass:{hashlib.md5(bbox.encode()).hexdigest()}"
+        _cached = None
+        if _redis_client:
+            try:
+                _cached = await _redis_client.get(_cache_key)
+            except Exception:
+                pass
+
+        if _cached:
+            data = _json.loads(_cached)
+            overpass_ok = True
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=28) as client:
+                    resp = await client.post(
+                        OVERPASS_URL,
+                        content=urllib.parse.urlencode({"data": query}).encode("utf-8"),
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    if resp.status_code == 200 and resp.content:
+                        data = resp.json()
+                        overpass_ok = True
+                        if _redis_client:
+                            try:
+                                await _redis_client.set(_cache_key, _json.dumps(data), ex=_OVERPASS_TTL)
+                            except Exception:
+                                pass
+            except Exception:
+                pass  # continue to CEC queries below
 
         for el in data.get("elements", []):
             tags = el.get("tags", {})

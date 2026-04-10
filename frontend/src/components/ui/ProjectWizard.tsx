@@ -4,11 +4,57 @@ import { useAppStore } from '@/lib/store';
 import api from '@/lib/api';
 
 const GOALS = [
-  { key: 'cost',  label: 'Cost',  icon: '$', desc: 'Minimize build cost' },
-  { key: 'time',  label: 'Speed', icon: '⚡', desc: 'Fastest to construct' },
-  { key: 'space', label: 'Space', icon: '⊞', desc: 'Maximize living area' },
-  { key: 'light', label: 'Light', icon: '◎', desc: 'Natural daylight first' },
+  { key: 'cost',   label: 'Budget Optimization',  icon: '$', desc: 'Minimize build cost' },
+  { key: 'time',   label: 'Construction Speed',    icon: '⚡', desc: 'Fastest to construct' },
+  { key: 'space',  label: 'Space Efficiency',      icon: '⊞', desc: 'Maximize living area' },
+  { key: 'light',  label: 'Natural Light',         icon: '◎', desc: 'Daylight-first design' },
+  { key: 'energy', label: 'Energy Performance',    icon: '♻', desc: 'Low energy use & cost' },
 ];
+
+const DESIGN_STYLES = [
+  { key: 'classic_gabled', label: 'Classic & Gabled',   desc: 'Pitched roofs, traditional forms' },
+  { key: 'modern_linear',  label: 'Modern & Linear',    desc: 'Flat roof, clean horizontal lines' },
+  { key: 'solid_sculpted', label: 'Solid & Sculpted',   desc: 'Monolithic, textured mass' },
+];
+
+const BUILDING_USES = [
+  { key: 'single_family', label: 'Single Family' },
+  { key: 'multi_family',  label: 'Multi-Family'  },
+  { key: 'adu',           label: 'ADU'           },
+];
+
+// Sqft ranges per bedroom count: [min, max] — matches backend SFR_SQFT_RANGES
+// priority drives where in range: cost/speed=low, light=mid, space=high
+const SFR_SQFT_RANGES: Record<number, [number, number]> = {
+  1: [500,  900],
+  2: [800,  1300],
+  3: [1200, 1900],
+  4: [1800, 2800],
+  5: [2500, 4200],
+};
+
+const PRIORITY_RANGE_POS: Record<string, number> = {
+  cost: 0.0, time: 0.15, speed: 0.15, light: 0.5, daylight: 0.5, space: 1.0, energy: 0.3,
+};
+
+function sfrTargetSqft(bedrooms: number, priority: string): number {
+  const [lo, hi] = SFR_SQFT_RANGES[bedrooms] ?? [1200, 1900];
+  const t = PRIORITY_RANGE_POS[priority] ?? 0.5;
+  return Math.round(lo + (hi - lo) * t);
+}
+
+// Maps priority + building use to a suggested house archetype label shown in UI
+const ARCHETYPE_HINTS: Record<string, Record<string, string>> = {
+  single_family: {
+    cost:   'Ranch / Cape Cod — simple geometry, wood frame, affordable',
+    time:   'Ranch / Foursquare — rectangular, fast to frame',
+    light:  'Contemporary / Mid-Century Modern — large glazing, open plan',
+    space:  'Colonial / Farmhouse — maximum rooms, efficient layout',
+    energy: 'Prairie / Contemporary — high insulation, passive solar',
+  },
+  multi_family: { cost: 'Efficient corridor plan', time: 'Stacked units', light: 'Atrium plan', space: 'U-shape courtyard', energy: 'Passive-house block' },
+  adu:          { cost: 'Compact studio', time: 'Modular box', light: 'South-facing studio', space: 'Loft layout', energy: 'Super-insulated box' },
+};
 
 const STRUCTURAL = ['wood', 'steel', 'concrete'];
 const HVAC_OPTS = ['mini_split', 'rooftop'];
@@ -77,12 +123,15 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function ProjectWizard() {
-  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding } = useAppStore();
+  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding, drawnParcel, buildingModel } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showMaterials, setShowMaterials] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
+  // Resolved materials: prefer the generated model's overrides (which include AI-picked),
+  // fall back to user-set overrides in spec
+  const resolvedOverrides: Record<string, string> = (buildingModel as any)?.spec?.material_overrides || {};
   const materialOverrides: Record<string, string> = (spec as any).material_overrides || {};
   const fineDetails: Record<string, any> = (spec as any).fine_details || {};
 
@@ -119,27 +168,42 @@ export default function ProjectWizard() {
     const clickedHeight = clickedProps.height_m ? Math.round(parseFloat(clickedProps.height_m) / 3) : 0;
     const inferredStories = clickedLevels || clickedHeight || spec.stories || 2;
 
+    const buildingUse = (spec as any).building_use || 'multi_family';
+    const bedrooms = (spec as any).bedrooms || (buildingUse === 'single_family' ? 3 : undefined);
+
     const fullSpec: any = {
       region_country: 'US', region_state: 'CA',
-      occupancy: 'MultiFamilyResidential', permit_set: false,
+      occupancy: buildingUse === 'multi_family' ? 'MultiFamilyResidential' : 'SingleFamilyResidential',
+      permit_set: false,
+      building_use: buildingUse,
+      bedrooms: bedrooms || null,
       stories: inferredStories,
       floor_to_floor_height_ft: spec.floor_to_floor_height_ft || 10.0,
       structural_system: spec.structural_system || 'wood',
       hvac_preference: spec.hvac_preference || 'mini_split',
       parking_strategy: spec.parking_strategy || 'ignore',
       priority: spec.priority || 'cost',
+      style: (spec as any).style || 'modern_linear',
       target_gross_area_sqft: effectiveArea,
-      unit_count: spec.unit_count || null,
+      unit_count: buildingUse === 'multi_family' ? (spec.unit_count || null) : 1,
       // Merge clicked building's material into overrides if user hasn't set walls manually
-      material_overrides: {
+      material_overrides: Object.keys({
         ...((spec as any).material_overrides || {}),
         ...(clickedMat && !((spec as any).material_overrides?.walls) ? { walls: clickedMat } : {}),
-      } || null,
+      }).length ? {
+        ...((spec as any).material_overrides || {}),
+        ...(clickedMat && !((spec as any).material_overrides?.walls) ? { walls: clickedMat } : {}),
+      } : null,
       fine_details: (spec as any).fine_details || null,
+      max_height_ft: (spec as any).max_height_ft || null,
+      max_floors: (spec as any).max_floors || null,
+      max_bedrooms: (spec as any).max_bedrooms || null,
+      max_sqft: (spec as any).max_sqft || null,
       site: {
         latlon: { lat: selectedSite.lat, lon: selectedSite.lon },
         address: null,
-        parcel_polygon: siteContext?.parcel_polygon || null,
+        // Prefer user-drawn parcel polygon over OSM-derived one
+        parcel_polygon: drawnParcel || siteContext?.parcel_polygon || null,
       },
     };
     try {
@@ -167,9 +231,15 @@ export default function ProjectWizard() {
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Selected Site</div>
         {selectedSite ? (
           <div className="space-y-2">
-            <div className="text-xs font-mono text-[var(--accent-cyan)]">
-              {selectedSite.lat.toFixed(5)}, {selectedSite.lon.toFixed(5)}
-            </div>
+            {drawnParcel ? (
+              <div className="flex items-center gap-2 text-xs font-mono text-[var(--accent-cyan)] bg-cyan-950/30 border border-cyan-800/30 rounded-lg px-3 py-2">
+                ⬡ Custom parcel boundary active
+              </div>
+            ) : (
+              <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-60">
+                Site selected · define parcel shape on the map for precise boundaries
+              </div>
+            )}
             {siteContext && (
               <div className="grid grid-cols-2 gap-2">
                 {[
@@ -241,9 +311,96 @@ export default function ProjectWizard() {
         </div>
       </div>
 
+      {/* Design Style */}
+      <div className="panel-section space-y-3">
+        <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Design Style</div>
+        <div className="flex flex-col gap-2">
+          {DESIGN_STYLES.map(({ key, label, desc }) => {
+            const active = ((spec as any).style || 'modern_linear') === key;
+            return (
+              <button key={key} onClick={() => updateSpec({ style: key } as any)}
+                className="rounded-xl px-3 py-2.5 text-left transition-all border"
+                style={{
+                  background: active ? 'rgba(0,229,255,0.08)' : 'var(--surface-3)',
+                  borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
+                }}>
+                <div className="text-xs font-mono font-semibold" style={{ color: active ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>{label}</div>
+                <div className="text-[10px] font-mono text-[var(--text-secondary)] mt-0.5">{desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Building type */}
+      <div className="panel-section space-y-3">
+        <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Type</div>
+        <div className="flex gap-2">
+          {BUILDING_USES.map(({ key, label }) => {
+            const active = ((spec as any).building_use || 'multi_family') === key;
+            return (
+              <button key={key} onClick={() => updateSpec({ building_use: key } as any)}
+                className="flex-1 rounded-lg py-2 text-center text-xs font-mono transition-all border"
+                style={{
+                  background: active ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
+                  borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
+                  color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {/* Archetype hint based on priority + building use */}
+        {(() => {
+          const use = (spec as any).building_use || 'multi_family';
+          const pri = (spec.priority || 'cost').replace('speed','time').replace('daylight','light').replace('budget','cost');
+          const hint = ARCHETYPE_HINTS[use]?.[pri];
+          return hint ? (
+            <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 italic">{hint}</div>
+          ) : null;
+        })()}
+      </div>
+
       {/* Building parameters */}
       <div className="panel-section space-y-4">
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Parameters</div>
+
+        {/* Bedrooms — only shown for single-family / ADU */}
+        {['single_family', 'adu'].includes((spec as any).building_use || 'multi_family') && (() => {
+          const br = (spec as any).bedrooms || 3;
+          const pri = (spec.priority || 'cost') as string;
+          const [lo, hi] = SFR_SQFT_RANGES[br] ?? [1200, 1900];
+          const suggested = sfrTargetSqft(br, pri);
+          return (
+            <Field label="Bedrooms (1–5)">
+              <div className="flex gap-1.5">
+                {[1,2,3,4,5].map((n) => {
+                  const active = br === n;
+                  return (
+                    <button key={n} onClick={() => updateSpec({ bedrooms: n } as any)}
+                      className="flex-1 rounded-lg py-2 text-xs font-mono font-semibold transition-all border"
+                      style={{
+                        background: active ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
+                        borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
+                        color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                      }}>
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Range hint — shows realistic sqft band + where priority lands */}
+              <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
+                {br}BR range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
+                <span className="ml-2 text-[var(--accent-cyan)]">
+                  ({pri} target: ~{suggested.toLocaleString()} sqft)
+                </span>
+              </div>
+            </Field>
+          );
+        })()}
+
         <Field label="Stories (1–3)">
           <NumInput value={spec.stories} min={1} max={3}
             onChange={(v) => updateSpec({ stories: v ? Math.min(3, Math.max(1, Math.round(v))) : 2 })} />
@@ -266,13 +423,72 @@ export default function ProjectWizard() {
             )}
           </div>
         </Field>
-        <Field label="Unit Count (optional)">
-          <NumInput value={spec.unit_count} placeholder="e.g. 12" min={1}
-            onChange={(v) => updateSpec({ unit_count: v ? Math.round(v) : undefined })} />
-        </Field>
+
+        {/* Unit count only for multi-family */}
+        {((spec as any).building_use || 'multi_family') === 'multi_family' && (
+          <Field label="Unit Count (optional)">
+            <NumInput value={spec.unit_count} placeholder="e.g. 12" min={1}
+              onChange={(v) => updateSpec({ unit_count: v ? Math.round(v) : undefined })} />
+          </Field>
+        )}
+
         <Field label="Floor-to-Floor Height (ft)">
           <NumInput value={spec.floor_to_floor_height_ft} min={8} max={20} step={0.5}
             onChange={(v) => updateSpec({ floor_to_floor_height_ft: v })} />
+        </Field>
+      </div>
+
+      {/* Height & Code Limits */}
+      <div className="panel-section space-y-4">
+        <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Height & Limits</div>
+
+        <Field label="Max Building Height">
+          <div className="flex items-center gap-2">
+            <NumInput
+              value={(spec as any).max_height_ft}
+              placeholder={`Auto: ~${Math.round(((spec.stories || 2) * (spec.floor_to_floor_height_ft || 10)))} ft`}
+              min={8}
+              onChange={(v) => updateSpec({ max_height_ft: v } as any)}
+            />
+            <span className="text-[10px] font-mono text-[var(--text-secondary)] flex-shrink-0 min-w-[52px]">
+              {(spec as any).max_height_ft
+                ? `= ${((spec as any).max_height_ft * 0.3048).toFixed(1)} m`
+                : 'ft / m'}
+            </span>
+          </div>
+          <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-60 mt-0.5">
+            {`${spec.stories || 2} floor${(spec.stories || 2) > 1 ? 's' : ''} × ${spec.floor_to_floor_height_ft || 10} ft = ${Math.round((spec.stories || 2) * (spec.floor_to_floor_height_ft || 10))} ft`}
+            {` (${((((spec.stories || 2) * (spec.floor_to_floor_height_ft || 10)) * 0.3048)).toFixed(1)} m)`}
+          </div>
+        </Field>
+
+        <Field label="Max Floors">
+          <NumInput
+            value={(spec as any).max_floors}
+            placeholder={`Current: ${spec.stories || 2}`}
+            min={1}
+            max={20}
+            onChange={(v) => updateSpec({ max_floors: v ? Math.round(v) : undefined } as any)}
+          />
+        </Field>
+
+        <Field label="Max Bedrooms">
+          <NumInput
+            value={(spec as any).max_bedrooms}
+            placeholder="No limit"
+            min={1}
+            max={50}
+            onChange={(v) => updateSpec({ max_bedrooms: v ? Math.round(v) : undefined } as any)}
+          />
+        </Field>
+
+        <Field label="Max Total Sqft">
+          <NumInput
+            value={(spec as any).max_sqft}
+            placeholder="No limit"
+            min={100}
+            onChange={(v) => updateSpec({ max_sqft: v } as any)}
+          />
         </Field>
       </div>
 
@@ -293,18 +509,32 @@ export default function ProjectWizard() {
         {showMaterials && (
           <div className="space-y-2 pt-1">
             <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
-              Leave as "AI picks best" to let the AI choose based on your goal.
+              {buildingModel
+                ? 'Showing AI-selected materials. Override any to customize.'
+                : 'Leave as "AI picks best" to auto-select based on your goal & style.'}
             </div>
-            {MATERIAL_PARTS.map(({ key, label }) => (
-              <div key={key} className="flex items-center justify-between gap-3">
-                <span className="text-xs font-mono text-[var(--text-secondary)] w-28 flex-shrink-0">{label}</span>
-                <Select
-                  value={materialOverrides[key] || 'ai'}
-                  onChange={(v) => setMaterial(key, v)}
-                  options={MATERIAL_OPTIONS}
-                />
-              </div>
-            ))}
+            {MATERIAL_PARTS.map(({ key, label }) => {
+              const userVal = materialOverrides[key];
+              const aiVal = resolvedOverrides[key];
+              const displayVal = userVal || 'ai';
+              return (
+                <div key={key} className="space-y-0.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-mono text-[var(--text-secondary)] w-28 flex-shrink-0">{label}</span>
+                    <Select
+                      value={displayVal}
+                      onChange={(v) => setMaterial(key, v)}
+                      options={MATERIAL_OPTIONS}
+                    />
+                  </div>
+                  {!userVal && aiVal && (
+                    <div className="text-[10px] font-mono pl-[7.5rem]" style={{ color: 'var(--accent-cyan)', opacity: 0.75 }}>
+                      AI selected: {aiVal}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

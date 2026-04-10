@@ -10,9 +10,11 @@ from app.services.site_context import SiteContextService
 from app.services.ai_brief import get_design_brief
 from app.generators.massing import MassingGenerator
 from app.generators.floorplan import FloorplanGenerator
+from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS
 from app.generators.mep import MEPRouter
 from app.generators.compliance import ComplianceEngine
 from app.generators.facade import FacadeGenerator, extract_neighbor_style
+from app.services.material_scorer import get_override_dict
 
 
 class GenerationOrchestrator:
@@ -28,6 +30,20 @@ class GenerationOrchestrator:
 
     async def run(self, spec: ProjectSpec, massing_choice: int = 0) -> BuildingModel:
         project_id = str(uuid.uuid4())
+
+        # For SFR/ADU: if no target area set, derive it from bedroom count + priority
+        is_sfr = getattr(spec, 'building_use', 'multi_family') in ('single_family', 'adu')
+        if is_sfr and not spec.target_gross_area_sqft:
+            br = getattr(spec, 'bedrooms', None) or 3
+            pri = getattr(spec.priority, 'value', str(spec.priority))
+            spec = spec.model_copy(update={"target_gross_area_sqft": sfr_target_sqft(br, pri)})
+
+        # Auto-resolve materials from priority + style, then merge user overrides on top
+        pri_val  = getattr(spec.priority, 'value', str(spec.priority))
+        sty_val  = getattr(spec.style, 'value', str(spec.style)) if getattr(spec, 'style', None) else None
+        resolved_overrides = get_override_dict(pri_val, sty_val, spec.material_overrides)
+        spec = spec.model_copy(update={"material_overrides": resolved_overrides})
+
         model = BuildingModel(project_id=project_id, spec=spec)
         log = model.generation_log
 
@@ -116,11 +132,6 @@ class GenerationOrchestrator:
 
             # Merge brief's facade_material back into neighbor_style so the
             # facade generator and frontend both use the Claude-recommended material
-            FACADE_COLORS = {
-                "brick": "#b5651d", "concrete": "#9ca3af", "glass": "#bfdbfe",
-                "wood": "#a67c52", "stone": "#b8a99a", "metal": "#94a3b8",
-                "stucco": "#d6cbb8", "plaster": "#e8dcc8",
-            }
             brief_mat = design_brief.get("facade_material")
             if brief_mat and brief_mat in FACADE_COLORS:
                 neighbor_style["dominant_material"] = brief_mat

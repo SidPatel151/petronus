@@ -5,19 +5,77 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { useAppStore } from '@/lib/store';
 import api from '@/lib/api';
 
+// ── Parcel helpers ───────────────────────────────────────────────────────────
+
+function circleToPolygon(center: [number, number], radiusM: number, n = 64): any {
+  const [lon, lat] = center;
+  const pts: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 2 * Math.PI;
+    const dLon = (radiusM / (111320 * Math.cos(lat * Math.PI / 180))) * Math.cos(a);
+    const dLat = (radiusM / 111320) * Math.sin(a);
+    pts.push([lon + dLon, lat + dLat]);
+  }
+  pts.push(pts[0]);
+  return { type: 'Polygon', coordinates: [pts] };
+}
+
+function closedPolygon(vertices: [number, number][]): any {
+  if (vertices.length < 3) return null;
+  return { type: 'Polygon', coordinates: [[...vertices.map(([lon, lat]) => [lon, lat]), [vertices[0][0], vertices[0][1]]]] };
+}
+
+function polygonCentroid(coords: number[][]): [number, number] {
+  const lon = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+  const lat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+  return [lon, lat];
+}
+
+// Haversine distance in meters between two lat/lon points
+function haversineDist(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Shoelace on projected coords (local meters) — accurate for any polygon shape
 function calcAreaSqft(coords: number[][]): number {
-  // Shoelace formula on lat/lon → approx sqft
+  if (coords.length < 3) return 0;
+  // Project to local meters using the polygon's centroid as origin
+  const cLon = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+  const cLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(cLat * Math.PI / 180);
+  // Shoelace in local meters
   let area = 0;
   const n = coords.length;
   for (let i = 0; i < n; i++) {
-    const [x1, y1] = coords[i];
-    const [x2, y2] = coords[(i + 1) % n];
+    const [x1, y1] = [(coords[i][0] - cLon) * mPerDegLon, (coords[i][1] - cLat) * mPerDegLat];
+    const [x2, y2] = [(coords[(i + 1) % n][0] - cLon) * mPerDegLon, (coords[(i + 1) % n][1] - cLat) * mPerDegLat];
     area += x1 * y2 - x2 * y1;
   }
-  const areaLatLon = Math.abs(area) / 2;
-  // Convert deg² → m² → sqft (at ~37°N)
-  const m2 = areaLatLon * 111320 * 111320 * Math.cos(37 * Math.PI / 180);
-  return m2 * 10.764;
+  return Math.abs(area) / 2 * 10.764; // m² → sqft
+}
+
+// For a polygon, detect if it's approximately rectangular and return {wFt, dFt}
+function rectDimsFt(coords: number[][]): { wFt: number; dFt: number } | null {
+  // Close the polygon and take the first 4 unique edges
+  const pts = coords[coords.length - 1][0] === coords[0][0] && coords[coords.length - 1][1] === coords[0][1]
+    ? coords.slice(0, -1) : coords;
+  if (pts.length !== 4) return null;
+  const sides = pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return haversineDist(p[0], p[1], q[0], q[1]);
+  });
+  // A rectangle has opposite sides equal (within 2%)
+  const [a, b, c, d] = sides;
+  if (Math.abs(a - c) / Math.max(a, c) > 0.02 || Math.abs(b - d) / Math.max(b, d) > 0.02) return null;
+  const w = Math.round((a + c) / 2 * 3.281);   // avg opposite sides → ft
+  const dep = Math.round((b + d) / 2 * 3.281);
+  return { wFt: w, dFt: dep };
 }
 
 function BuildingPopup({ building, onClose }: { building: any; onClose: () => void }) {
@@ -243,7 +301,8 @@ function LocationSearch({ onGo }: { onGo: (lat: number, lon: number) => void }) 
 
   const pick = (r: any) => {
     onGo(parseFloat(r.lat), parseFloat(r.lon));
-    setQuery(r._isCoords ? r.display_name : r.display_name.split(',').slice(0, 2).join(','));
+    // Show only the place name, never raw coordinates
+    setQuery(r._isCoords ? '' : r.display_name.split(',').slice(0, 2).join(','));
     setOpen(false);
     setResults([]);
   };
@@ -307,9 +366,38 @@ export default function SiteMap() {
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const [clickedBuilding, setClickedBuildingLocal] = useState<any | null>(null);
 
-  const { selectedSite, setSelectedSite, setSiteContext, setInfrastructure, setNeighborConstraints, setFeasibilityData, setClickedBuilding } = useAppStore();
+  // Parcel form state
+  const [showParcelForm, setShowParcelForm] = useState(false);
+  const [parcelType, setParcelType] = useState<'polygon' | 'circle' | 'map'>('polygon');
+  const [parcelStep, setParcelStep] = useState<'count' | 'coords' | 'circle' | 'map'>('count');
+  const [vertexCount, setVertexCount] = useState(4);
+  const [vertexInputs, setVertexInputs] = useState<{ lat: string; lon: string }[]>([]);
+  const [circleInput, setCircleInput] = useState({ lat: '', lon: '', radius: '', unit: 'ft' as 'ft' | 'm' });
+  const [parcelError, setParcelError] = useState('');
+  const [drawnArea, setDrawnArea] = useState<number | null>(null);
+  const [drawnDims, setDrawnDims] = useState<string>('');
+  const setDrawnParcelOnMapRef = useRef<(poly: any | null) => void>(() => {});
 
-  const selectSiteRef = useRef<(lat: number, lon: number) => void>(() => {});
+  // Interactive map-draw state
+  const mapDrawActiveRef = useRef(false);
+  const [mapDrawActive, setMapDrawActive] = useState(false);
+  const mapDrawVertsRef = useRef<[number, number][]>([]); // [lon, lat]
+  const [mapDrawVertCount, setMapDrawVertCount] = useState(0);
+  const [coordsCopied, setCoordsCopied] = useState(false);
+  const vertexMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const addMapVertexRef    = useRef<(lon: number, lat: number) => void>(() => {});
+  const undoMapVertexRef   = useRef<() => void>(() => {});
+  const clearMapDrawRef    = useRef<() => void>(() => {});
+  const confirmMapParcelRef = useRef<() => Promise<void>>(async () => {});
+  const updateDrawPreviewRef = useRef<() => void>(() => {});
+  const typedPreviewMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const updateTypedPreviewRef = useRef<(inputs: { lat: string; lon: string }[]) => void>(() => {});
+  const clearTypedPreviewRef  = useRef<() => void>(() => {});
+
+  const { selectedSite, setSelectedSite, setSiteContext, setInfrastructure,
+    setNeighborConstraints, setFeasibilityData, setClickedBuilding, setDrawnParcel } = useAppStore();
+
+  const selectSiteRef = useRef<(lat: number, lon: number, parcelPolygon?: any) => void>(() => {});
 
   const setClickedBuilding2 = (b: any) => {
     setClickedBuildingLocal(b);
@@ -324,7 +412,8 @@ export default function SiteMap() {
 
     map.on('load', () => {
       const emptyColl: any = { type: 'FeatureCollection', features: [] };
-      ['hydrants', 'pipes', 'roads', 'power', 'parcel', 'buildable', 'buildings', 'power_connection', 'places', 'power_poles', 'manholes', 'power_plants'].forEach(id => {
+      ['hydrants', 'pipes', 'roads', 'power', 'parcel', 'buildable', 'buildings', 'power_connection', 'places', 'power_poles', 'manholes', 'power_plants',
+       'drawn-parcel', 'draw-preview'].forEach(id => {
         map.addSource(id, { type: 'geojson', data: emptyColl });
       });
 
@@ -388,6 +477,17 @@ export default function SiteMap() {
           'circle-opacity': 0.9,
         }
       });
+
+      // ── Parcel overlay layers ─────────────────────────────────────────────
+      map.addLayer({ id: 'drawn-parcel-fill', type: 'fill', source: 'drawn-parcel',
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.15 } });
+      map.addLayer({ id: 'drawn-parcel-line', type: 'line', source: 'drawn-parcel',
+        paint: { 'line-color': '#00e5ff', 'line-width': 3 } });
+      // In-progress interactive draw preview
+      map.addLayer({ id: 'draw-preview-fill', type: 'fill', source: 'draw-preview',
+        paint: { 'fill-color': '#facc15', 'fill-opacity': 0.08 } });
+      map.addLayer({ id: 'draw-preview-line', type: 'line', source: 'draw-preview',
+        paint: { 'line-color': '#facc15', 'line-width': 2, 'line-dasharray': [4, 2] } });
 
       // Click on existing buildings → show info popup
       map.on('mouseenter', 'buildings-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -455,7 +555,7 @@ export default function SiteMap() {
     // Prevent the generic map click from firing when a layer feature was clicked
     let suppressMapClick = false;
 
-    const handleSiteSelect = async (lat: number, lng: number) => {
+    const handleSiteSelect = async (lat: number, lng: number, drawnPolygon?: any) => {
       if (markerRef.current) markerRef.current.remove();
       const el = document.createElement('div');
       el.style.cssText = 'width:20px;height:20px;border-radius:50%;background:#00e5ff;border:3px solid white;box-shadow:0 0 12px rgba(0,229,255,0.6);';
@@ -463,9 +563,16 @@ export default function SiteMap() {
       setSelectedSite({ lat, lon: lng });
       map.flyTo({ center: [lng, lat], zoom: 18, duration: 1000 });
 
+      // Store drawn parcel in zustand so ProjectWizard can pass it to the API
+      if (drawnPolygon) {
+        setDrawnParcel(drawnPolygon);
+      } else {
+        setDrawnParcel(null);
+      }
+
       try {
         const [ctx, infra] = await Promise.all([
-          api.getSiteContext(lat, lng),
+          api.getSiteContext(lat, lng, drawnPolygon ?? undefined),
           api.getInfrastructure(lat, lng),
         ]);
         setSiteContext(ctx);
@@ -503,9 +610,149 @@ export default function SiteMap() {
 
     selectSiteRef.current = handleSiteSelect;
 
+    // Expose parcel overlay updater to React state
+    setDrawnParcelOnMapRef.current = (poly: any | null) => {
+      const src = map.getSource('drawn-parcel') as maplibregl.GeoJSONSource;
+      if (!src) return;
+      src.setData(poly
+        ? { type: 'Feature', geometry: poly, properties: {} }
+        : { type: 'FeatureCollection', features: [] });
+    };
+
+    // ── Typed-coordinate live preview ───────────────────────────────────────
+
+    clearTypedPreviewRef.current = () => {
+      typedPreviewMarkersRef.current.forEach(m => m.remove());
+      typedPreviewMarkersRef.current = [];
+      if (!mapDrawActiveRef.current) {
+        const src = map.getSource('draw-preview') as maplibregl.GeoJSONSource;
+        src?.setData({ type: 'FeatureCollection', features: [] });
+      }
+    };
+
+    updateTypedPreviewRef.current = (inputs) => {
+      typedPreviewMarkersRef.current.forEach(m => m.remove());
+      typedPreviewMarkersRef.current = [];
+      const verts: [number, number][] = [];
+      for (const inp of inputs) {
+        const lat = parseFloat(inp.lat);
+        const lon = parseFloat(inp.lon);
+        if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+          verts.push([lon, lat]);
+          const el = document.createElement('div');
+          el.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#00e5ff;border:2px solid #fff;box-shadow:0 0 6px rgba(0,229,255,0.7);pointer-events:none;';
+          typedPreviewMarkersRef.current.push(
+            new maplibregl.Marker({ element: el }).setLngLat([lon, lat]).addTo(map)
+          );
+        }
+      }
+      const src = map.getSource('draw-preview') as maplibregl.GeoJSONSource;
+      if (!src) return;
+      if (verts.length === 0) { src.setData({ type: 'FeatureCollection', features: [] }); return; }
+      // Fly to first valid point if map is not already zoomed in
+      if (verts.length === 1 && map.getZoom() < 14) {
+        map.flyTo({ center: verts[0], zoom: 17, duration: 700 });
+      }
+      // Draw connecting line/polygon
+      const ring = verts.length >= 3 ? [...verts, verts[0]] : verts;
+      src.setData({
+        type: 'Feature',
+        geometry: verts.length >= 3
+          ? { type: 'Polygon', coordinates: [ring] }
+          : { type: 'LineString', coordinates: verts },
+        properties: {},
+      });
+    };
+
+    // ── Interactive map-draw helpers ────────────────────────────────────────
+
+    const createVertexEl = () => {
+      const el = document.createElement('div');
+      el.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#facc15;border:2px solid #fff;cursor:grab;box-shadow:0 0 8px rgba(250,204,21,0.7);';
+      return el;
+    };
+
+    const updateDrawPreview = () => {
+      const verts = mapDrawVertsRef.current;
+      const src = map.getSource('draw-preview') as maplibregl.GeoJSONSource;
+      if (!src) return;
+      if (verts.length < 2) { src.setData({ type: 'FeatureCollection', features: [] }); return; }
+      // Always close the ring visually when ≥3 vertices
+      const ring = verts.length >= 3 ? [...verts, verts[0]] : verts;
+      src.setData({
+        type: 'Feature',
+        geometry: verts.length >= 3
+          ? { type: 'Polygon', coordinates: [ring] }
+          : { type: 'LineString', coordinates: verts },
+        properties: {},
+      });
+    };
+    updateDrawPreviewRef.current = updateDrawPreview;
+
+    addMapVertexRef.current = (lon, lat) => {
+      const marker = new maplibregl.Marker({ element: createVertexEl(), draggable: true })
+        .setLngLat([lon, lat])
+        .addTo(map);
+      marker.on('drag', () => {
+        const pos = marker.getLngLat();
+        const idx = vertexMarkersRef.current.indexOf(marker);
+        if (idx >= 0) { mapDrawVertsRef.current[idx] = [pos.lng, pos.lat]; updateDrawPreview(); }
+      });
+      vertexMarkersRef.current.push(marker);
+      mapDrawVertsRef.current = [...mapDrawVertsRef.current, [lon, lat]];
+      setMapDrawVertCount(c => c + 1);
+      updateDrawPreview();
+    };
+
+    undoMapVertexRef.current = () => {
+      const last = vertexMarkersRef.current.pop();
+      if (last) { last.remove(); mapDrawVertsRef.current = mapDrawVertsRef.current.slice(0, -1); setMapDrawVertCount(c => Math.max(0, c - 1)); updateDrawPreview(); }
+    };
+
+    clearMapDrawRef.current = () => {
+      vertexMarkersRef.current.forEach(m => m.remove());
+      vertexMarkersRef.current = [];
+      mapDrawVertsRef.current = [];
+      setMapDrawVertCount(0);
+      updateDrawPreview();
+    };
+
+    confirmMapParcelRef.current = async () => {
+      const verts = mapDrawVertsRef.current;
+      if (verts.length < 3) return;
+      const poly = closedPolygon(verts);
+      if (!poly) return;
+      const coords = poly.coordinates[0] as number[][];
+      const [clon, clat] = polygonCentroid(coords);
+      setDrawnArea(Math.round(calcAreaSqft(coords)));
+      const rd = rectDimsFt(coords); setDrawnDims(rd ? `${rd.wFt}ft × ${rd.dFt}ft` : '');
+
+      // Clear preview, show final parcel
+      const previewSrc = map.getSource('draw-preview') as maplibregl.GeoJSONSource;
+      previewSrc?.setData({ type: 'FeatureCollection', features: [] });
+      vertexMarkersRef.current.forEach(m => m.remove());
+      vertexMarkersRef.current = [];
+      mapDrawVertsRef.current = [];
+      setMapDrawVertCount(0);
+      mapDrawActiveRef.current = false;
+      setMapDrawActive(false);
+      map.getCanvas().style.cursor = '';
+
+      setDrawnParcelOnMapRef.current(poly);
+      setDrawnParcel(poly);
+      setShowParcelForm(false);
+      setParcelStep('count');
+
+      await handleSiteSelect(clat, clon, poly);
+    };
+
     map.on('click', async (e) => {
       if (suppressMapClick) { suppressMapClick = false; return; }
       const { lng, lat } = e.lngLat;
+      if (mapDrawActiveRef.current) {
+        addMapVertexRef.current(lng, lat);
+        return;
+      }
       await handleSiteSelect(lat, lng);
     });
 
@@ -513,23 +760,385 @@ export default function SiteMap() {
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
+  // Live map preview as user types polygon corner coordinates
+  useEffect(() => {
+    if (parcelStep === 'coords' && showParcelForm) {
+      updateTypedPreviewRef.current(vertexInputs);
+    } else {
+      clearTypedPreviewRef.current();
+    }
+  }, [vertexInputs, parcelStep, showParcelForm]);
+
   return (
     <div className="relative w-full h-full">
       <div ref={containerRef} className="w-full h-full" />
       <LocationSearch onGo={(lat, lon) => selectSiteRef.current(lat, lon)} />
+
+      {/* Selected site coordinates — moves to top-left when parcel form is open to avoid overlap */}
+      {selectedSite && (
+        <div className={`absolute z-50 panel px-3 py-1.5 flex items-center gap-2 animate-fade-in ${showParcelForm ? 'top-16 left-4' : 'bottom-36 left-4'}`}>
+          <span className="text-[10px] font-mono text-[var(--text-secondary)] uppercase tracking-wider">Site</span>
+          <span className="text-[11px] font-mono text-[var(--accent-cyan)]">
+            {selectedSite.lat.toFixed(6)},&nbsp;{selectedSite.lon.toFixed(6)}
+          </span>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(`${selectedSite.lat.toFixed(6)}, ${selectedSite.lon.toFixed(6)}`);
+              setCoordsCopied(true);
+              setTimeout(() => setCoordsCopied(false), 1500);
+            }}
+            className="text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors"
+            style={{ color: coordsCopied ? 'var(--accent-green)' : 'var(--text-secondary)', border: '1px solid var(--border)' }}
+          >
+            {coordsCopied ? 'copied' : 'copy'}
+          </button>
+        </div>
+      )}
+
       {clickedBuilding && <BuildingPopup building={clickedBuilding} onClose={() => { setClickedBuildingLocal(null); setClickedBuilding(null); }} />}
 
       {/* Utility Layer Toggles */}
       <MapLayerToggles mapRef={mapRef} />
 
-      {!selectedSite && (
+      {/* Define Land Parcel button + form */}
+      <div className="absolute bottom-20 left-4 z-50 flex flex-col items-start gap-2">
+        {!showParcelForm ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setShowParcelForm(true);
+                setParcelStep(parcelType === 'circle' ? 'circle' : parcelType === 'map' ? 'map' : 'count');
+                setParcelError('');
+              }}
+              className="panel px-3 py-2 text-[11px] font-mono flex items-center gap-1.5 hover:border-[var(--accent-cyan)] transition-colors"
+              style={{ borderColor: drawnArea ? 'var(--accent-cyan)' : 'var(--border)' }}
+            >
+              <span style={{ color: drawnArea ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}>⬡</span>
+              <span style={{ color: drawnArea ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>
+                {drawnArea
+                  ? `${drawnDims ? drawnDims + ' · ' : ''}${drawnArea.toLocaleString()} sqft`
+                  : 'Define Land Shape'}
+              </span>
+            </button>
+            {drawnArea && (
+              <button
+                onClick={() => {
+                  setDrawnParcelOnMapRef.current(null);
+                  setDrawnArea(null);
+                  setDrawnDims('');
+                  setDrawnParcel(null);
+                }}
+                className="text-[10px] font-mono text-[var(--text-secondary)] hover:text-[#f87171]"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="panel p-4 w-80 flex flex-col gap-3">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-semibold text-[var(--text-primary)] uppercase tracking-wider">
+                Define Land Shape
+              </span>
+              <button onClick={() => {
+                  if (mapDrawActiveRef.current) {
+                    mapDrawActiveRef.current = false;
+                    setMapDrawActive(false);
+                    clearMapDrawRef.current();
+                    mapRef.current?.getCanvas().style.cursor != null && (mapRef.current!.getCanvas().style.cursor = '');
+                  }
+                  setShowParcelForm(false);
+                  setParcelStep('count');
+                  setParcelError('');
+                }}
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] text-xs font-mono">✕</button>
+            </div>
+
+            {/* Shape type tabs */}
+            {parcelStep !== 'coords' && (
+              <div className="flex gap-1.5">
+                {([
+                  { key: 'polygon', label: '⬡ Type' },
+                  { key: 'circle',  label: '◯ Circle' },
+                  { key: 'map',     label: '📍 Click Map' },
+                ] as const).map(({ key, label }) => (
+                  <button key={key}
+                    onClick={() => {
+                      setParcelType(key);
+                      setParcelError('');
+                      if (key === 'circle') { setParcelStep('circle'); }
+                      else if (key === 'map') { setParcelStep('map'); }
+                      else { setParcelStep('count'); }
+                    }}
+                    className="flex-1 py-1.5 rounded-lg text-[10px] font-mono font-semibold transition-all border"
+                    style={{
+                      background: parcelType === key ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
+                      borderColor: parcelType === key ? 'var(--accent-cyan)' : 'var(--border)',
+                      color: parcelType === key ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* POLYGON — step: count */}
+            {parcelStep === 'count' && (
+              <>
+                <div className="text-[11px] font-mono text-[var(--text-secondary)]">
+                  How many corners does your land have?
+                </div>
+                <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-60">
+                  e.g. 4 = square/rectangle · 3 = triangle · 5+ = irregular
+                </div>
+                <div className="flex gap-2">
+                  {[3, 4, 5, 6].map(n => (
+                    <button key={n} onClick={() => setVertexCount(n)}
+                      className="flex-1 py-2 rounded-lg text-xs font-mono font-semibold transition-all border"
+                      style={{
+                        background: vertexCount === n ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
+                        borderColor: vertexCount === n ? 'var(--accent-cyan)' : 'var(--border)',
+                        color: vertexCount === n ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                      }}>{n}</button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-[var(--text-secondary)]">Custom:</span>
+                  <input type="number" min={3} max={20} value={vertexCount}
+                    onChange={e => setVertexCount(Math.max(3, Math.min(20, parseInt(e.target.value) || 4)))}
+                    className="w-20 bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] font-mono" />
+                </div>
+                <button
+                  onClick={() => {
+                    setVertexInputs(Array.from({ length: vertexCount }, () => ({ lat: '', lon: '' })));
+                    setParcelStep('coords');
+                    setParcelError('');
+                  }}
+                  className="w-full py-2 rounded-lg text-xs font-mono font-semibold"
+                  style={{ background: 'linear-gradient(135deg, #00e5ff, #00ff88)', color: '#000' }}>
+                  Next → Enter {vertexCount} Corners
+                </button>
+              </>
+            )}
+
+            {/* POLYGON — step: coords */}
+            {parcelStep === 'coords' && (
+              <>
+                <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
+                  Enter lat, lon for each corner going around the boundary
+                </div>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {vertexInputs.map((v, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-[var(--text-secondary)] w-14 flex-shrink-0">
+                        Corner {i + 1}
+                      </span>
+                      <input type="text" placeholder="lat" value={v.lat}
+                        onChange={e => setVertexInputs(vi => vi.map((x, j) => j === i ? { ...x, lat: e.target.value } : x))}
+                        className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1 text-[11px] font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] min-w-0"
+                      />
+                      <input type="text" placeholder="lon" value={v.lon}
+                        onChange={e => setVertexInputs(vi => vi.map((x, j) => j === i ? { ...x, lon: e.target.value } : x))}
+                        className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1 text-[11px] font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] min-w-0"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {parcelError && <div className="text-[10px] font-mono text-[#f87171]">{parcelError}</div>}
+                <div className="flex gap-2">
+                  <button onClick={() => { clearTypedPreviewRef.current(); setParcelStep('count'); setParcelError(''); }}
+                    className="flex-1 py-2 rounded-lg text-xs font-mono border"
+                    style={{ background: 'var(--surface-3)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+                    ← Back
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const verts: [number, number][] = [];
+                      for (let i = 0; i < vertexInputs.length; i++) {
+                        const lat = parseFloat(vertexInputs[i].lat);
+                        const lon = parseFloat(vertexInputs[i].lon);
+                        if (isNaN(lat) || isNaN(lon)) { setParcelError(`Corner ${i + 1}: enter valid numbers`); return; }
+                        if (lat < -90 || lat > 90) { setParcelError(`Corner ${i + 1}: lat must be −90 to 90`); return; }
+                        if (lon < -180 || lon > 180) { setParcelError(`Corner ${i + 1}: lon must be −180 to 180`); return; }
+                        verts.push([lon, lat]);
+                      }
+                      const poly = closedPolygon(verts);
+                      if (!poly) { setParcelError('Need at least 3 valid corners'); return; }
+                      const coords = poly.coordinates[0] as number[][];
+                      const [clon, clat] = polygonCentroid(coords);
+                      setDrawnArea(Math.round(calcAreaSqft(coords)));
+                      const rd = rectDimsFt(coords); setDrawnDims(rd ? `${rd.wFt}ft × ${rd.dFt}ft` : '');
+                      setDrawnParcelOnMapRef.current(poly);
+                      setDrawnParcel(poly);
+                      setShowParcelForm(false);
+                      setParcelStep('count');
+                      setParcelError('');
+                      await selectSiteRef.current(clat, clon, poly);
+                    }}
+                    className="flex-1 py-2 rounded-lg text-xs font-mono font-semibold"
+                    style={{ background: 'linear-gradient(135deg, #00e5ff, #00ff88)', color: '#000' }}>
+                    Confirm Parcel
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* CIRCLE */}
+            {parcelStep === 'circle' && (
+              <>
+                <div className="text-[11px] font-mono text-[var(--text-secondary)]">
+                  Enter the center of the circular land area and its radius.
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-[var(--text-secondary)] w-14 flex-shrink-0">Center lat</span>
+                    <input type="text" placeholder="e.g. 34.0522" value={circleInput.lat}
+                      onChange={e => setCircleInput(c => ({ ...c, lat: e.target.value }))}
+                      className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-[var(--text-secondary)] w-14 flex-shrink-0">Center lon</span>
+                    <input type="text" placeholder="e.g. -118.2437" value={circleInput.lon}
+                      onChange={e => setCircleInput(c => ({ ...c, lon: e.target.value }))}
+                      className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-[var(--text-secondary)] w-14 flex-shrink-0">Radius</span>
+                    <input type="text" placeholder="e.g. 100" value={circleInput.radius}
+                      onChange={e => setCircleInput(c => ({ ...c, radius: e.target.value }))}
+                      className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1.5 text-[11px] font-mono text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] min-w-0"
+                    />
+                    <div className="flex rounded overflow-hidden border border-[var(--border)]">
+                      {(['ft', 'm'] as const).map(u => (
+                        <button key={u} onClick={() => setCircleInput(c => ({ ...c, unit: u }))}
+                          className="px-2 py-1.5 text-[10px] font-mono transition-colors"
+                          style={{
+                            background: circleInput.unit === u ? 'var(--accent-cyan)' : 'var(--surface-3)',
+                            color: circleInput.unit === u ? '#000' : 'var(--text-secondary)',
+                          }}>{u}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {parcelError && <div className="text-[10px] font-mono text-[#f87171]">{parcelError}</div>}
+                <button
+                  onClick={async () => {
+                    const lat = parseFloat(circleInput.lat);
+                    const lon = parseFloat(circleInput.lon);
+                    const r = parseFloat(circleInput.radius);
+                    if (isNaN(lat) || lat < -90 || lat > 90) { setParcelError('Enter a valid center latitude (−90 to 90)'); return; }
+                    if (isNaN(lon) || lon < -180 || lon > 180) { setParcelError('Enter a valid center longitude (−180 to 180)'); return; }
+                    if (isNaN(r) || r <= 0) { setParcelError('Enter a positive radius'); return; }
+                    const radiusM = circleInput.unit === 'ft' ? r * 0.3048 : r;
+                    const poly = circleToPolygon([lon, lat], radiusM);
+                    const areaM2 = Math.PI * radiusM * radiusM;
+                    setDrawnArea(Math.round(areaM2 * 10.764));
+                    const rFt = Math.round(radiusM * 3.281); setDrawnDims(`r=${rFt}ft`);
+                    setDrawnParcelOnMapRef.current(poly);
+                    setDrawnParcel(poly);
+                    setShowParcelForm(false);
+                    setParcelStep('count');
+                    setParcelError('');
+                    await selectSiteRef.current(lat, lon, poly);
+                  }}
+                  className="w-full py-2 rounded-lg text-xs font-mono font-semibold"
+                  style={{ background: 'linear-gradient(135deg, #00e5ff, #00ff88)', color: '#000' }}>
+                  Confirm Circle Parcel
+                </button>
+              </>
+            )}
+
+            {/* CLICK MAP */}
+            {parcelStep === 'map' && (
+              <>
+                {!mapDrawActive ? (
+                  <>
+                    <div className="text-[11px] font-mono text-[var(--text-secondary)]">
+                      Click points on the map to define each corner of your land. Drag any point to adjust it.
+                    </div>
+                    <button
+                      onClick={() => {
+                        mapDrawActiveRef.current = true;
+                        setMapDrawActive(true);
+                        clearMapDrawRef.current();
+                        mapRef.current?.getCanvas().classList.add('cursor-crosshair');
+                        mapRef.current!.getCanvas().style.cursor = 'crosshair';
+                      }}
+                      className="w-full py-2 rounded-lg text-xs font-mono font-semibold"
+                      style={{ background: 'linear-gradient(135deg, #00e5ff, #00ff88)', color: '#000' }}>
+                      Start Clicking Corners
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-mono text-[var(--accent-cyan)]">
+                        {mapDrawVertCount} corner{mapDrawVertCount !== 1 ? 's' : ''} placed
+                      </span>
+                      <button
+                        onClick={() => undoMapVertexRef.current()}
+                        disabled={mapDrawVertCount === 0}
+                        className="text-[10px] font-mono px-2 py-1 rounded border transition-colors"
+                        style={{ borderColor: 'var(--border)', color: mapDrawVertCount > 0 ? 'var(--accent-amber, #f59e0b)' : 'var(--text-secondary)', background: 'var(--surface-3)' }}>
+                        ↩ Undo
+                      </button>
+                    </div>
+                    {mapDrawVertCount >= 3 ? (
+                      <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
+                        Shape ready — confirm or keep adding corners
+                      </div>
+                    ) : (
+                      <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
+                        Need at least {3 - mapDrawVertCount} more corner{3 - mapDrawVertCount !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                    {parcelError && <div className="text-[10px] font-mono text-[#f87171]">{parcelError}</div>}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          mapDrawActiveRef.current = false;
+                          setMapDrawActive(false);
+                          clearMapDrawRef.current();
+                          mapRef.current!.getCanvas().style.cursor = '';
+                          setParcelError('');
+                        }}
+                        className="flex-1 py-2 rounded-lg text-xs font-mono border"
+                        style={{ background: 'var(--surface-3)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+                        Cancel
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (mapDrawVertCount < 3) { setParcelError('Place at least 3 corners first'); return; }
+                          await confirmMapParcelRef.current();
+                        }}
+                        className="flex-1 py-2 rounded-lg text-xs font-mono font-semibold"
+                        style={{
+                          background: mapDrawVertCount >= 3 ? 'linear-gradient(135deg, #00e5ff, #00ff88)' : 'var(--surface-3)',
+                          color: mapDrawVertCount >= 3 ? '#000' : 'var(--text-secondary)',
+                          border: mapDrawVertCount < 3 ? '1px solid var(--border)' : 'none',
+                        }}>
+                        Confirm Parcel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {!selectedSite && !showParcelForm && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
           <div className="panel px-6 py-4 text-center animate-pulse-slow">
             <div className="text-[var(--accent-cyan)] font-display text-lg font-semibold text-glow-cyan">
               Click anywhere in California
             </div>
             <div className="text-[var(--text-secondary)] text-sm mt-1">
-              Fetches real buildings, pipes, hydrants, power lines + neighbor analysis
+              Or use "Define Land Shape" to enter your parcel boundary
             </div>
           </div>
         </div>
