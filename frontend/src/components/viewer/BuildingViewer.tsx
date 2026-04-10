@@ -100,8 +100,8 @@ function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
     try {
       const pts = room.polygon;
       const s = new THREE.Shape();
-      s.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+      s.moveTo(pts[0][0], -pts[0][1]);
+      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], -pts[i][1]);
       s.closePath();
       if (isFloor) {
         // Floor slab: 80mm thick concrete-like slab so it reads as a solid element, not a paper plane
@@ -149,8 +149,8 @@ function CeilingMesh({ room, floorH }: { room: any; floorH: number }) {
     try {
       const pts = room.polygon;
       const s = new THREE.Shape();
-      s.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+      s.moveTo(pts[0][0], -pts[0][1]);
+      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], -pts[i][1]);
       s.closePath();
       // 50mm ceiling board — thin but clearly a plane, not just a surface
       const geo = new THREE.ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: false });
@@ -579,8 +579,8 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness }
                   footprint[footprint.length - 1][1] === footprint[0][1]
         ? footprint.slice(0, -1) : footprint;
       const shape = new THREE.Shape();
-      shape.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
+      shape.moveTo(pts[0][0], -pts[0][1]);
+      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], -pts[i][1]);
       shape.closePath();
       const geo = new THREE.ExtrudeGeometry(shape, { depth: totalH, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
@@ -609,8 +609,8 @@ function FloorSlab({ massing, levelIdx, floorH }: {
                   footprint[footprint.length - 1][1] === footprint[0][1]
         ? footprint.slice(0, -1) : footprint;
       const shape = new THREE.Shape();
-      shape.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
+      shape.moveTo(pts[0][0], -pts[0][1]);
+      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], -pts[i][1]);
       shape.closePath();
       const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.22, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
@@ -640,8 +640,8 @@ function ParcelPreview({ parcelPolygon, siteCenter, targetHeight }: {
         (lat - siteCenter[1]) * 111320,
       ]);
       const shape = new THREE.Shape();
-      shape.moveTo(localPts[0][0], localPts[0][1]);
-      for (let i = 1; i < localPts.length; i++) shape.lineTo(localPts[i][0], localPts[i][1]);
+      shape.moveTo(localPts[0][0], -localPts[0][1]);
+      for (let i = 1; i < localPts.length; i++) shape.lineTo(localPts[i][0], -localPts[i][1]);
       shape.closePath();
       const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(1, targetHeight), bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
@@ -785,8 +785,8 @@ function NeighborBuilding({ building, siteCenter }: { building: any; siteCenter:
       });
 
       const shape = new THREE.Shape();
-      shape.moveTo(localPts[0][0], localPts[0][1]);
-      for (let i = 1; i < localPts.length; i++) shape.lineTo(localPts[i][0], localPts[i][1]);
+      shape.moveTo(localPts[0][0], -localPts[0][1]);
+      for (let i = 1; i < localPts.length; i++) shape.lineTo(localPts[i][0], -localPts[i][1]);
       shape.closePath();
 
       const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
