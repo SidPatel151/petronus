@@ -157,6 +157,11 @@ class FacadeGenerator:
         meshes: List[Dict] = []
         ext_walls = [w for w in walls if w.is_exterior and w.level == 0]
 
+        # Compute polygon centroid from exterior wall endpoints for correct outward normal
+        poly_pts = [w.start for w in ext_walls]
+        poly_cx = sum(p[0] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
+        poly_cz = sum(p[1] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
+
         for wall in ext_walls:
             s, e = wall.start, wall.end
             dx, dz = e[0] - s[0], e[1] - s[1]
@@ -165,7 +170,12 @@ class FacadeGenerator:
                 continue
 
             ux, uz = dx / wall_len, dz / wall_len
-            nx, nz = uz, -ux  # outward normal (CCW polygon)
+            nx, nz = uz, -ux  # outward normal (assumes CCW polygon)
+            # Verify: normal must point AWAY from polygon centroid
+            mid_x = (s[0] + e[0]) / 2
+            mid_z = (s[1] + e[1]) / 2
+            if nx * (mid_x - poly_cx) + nz * (mid_z - poly_cz) < 0:
+                nx, nz = -nx, -nz  # polygon is CW — flip to outward
 
             for lvl in range(stories):
                 base_y = lvl * floor_h

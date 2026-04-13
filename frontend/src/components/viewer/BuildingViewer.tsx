@@ -34,9 +34,10 @@ function usePBRSet(name: string) {
 }
 
 // Procedural canvas texture fallback — always renders, never conditionally calls hooks
-function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1 }: {
+function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0 }: {
   texName: string; fallbackColor: string;
   roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
+  polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
 }) {
   const tex = useMemo(() => { try { return getTexture(texName); } catch { return null; } }, [texName]);
   return (
@@ -44,29 +45,33 @@ function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness
       map={tex ?? undefined} color={tex ? '#ffffff' : fallbackColor}
       roughness={roughness} metalness={metalness}
       transparent={transparent} opacity={opacity}
+      polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits}
     />
   );
 }
 
 // Dispatcher — renders PBR inner if texture set exists, otherwise procedural
-function PBRMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1 }: {
+function PBRMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0 }: {
   texName: string; fallbackColor: string;
   roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
+  polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
 }) {
   if (PBR_SETS[texName]) {
-    return <PBRMaterialInner texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />;
+    return <PBRMaterialInner texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />;
   }
-  return <ProceduralMaterial texName={texName} fallbackColor={fallbackColor} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />;
+  return <ProceduralMaterial texName={texName} fallbackColor={fallbackColor} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />;
 }
 
 // Loads diff + optional roughness JPG — no EXR, always renders
-function PBRMaterialInner({ texName, roughness, metalness, transparent, opacity }: {
+function PBRMaterialInner({ texName, roughness, metalness, transparent, opacity, polygonOffset, polygonOffsetFactor, polygonOffsetUnits }: {
   texName: string; roughness: number; metalness: number; transparent: boolean; opacity: number;
+  polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
 }) {
   const { diff, rough } = usePBRSet(texName);
   return (
     <meshStandardMaterial map={diff} roughnessMap={rough ?? undefined}
-      roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} />
+      roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity}
+      polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />
   );
 }
 
@@ -465,25 +470,29 @@ function FacadeMesh({ mesh }: { mesh: any; floorH?: number }) {
 
   if (isWindow) {
     return (
-      <mesh geometry={geometry} castShadow={false} receiveShadow={false}>
+      <mesh geometry={geometry} castShadow={false} receiveShadow={false} renderOrder={2}>
         <meshPhysicalMaterial
-          color="#90caf9"
-          transmission={0.85}
+          color="#a8d8f0"
+          transmission={0.6}
           roughness={0.05}
-          thickness={0.15}
+          thickness={0.2}
           ior={1.45}
           transparent
-          opacity={0.55}
+          opacity={0.7}
           side={THREE.DoubleSide}
           depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
         />
       </mesh>
     );
   }
   if (mesh.element_type === 'window_frame') {
     return (
-      <mesh geometry={geometry} castShadow receiveShadow>
-        <meshStandardMaterial color="#1a2535" roughness={0.3} metalness={0.5} side={THREE.DoubleSide} />
+      <mesh geometry={geometry} castShadow receiveShadow renderOrder={2}>
+        <meshStandardMaterial color="#1a2535" roughness={0.3} metalness={0.5} side={THREE.DoubleSide}
+          polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
     );
   }
@@ -591,7 +600,7 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness }
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <PBRMaterial texName={texName} fallbackColor="#334155" roughness={roughness} metalness={metalness} />
+      <PBRMaterial texName={texName} fallbackColor="#334155" roughness={roughness} metalness={metalness} polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
     </mesh>
   );
 }
@@ -970,14 +979,26 @@ function Scene() {
           {activeLayers['architecture'] && (() => {
             const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
             return (
-              <MassingShell
-                massing={massing}
-                levels={buildingModel.levels}
-                floorH={floorH}
-                texName={texName}
-                roughness={texRoughness}
-                metalness={texMetalness}
-              />
+              <>
+                <MassingShell
+                  massing={massing}
+                  levels={buildingModel.levels}
+                  floorH={floorH}
+                  texName={texName}
+                  roughness={texRoughness}
+                  metalness={texMetalness}
+                />
+                {/* Floor slabs at each level boundary */}
+                {buildingModel.levels.map((_: any, i: number) => (
+                  <FloorSlab key={`slab_${i}`} massing={massing} levelIdx={i} floorH={floorH} />
+                ))}
+                {/* Room floors — thin colored slabs showing room layout */}
+                {buildingModel.rooms
+                  .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
+                  .map((r: any, i: number) => (
+                    <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
+                  ))}
+              </>
             );
           })()}
           {/* Structural columns at footprint corners */}
@@ -1105,7 +1126,7 @@ export default function BuildingViewer() {
         <Suspense fallback={null}>
           <Scene />
         </Suspense>
-        <OrbitControls makeDefault minDistance={5} maxDistance={500} maxPolarAngle={Math.PI} />
+        <OrbitControls makeDefault minDistance={0.5} maxDistance={500} maxPolarAngle={Math.PI} enablePan />
       </Canvas>
 
       {/* Layer toggles */}
