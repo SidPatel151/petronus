@@ -16,6 +16,7 @@ from shapely.ops import transform, unary_union
 import pyproj
 
 from app.models.schemas import BuildingModel, ProjectSpec, SiteContext, Level, Mesh
+from app.constants import BuildingUse
 
 MATERIAL_COLORS = {
     "wood":     "#8B6914",
@@ -32,6 +33,7 @@ class MassingGenerator:
         site_ctx: SiteContext,
         neighbor_buildings: List[Dict] = [],
         design_brief: Optional[Dict] = None,
+        style: Optional[str] = None,
     ) -> Tuple[List[Dict], List[Level]]:
         envelope = shape(site_ctx.buildable_envelope_2d)
 
@@ -78,10 +80,26 @@ class MassingGenerator:
         grad_x = terrain.get("grad_x", 0.0)
         grad_z = terrain.get("grad_z", 0.0)
 
+        style_val = style or getattr(spec, 'style', None) or brief_shape
+        if hasattr(style_val, 'value'):
+            style_val = style_val.value
+        _buse = getattr(spec, 'building_use', None)
+        _is_sfr = _buse in (BuildingUse.single_family, BuildingUse.adu, 'single_family', 'adu')
+        _is_adu = _buse in (BuildingUse.adu, 'adu')
+        if not style_val:
+            style_val = 'classic_gabled' if _is_sfr else 'modern_linear'
+
+        # ── Max lot coverage: house must not fill the whole parcel ──
+        # CA residential: SFR ≤45%, ADU ≤75%, multi-family ≤60% of buildable envelope
+        _max_coverage = 0.75 if _is_adu else (0.45 if _is_sfr else 0.60)
+        _max_fp_m2 = max(20.0, envelope_local.area * _max_coverage)
+        _max_total_area = _max_fp_m2 * stories
+        target_area_m2 = min(target_area_m2, _max_total_area)
+
         options = [
-            self._option_rectangle(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
-            self._option_stepped(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
-            self._option_u_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local),
+            self._option_l_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
+            self._option_stepped(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
+            self._option_u_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
         ]
         levels = self._build_levels(stories, spec.floor_to_floor_height_ft)
         return options, levels
@@ -124,26 +142,40 @@ class MassingGenerator:
 
     # ── Option builders ───────────────────────────────────────────────────
 
-    def _option_rectangle(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        # Use parcel envelope shape, scaled down to target footprint area
+    def _option_l_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
+        """L-shaped footprint: start with bounding rectangle, cut one rear corner."""
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
             base = envelope_local
         target_fp_area = target_area_m2 / max(1, stories)
-        footprint = self._fit_to_area(base, target_fp_area)
+        scaled = self._fit_to_area(base, target_fp_area * 1.35)  # start larger so L has enough area
+        b = scaled.bounds
+        bw, bd = b[2] - b[0], b[3] - b[1]
+        # Cut proportions vary by style: sculpted=smaller cut (chunkier), linear=larger cut (sleeker)
+        if 'sculpted' in style:
+            cut_w, cut_d = bw * 0.28, bd * 0.42
+        elif 'linear' in style:
+            cut_w, cut_d = bw * 0.52, bd * 0.38
+        else:
+            cut_w, cut_d = bw * 0.40, bd * 0.45
+        cutout = box(b[2] - cut_w, b[3] - cut_d, b[2], b[3])
+        footprint = scaled.difference(cutout)
+        if footprint.is_empty or not footprint.is_valid or footprint.area < target_fp_area * 0.5:
+            footprint = scaled  # fallback to rectangle if cut fails
+        footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z)
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z, style=style)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
-            "label": "A", "name": "Compact Rectangle",
-            "description": "Efficient massing sized to match neighboring footprints",
+            "label": "A", "name": "L-Shape",
+            "description": "L-shaped plan — defines front yard, efficient corner circulation",
             "footprint": list(footprint.exterior.coords),
             "total_area_m2": total_area, "stories": stories, "floor_height_m": floor_height_m,
             "meshes": meshes,
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_stepped(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
+    def _option_stepped(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
         # Base floor = parcel shape scaled to target area; upper floors step back further
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
@@ -157,10 +189,10 @@ class MassingGenerator:
         # Generate lower + upper meshes separately
         lower_stories = max(1, stories // 2)
         upper_stories = stories - lower_stories
-        meshes = self._extrude_footprint(footprint, lower_stories, floor_height_m, "massing_b_low", mat_color, grad_x, grad_z)
+        meshes = self._extrude_footprint(footprint, lower_stories, floor_height_m, "massing_b_low", mat_color, grad_x, grad_z, style='modern_linear')  # lower always flat
         if upper_stories > 0:
             y_offset = lower_stories * floor_height_m
-            upper_meshes = self._extrude_footprint(upper_footprint, upper_stories, floor_height_m, "massing_b_up", mat_color, grad_x, grad_z)
+            upper_meshes = self._extrude_footprint(upper_footprint, upper_stories, floor_height_m, "massing_b_up", mat_color, grad_x, grad_z, style=style)
             # Shift upper meshes up by lower floor height
             for m in upper_meshes:
                 if "vertices" in m:
@@ -177,25 +209,30 @@ class MassingGenerator:
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_u_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors) -> Dict:
-        # Start with parcel shape scaled to target area, carve courtyard from front
+    def _option_u_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
             base = envelope_local
         target_fp_area = target_area_m2 / max(1, stories)
-        scaled = self._fit_to_area(base, target_fp_area)
+        scaled = self._fit_to_area(base, target_fp_area * 1.35)
         b = scaled.bounds
         bw = b[2] - b[0]
         bd = b[3] - b[1]
-        court_w = bw * 0.40
-        court_d = bd * 0.35
+        # Court proportions vary by style: sculpted=narrow court (more mass), linear=wide open court
+        if 'sculpted' in style:
+            court_w, court_d = bw * 0.28, bd * 0.38
+        elif 'linear' in style:
+            court_w, court_d = bw * 0.52, bd * 0.32
+        else:
+            court_w, court_d = bw * 0.40, bd * 0.35
         cx = (b[0] + b[2]) / 2
         cutout = box(cx - court_w/2, b[1], cx + court_w/2, b[1] + court_d)
         footprint = scaled.difference(cutout)
         if footprint.is_empty or not footprint.is_valid:
             footprint = scaled
+        footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z)
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z, style=style)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": "C", "name": "U-Shape / Forecourt",
@@ -213,7 +250,8 @@ class MassingGenerator:
 
     def _extrude_footprint(self, footprint: Polygon, stories: int, floor_height_m: float,
                            prefix: str, color: str = "#94a3b8",
-                           grad_x: float = 0.0, grad_z: float = 0.0) -> List[Dict]:
+                           grad_x: float = 0.0, grad_z: float = 0.0,
+                           style: str = 'modern_linear') -> List[Dict]:
         coords = list(footprint.exterior.coords[:-1])
         if not coords:
             return []
@@ -311,30 +349,136 @@ class MassingGenerator:
                 "level": floor_i, "color": "#c0c8d8",
             })
 
-        # ── Flat roof slab ──
-        # roof Y = ground elevation at each point + total building height
+        # ── Roof — three distinct forms per style ──
         roof_height_rel = stories * floor_height_m
-        roof_verts = []
-        roof_faces = []
-        for x, z in coords:
-            gy = self._ground_y(x, z, grad_x, grad_z)
-            roof_verts.append([x, gy + roof_height_rel, z])
-        # Fan triangulation from centroid
-        rcx = sum(v[0] for v in roof_verts) / len(roof_verts)
-        rcy = sum(v[1] for v in roof_verts) / len(roof_verts)
-        rcz = sum(v[2] for v in roof_verts) / len(roof_verts)
-        center_r = len(roof_verts)
-        roof_verts.append([rcx, rcy, rcz])
-        for i in range(n):
-            j = (i + 1) % n
-            roof_faces.append([i, j, center_r])
-            roof_faces.append([center_r, j, i])  # double-sided
-        meshes.append({
-            "element_id": f"{prefix}_roof",
-            "element_type": "roof",
-            "vertices": roof_verts, "faces": roof_faces,
-            "level": stories - 1, "color": "#475569",
-        })
+        is_gabled   = 'classic' in style or 'gabled' in style
+        is_sculpted = 'sculpted' in style
+
+        if is_gabled:
+            # ── True hip/pyramid roof — works for any polygon shape ──
+            # Single apex above footprint centroid, fan triangles to every eave edge.
+            b = footprint.bounds
+            bw = b[2] - b[0]
+            bd = b[3] - b[1]
+            peak_height = min(bw, bd) * 0.30   # ~17° pitch
+
+            # Use representative_point so apex is always inside concave shapes (L, U)
+            rep = footprint.representative_point()
+            apex_x, apex_z = rep.x, rep.y
+            apex_y = self._ground_y(apex_x, apex_z, grad_x, grad_z) + roof_height_rel + peak_height
+
+            eave_verts = []
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                eave_verts.append([x, gy + roof_height_rel, z])
+
+            apex_idx = len(eave_verts)
+            roof_verts = eave_verts + [[apex_x, apex_y, apex_z]]
+            roof_faces = []
+            n_eave = len(eave_verts)
+
+            # Fan: each wall-top edge → apex
+            for i in range(n_eave):
+                j = (i + 1) % n_eave
+                roof_faces.append([i, j, apex_idx])
+                roof_faces.append([apex_idx, j, i])  # back-face for double-sided
+
+            meshes.append({
+                "element_id": f"{prefix}_roof",
+                "element_type": "roof",
+                "vertices": roof_verts, "faces": roof_faces,
+                "level": stories - 1, "color": "#374151",
+            })
+        elif is_sculpted:
+            # ── Mono-pitch shed roof — slopes low at front (min-Z), high at rear (max-Z) ──
+            b_s = footprint.bounds
+            z_min_s, z_max_s = b_s[1], b_s[3]
+            z_range_s = max(z_max_s - z_min_s, 0.01)
+            rise = (z_max_s - z_min_s) * 0.20   # ~11° mono-pitch slope
+
+            shed_verts = []
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                t = (z - z_min_s) / z_range_s
+                shed_verts.append([x, gy + roof_height_rel + t * rise, z])
+
+            # representative_point() is always inside the polygon — safe for L/U shapes
+            rep = footprint.representative_point()
+            rep_x, rep_z = rep.x, rep.y
+            t_rep = (rep_z - z_min_s) / z_range_s
+            rep_y = self._ground_y(rep_x, rep_z, grad_x, grad_z) + roof_height_rel + t_rep * rise
+            ci_shed = len(shed_verts)
+            shed_verts.append([rep_x, rep_y, rep_z])
+
+            shed_faces = []
+            n_s = len(coords)
+            for i in range(n_s):
+                j = (i + 1) % n_s
+                shed_faces.append([i, j, ci_shed])
+                shed_faces.append([ci_shed, j, i])  # double-sided
+
+            meshes.append({
+                "element_id": f"{prefix}_roof",
+                "element_type": "roof",
+                "vertices": shed_verts, "faces": shed_faces,
+                "level": stories - 1, "color": "#1e293b",
+            })
+
+        else:
+            # ── Flat roof with parapet walls (modern_linear) ──
+            PARAPET_H = 0.7   # parapet height above roof deck
+
+            # Roof deck (flat slab, 20cm thick — sits atop wall plate)
+            deck_verts = []
+            deck_faces = []
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                deck_verts.append([x, gy + roof_height_rel, z])       # deck bottom
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                deck_verts.append([x, gy + roof_height_rel + 0.18, z]) # deck top
+            # Top face (fan from centroid)
+            dcx = sum(v[0] for v in deck_verts[n:]) / n
+            dcy = sum(v[1] for v in deck_verts[n:]) / n
+            dcz = sum(v[2] for v in deck_verts[n:]) / n
+            ci = len(deck_verts)
+            deck_verts.append([dcx, dcy, dcz])
+            for i in range(n):
+                j = (i + 1) % n
+                deck_faces.append([n+i, ci, n+j])   # top
+                deck_faces.append([ci, n+j, n+i])
+                deck_faces.append([i, j, n+j])       # side
+                deck_faces.append([i, n+j, n+i])
+            meshes.append({
+                "element_id": f"{prefix}_roof",
+                "element_type": "roof",
+                "vertices": deck_verts, "faces": deck_faces,
+                "level": stories - 1, "color": "#374151",
+            })
+
+            # Parapet walls around perimeter
+            par_verts = []
+            par_faces = []
+            par_base_y = roof_height_rel + 0.18
+            par_top_y  = par_base_y + PARAPET_H
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                par_verts.append([x, gy + par_base_y, z])
+            for x, z in coords:
+                gy = self._ground_y(x, z, grad_x, grad_z)
+                par_verts.append([x, gy + par_top_y, z])
+            for i in range(n):
+                j = (i + 1) % n
+                par_faces.append([i, j, n+j])
+                par_faces.append([i, n+j, n+i])
+                par_faces.append([j, i, n+i])   # inner face
+                par_faces.append([j, n+i, n+j])
+            meshes.append({
+                "element_id": f"{prefix}_parapet",
+                "element_type": "parapet",
+                "vertices": par_verts, "faces": par_faces,
+                "level": stories - 1, "color": "#475569",
+            })
 
         return meshes
 
@@ -387,17 +531,39 @@ class MassingGenerator:
             "level": 0, "color": "#00ff88",
         })
 
-        # ── Terrain ground plane ──
-        pad = 8.0
-        b = footprint.bounds
-        x0, x1 = b[0] - pad, b[2] + pad
-        z0, z1 = b[1] - pad, b[3] + pad
-        corners = [(x0, z0), (x1, z0), (x1, z1), (x0, z1)]
-        verts_t = [[x, self._ground_y(x, z, grad_x, grad_z) - 0.05, z] for x, z in corners]
+        # ── Terrain ground plane — follows the parcel footprint shape ──
+        try:
+            pad = 8.0
+            outer = footprint.buffer(pad, join_style=2, cap_style=2)
+            outer_coords = list(outer.exterior.coords[:-1])
+        except Exception:
+            outer_coords = None
+
+        if outer_coords and len(outer_coords) >= 3:
+            # Fan-triangulate the padded footprint polygon from its centroid
+            cx_t = sum(x for x, z in outer_coords) / len(outer_coords)
+            cz_t = sum(z for x, z in outer_coords) / len(outer_coords)
+            gy_c = self._ground_y(cx_t, cz_t, grad_x, grad_z) - 0.05
+            verts_t = [[cx_t, gy_c, cz_t]]   # index 0 = centroid
+            for x, z in outer_coords:
+                verts_t.append([x, self._ground_y(x, z, grad_x, grad_z) - 0.05, z])
+            faces_t = []
+            n_t = len(outer_coords)
+            for i in range(n_t):
+                j = (i + 1) % n_t
+                faces_t.append([0, i + 1, j + 1])
+        else:
+            # Fallback: simple quad
+            b = footprint.bounds
+            pad = 8.0
+            corners = [(b[0]-pad,b[1]-pad),(b[2]+pad,b[1]-pad),(b[2]+pad,b[3]+pad),(b[0]-pad,b[3]+pad)]
+            verts_t = [[x, self._ground_y(x,z,grad_x,grad_z)-0.05, z] for x,z in corners]
+            faces_t = [[0,1,2],[0,2,3]]
+
         meshes.append({
             "element_id": "terrain_plane",
             "element_type": "terrain",
-            "vertices": verts_t, "faces": [[0,1,2],[0,2,3]],
+            "vertices": verts_t, "faces": faces_t,
             "level": 0, "color": "#3d5a3e",
         })
 

@@ -78,8 +78,12 @@ function PBRMaterialInner({ texName, roughness, metalness, transparent, opacity,
 const COLORS: Record<string, string> = {
   unit: '#1e3a5f', living: '#1e3a5f', bedroom: '#1a3352',
   bathroom: '#0f2040', kitchen: '#162d4a', corridor: '#0d1f33', stair: '#0a1a2e',
+  foyer: '#1a2a3a', office: '#1e2a1e', pantry: '#1a2a1a', mudroom: '#2a1a1a',
+  walk_in_closet: '#1a1a2a', family_room: '#1e3040', bonus_room: '#1a2a3a',
+  loft: '#1e3050', media_room: '#0a0a1a', library: '#1a1a0a', gym: '#1a2a1a',
+  laundry: '#1a1a2a', dining: '#2a2a1a',
   wall_exterior: '#334155', wall_interior: '#1e293b', wall_shear: '#7c3aed',
-  plumbing: '#3b82f6', electrical: '#f59e0b', hvac: '#10b981',
+  plumbing: '#3b82f6', electrical: '#f59e0b', hvac: '#10b981', fire: '#ef4444',
   fixture: '#60a5fa', panel: '#fbbf24', mini_split_head: '#34d399',
   issue_error: '#ef4444', issue_warning: '#f59e0b',
   neighbor: '#2d3748', neighbor_existing: '#7c3aed',
@@ -92,7 +96,12 @@ const MATERIAL_COLORS: Record<string, string> = {
 };
 
 // ── Room: extrude polygon on XZ plane, Y is up ─────────────────────────
-const FLOOR_ROOM_TYPES = new Set(['bedroom','living','kitchen','bathroom','dining']);
+const FLOOR_ROOM_TYPES = new Set([
+  'bedroom','living','kitchen','bathroom','dining',
+  'foyer','office','pantry','mudroom','walk_in_closet',
+  'family_room','bonus_room','loft','media_room','library','gym',
+  'laundry','corridor',
+]);
 
 function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
   room: any; matColor: string; texName?: string; roughness?: number; metalness?: number; floorH: number;
@@ -125,6 +134,10 @@ function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
   const subRoomColors: Record<string,string> = {
     bedroom: '#1a3a5c', living: '#1e3a4a', kitchen: '#2a3a2a',
     bathroom: '#1a2a3a', dining: '#2a2a1a',
+    foyer: '#1e3050', office: '#1e2e1e', pantry: '#1a2e1a', mudroom: '#2e1a1a',
+    walk_in_closet: '#1a1a3a', family_room: '#1a3050', bonus_room: '#1a2e3a',
+    loft: '#203060', media_room: '#0a0a20', library: '#1a1a0e', gym: '#1a2e1a',
+    laundry: '#1a1a3a',
   };
   const color = room.type === 'unit' ? matColor : subRoomColors[room.type] || COLORS[room.type] || '#1a2030';
   // Floor slabs sit 2cm above the structural slab so they're not z-fighting
@@ -201,6 +214,93 @@ function WallMesh({ wall, matColor, texName, roughness, metalness, floorH }: {
         roughness={roughness ?? 0.9}
         metalness={metalness ?? 0.0}
       />
+    </mesh>
+  );
+}
+
+// ── Backend structural member (from StructuralEngine) ─────────────────
+function StructuralMemberMesh({ member }: { member: any }) {
+  const [x0, y0, z0] = member.start || [0, 0, 0];
+  const [x1, y1, z1] = member.end || [x0, y0 + 3, z0];
+  const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+  const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (length < 0.01) return null;
+
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
+  const color = member.color || '#a855f7';
+  const size = member.size_m || 0.2;
+  const mat = member.material || 'wood';
+  const roughness = mat === 'concrete' ? 0.85 : mat === 'steel' ? 0.3 : 0.7;
+  const metalness = mat === 'steel' ? 0.7 : 0.0;
+
+  const quaternion = useMemo(() => {
+    const dir = new THREE.Vector3(dx, dy, dz).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    const q = new THREE.Quaternion();
+    if (Math.abs(dir.dot(up)) < 0.999) {
+      q.setFromUnitVectors(up, dir);
+    } else if (dir.y < 0) {
+      q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+    }
+    return q;
+  }, [dx, dy, dz]);
+
+  const type = member.type;
+
+  if (type === 'column') {
+    if (mat === 'steel') {
+      // H-section column
+      return (
+        <group position={[cx, cy, cz]} quaternion={quaternion}>
+          <mesh castShadow><boxGeometry args={[size, length, size * 0.15]} /><meshStandardMaterial color={color} roughness={roughness} metalness={metalness} /></mesh>
+          <mesh castShadow><boxGeometry args={[size * 0.15, length, size]} /><meshStandardMaterial color={color} roughness={roughness} metalness={metalness} /></mesh>
+        </group>
+      );
+    }
+    return (
+      <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow receiveShadow>
+        <boxGeometry args={[size, length, size]} />
+        <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+      </mesh>
+    );
+  }
+
+  if (type === 'beam' || type === 'joist') {
+    const w = type === 'joist' ? size * 0.4 : size;
+    return (
+      <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
+        <boxGeometry args={[w * 0.5, length, w]} />
+        <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+      </mesh>
+    );
+  }
+
+  if (type === 'footing' || type === 'grade_beam') {
+    // Flat box — footing is wider than the column above it
+    const footW = type === 'footing' ? size * 3.5 : size * 1.5;
+    return (
+      <mesh position={[cx, cy, cz]} castShadow receiveShadow>
+        <boxGeometry args={[footW, length, footW]} />
+        <meshStandardMaterial color={color} roughness={0.9} metalness={0.0} transparent opacity={0.8} />
+      </mesh>
+    );
+  }
+
+  if (type === 'shear_wall') {
+    // Thin panel along the wall
+    return (
+      <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
+        <boxGeometry args={[length, size * 0.15, size * 3]} />
+        <meshStandardMaterial color={color} roughness={0.7} metalness={0.0} transparent opacity={0.75} />
+      </mesh>
+    );
+  }
+
+  // Generic fallback
+  return (
+    <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
+      <cylinderGeometry args={[size / 2, size / 2, length, 8]} />
+      <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
     </mesh>
   );
 }
@@ -288,10 +388,13 @@ function MEPLine({ el }: { el: any }) {
   // Pipe/duct radius by system and type
   const isPlumbing = el.system === 'plumbing';
   const isHVAC = el.system === 'hvac';
+  const isFire = el.system === 'fire';
   const radius = isPlumbing
     ? (el.type === 'riser' ? 0.07 : el.type === 'waste_branch' ? 0.06 : 0.04)
     : isHVAC
     ? (el.type === 'supply_duct' ? 0.18 : 0.06)
+    : isFire
+    ? (el.type === 'main' || el.type === 'riser' ? 0.06 : 0.04)
     : 0.03; // electrical conduit
 
   const color = COLORS[el.system] || '#888';
@@ -321,6 +424,8 @@ function MEPLine({ el }: { el: any }) {
         <meshStandardMaterial color={color} roughness={0.5} metalness={0.3} transparent opacity={0.85} />
       ) : isPlumbing ? (
         <meshStandardMaterial color={color} roughness={0.4} metalness={0.5} />
+      ) : isFire ? (
+        <meshStandardMaterial color={color} roughness={0.35} metalness={0.55} emissive="#440000" emissiveIntensity={0.15} />
       ) : (
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.25} roughness={0.6} metalness={0.2} />
       )}
@@ -403,6 +508,35 @@ function MEPPoint({ el }: { el: any }) {
       </mesh>
     );
   }
+  // ── Furniture ───────────────────────────────────────────────────────
+  const FURNITURE_COLORS: Record<string, string> = {
+    sofa: '#6b4c3b', bed: '#3a5a7a', counter: '#c8bfaa', stove: '#3a3a3a',
+    refrigerator: '#c0c0c0', dining_table: '#7a5a3a', desk: '#5a3a1a',
+    dresser: '#7a5a3a', coffee_table: '#5a3a1a', tv_unit: '#1a1a1a',
+    washer: '#8888aa', dryer: '#8888aa', kitchen_island: '#c8bfaa',
+    bookshelf: '#7a5a3a',
+  };
+  if (FURNITURE_COLORS[type] !== undefined) {
+    const wm = ((el.width_in as number) || 36) / 39.37;
+    const hm = ((el.height_in as number) || 30) / 39.37;
+    const dm = type === 'sofa' ? 0.85
+             : type === 'bed' ? 1.95
+             : type === 'counter' ? 0.60
+             : type === 'kitchen_island' ? 0.85
+             : type === 'dresser' ? 0.50
+             : type === 'bookshelf' ? 0.30
+             : type === 'desk' ? 0.70
+             : type === 'dining_table' ? 0.90
+             : wm * 0.55;
+    const fColor = FURNITURE_COLORS[type];
+    return (
+      <mesh position={[x, y + hm / 2, z]}>
+        <boxGeometry args={[wm, hm, dm]} />
+        <meshStandardMaterial color={fColor} roughness={0.88} metalness={0.04} />
+      </mesh>
+    );
+  }
+
   // Generic: panel, lighting_point, mini_split_head, rooftop_unit
   const size = type === 'panel' ? 0.3 : type === 'rooftop_unit' ? 1.2 : 0.18;
   return (
@@ -464,6 +598,8 @@ function FacadeMesh({ mesh }: { mesh: any; floorH?: number }) {
   }, [mesh.vertices, mesh.faces]);
 
   if (!geometry) return null;
+  // Spandrel bands are opaque panels that cover the textured shell — skip them
+  if (mesh.element_type === 'spandrel_band') return null;
   const isWindow = mesh.element_type === 'window';
   const isBalcony = mesh.element_type === 'balcony';
   const isRail = mesh.element_type === 'balcony_rail';
@@ -600,7 +736,7 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness }
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <PBRMaterial texName={texName} fallbackColor="#334155" roughness={roughness} metalness={metalness} polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
+      <PBRMaterial texName={texName} fallbackColor="#334155" roughness={roughness} metalness={metalness} />
     </mesh>
   );
 }
@@ -1001,19 +1137,29 @@ function Scene() {
               </>
             );
           })()}
-          {/* Structural columns at footprint corners */}
-          {activeLayers['structure'] && (
-            <StructuralColumns
-              massing={buildingModel.massing_options?.[buildingModel.chosen_massing_index]}
-              levels={buildingModel.levels}
-              structuralSystem={(spec as any)?.structural_system ?? 'wood'}
-              floorH={floorH}
-            />
-          )}
-          {/* MEP: pipes, ducts, conduit, fixtures */}
+          {/* Interior walls — show room partitions inside the shell */}
+          {activeLayers['architecture'] && buildingModel.walls
+            .filter((w: any) => !w.is_exterior)
+            .map((w: any) => (
+              <WallMesh key={w.id} wall={w} matColor={COLORS.wall_interior} texName="" roughness={0.88} metalness={0} floorH={floorH} />
+            ))
+          }
+
+          {/* Structural members — backend output only; no generic pillar fallback for residential */}
+          {activeLayers['structure'] && (buildingModel.structural_members || []).length > 0 &&
+            (buildingModel.structural_members || []).map((m: any) => (
+              <StructuralMemberMesh key={m.id} member={m} />
+            ))
+          }
+          {/* MEP: pipes, ducts, conduit, fixtures — fire system on its own 'fire' layer */}
           {buildingModel.mep_elements.map((el: any) => {
             const FIXTURE_TYPES = ['toilet','sink','shower','outlet','fire_alarm','sprinkler','exhaust_fan','kitchen_sink','range_hood'];
+            const isFireFixture = ['sprinkler', 'fire_alarm'].includes(el.type);
             const isFixture = FIXTURE_TYPES.includes(el.type);
+            if (el.system === 'fire' || isFireFixture) {
+              if (!activeLayers['fire']) return null;
+              return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
+            }
             if (isFixture) {
               if (!activeLayers['fixtures']) return null;
               return <MEPPoint key={el.id} el={el} />;
@@ -1025,10 +1171,11 @@ function Scene() {
           {/* Massing meshes: terrain, footprint outline, overlap, roof */}
           {(buildingModel.massing_options?.[buildingModel.chosen_massing_index]?.meshes || []).map((m: any, i: number) => {
             if (m.element_type === 'terrain') return <TerrainMesh key={`t_${i}`} mesh={m} />;
-            if (m.element_type === 'floor_band') return null; // removed — was sticking outside MassingShell
+            if (m.element_type === 'floor_band') return activeLayers['structure'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
             if (m.element_type === 'overlap') return <OverlapMesh key={`ov_${i}`} mesh={m} />;
             if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
             if (m.element_type === 'roof') return activeLayers['roof'] ? <RoofMesh key={`rf_${i}`} mesh={m} /> : null;
+            if (m.element_type === 'parapet') return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
             return null;
           })}
 
@@ -1085,18 +1232,19 @@ const LAYER_GROUPS: { group: string; layers: { key: LayerKey; label: string; col
   { group: 'Building', layers: [
     { key: 'architecture', label: 'Walls & Windows', color: '#94a3b8' },
     { key: 'roof',         label: 'Roof', color: '#475569' },
-    { key: 'structure',    label: 'Structural', color: '#a855f7' },
+    { key: 'structure',    label: 'Structure (cols/beams)', color: '#a855f7' },
   ]},
   { group: 'MEP', layers: [
     { key: 'plumbing',   label: 'Plumbing Pipes', color: '#3b82f6' },
     { key: 'electrical', label: 'Electrical Conduit', color: '#f59e0b' },
     { key: 'hvac',       label: 'HVAC Ducts', color: '#10b981' },
+    { key: 'fire',       label: 'Fire Protection', color: '#ef4444' },
     { key: 'fixtures',   label: 'Fixtures & Outlets', color: '#60a5fa' },
   ]},
   { group: 'Site', layers: [
     { key: 'neighbors',  label: 'Neighbors', color: '#64748b' },
     { key: 'power_grid', label: 'Power Grid', color: '#facc15' },
-    { key: 'issues',     label: 'Issues', color: '#ef4444' },
+    { key: 'issues',     label: 'Issues / Clashes', color: '#ef4444' },
   ]},
 ];
 
@@ -1110,19 +1258,19 @@ export default function BuildingViewer() {
       <Canvas
         shadows
         camera={{ position: [50, 40, 50], fov: 50, near: 0.1, far: 2000 }}
-        gl={{ antialias: true }}
+        gl={{ antialias: true, toneMapping: 4, toneMappingExposure: 1.1 }}
       >
-        <color attach="background" args={['#0a0a0f']} />
-        <fog attach="fog" args={['#0a0a0f', 100, 300]} />
-        <ambientLight intensity={0.5} />
-        <hemisphereLight args={['#c8d8f0', '#3a4a30', 0.7]} />
-        <directionalLight position={[40, 60, 30]} intensity={1.6} castShadow
+        <color attach="background" args={['#080604']} />
+        <fog attach="fog" args={['#080604', 120, 340]} />
+        <ambientLight intensity={0.55} color="#f5ede0" />
+        <hemisphereLight args={['#e8d8c0', '#202820', 0.6]} />
+        <directionalLight position={[40, 70, 30]} intensity={1.8} castShadow color="#fff8f0"
           shadow-mapSize={[2048, 2048]} shadow-camera-far={300}
           shadow-camera-left={-80} shadow-camera-right={80}
           shadow-camera-top={80} shadow-camera-bottom={-80} />
-        <directionalLight position={[-20, 30, -20]} intensity={0.5} color="#b0c8ff" />
-        <pointLight position={[0, 5, 0]} intensity={0.2} color="#00e5ff" distance={60} />
-        <Environment preset="city" background={false} />
+        <directionalLight position={[-25, 20, -25]} intensity={0.35} color="#c8d8e8" />
+        <directionalLight position={[0, -10, 20]} intensity={0.12} color="#f0e8d8" />
+        <Environment preset="apartment" background={false} />
         <Suspense fallback={null}>
           <Scene />
         </Suspense>

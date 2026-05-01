@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 
-export type LayerKey = 'architecture' | 'structure' | 'roof' | 'plumbing' | 'electrical' | 'hvac' | 'fixtures' | 'issues' | 'neighbors' | 'power_grid';
+export type LayerKey = 'architecture' | 'structure' | 'roof' | 'plumbing' | 'electrical' | 'hvac' | 'fire' | 'fixtures' | 'issues' | 'neighbors' | 'power_grid';
 
 export interface SiteMarker { lat: number; lon: number; address?: string; }
 export interface BuildingModel {
   project_id: string; levels: any[]; massing_options: any[];
   chosen_massing_index: number; rooms: any[]; walls: any[];
-  columns: any[]; mep_elements: any[]; meshes: any[];
+  columns: any[]; mep_elements: any[]; meshes: any[]; structural_members?: any[];
   issues: any[]; site_context: any; generation_log: string[];
   neighbor_style?: any; spec?: any;
 }
@@ -51,7 +51,7 @@ export const useAppStore = create<AppState>((set) => ({
   clickedBuilding: null, drawnParcel: null, chatMessages: [],
   spec: { stories: 2, floor_to_floor_height_ft: 10, structural_system: 'wood', hvac_preference: 'mini_split', parking_strategy: 'ignore', priority: 'cost' },
   jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null,
-  activeLayers: { architecture: true, structure: true, roof: true, plumbing: true, electrical: true, hvac: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
+  activeLayers: { architecture: true, structure: true, roof: true, plumbing: true, electrical: true, hvac: true, fire: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
   selectedMassing: 0, selectedIssueId: null,
   setSelectedSite: (site) => set({ selectedSite: site }),
   setSiteContext: (ctx) => set({ siteContext: ctx }),

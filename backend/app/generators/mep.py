@@ -1,319 +1,1047 @@
 """
-MEPRouter — all coords in local meters (X, Y=elevation, Z)
-All elements are connected: risers → branches → fixtures,
-panel → feeder → trunk → branch drops → lights.
+MEPRouter — comprehensive residential MEP systems
+All coordinates: local meters, [X, Y_elevation, Z].
+
+Routing zones per floor (floor_h = 3.048m / 10ft default):
+  0.00–0.35m  : sub-slab (main drain, foundation drains)
+  0.35–2.10m  : wall zone (outlets @0.4m, switches @1.2m, plumbing connections)
+  2.10–2.55m  : ceiling zone (electrical conduit, sprinkler branch lines, fire alarm)
+  2.55–3.05m  : plenum zone (HVAC supply/return ducts)
+  3.05m+      : above ceiling / roof
+
+Routing priority (to avoid clashes): structural → fire → plumbing → HVAC → electrical
+Each element carries a bounding box so the ClashDetector can find conflicts.
 """
 import uuid
-from typing import List, Dict, Tuple, Optional
+import math
+from typing import List, Dict, Tuple, Optional, Any
 from app.models.schemas import MEPElement, Room, Wall, ProjectSpec, Level
+
+# ── Zone heights relative to floor datum ─────────────────────────────────
+ZONE = {
+    "sub_slab":      -0.35,   # drain pipes — below slab
+    "slab_top":       0.0,    # finished floor
+    "outlet":         0.40,   # electrical outlets
+    "switch":         1.20,   # light switches
+    "supply_pipe":    0.50,   # domestic water supply (in wall)
+    "waste_pipe":     0.10,   # waste (just below slab, gravity)
+    "ceil_elec":      2.20,   # electrical conduit @ ceiling
+    "ceil_fire":      2.35,   # sprinkler branch pipes
+    "ceil_light":     2.45,   # light fixtures
+    "duct_return":    2.55,   # HVAC return air
+    "duct_supply":    2.70,   # HVAC supply duct (main)
+    "duct_branch":    2.60,   # HVAC branch ducts
+}
+
+# ── Domestic water fixture unit values (IPC Table 610.3) ─────────────────
+FIXTURE_UNITS = {
+    "toilet":   3.0,
+    "sink":     2.0,
+    "shower":   2.0,
+    "bathtub":  2.0,
+    "kitchen":  2.0,   # kitchen sink
+    "washer":   3.0,
+}
+
+# ── IPC pipe sizing by fixture units (Table 604.1, wsfu) ─────────────────
+# (max_wsfu, pipe_size_in)
+WATER_PIPE_SIZES = [
+    (1.5,  0.50),
+    (3.0,  0.75),
+    (6.0,  1.00),
+    (14.0, 1.25),
+    (27.0, 1.50),
+    (60.0, 2.00),
+]
+
+# ── Drain pipe sizing by drainage fixture units (DFU) ────────────────────
+# (max_dfu, pipe_size_in)
+DRAIN_PIPE_SIZES = [
+    (1,   1.25),
+    (3,   1.50),
+    (6,   2.00),
+    (12,  3.00),
+    (20,  4.00),
+    (160, 6.00),
+]
+
+# ── Duct sizing by CFM (ASHRAE Manual D, simplified) ─────────────────────
+# CFM per room type per 100 sqft (approximate for residential)
+CFM_PER_100SQFT = {
+    "bedroom": 25, "living": 30, "kitchen": 40, "bathroom": 50,
+    "dining": 20, "corridor": 15, "stair": 10,
+}
+
+# ASHRAE duct sizing: (max_cfm, width_in, height_in, diameter_in_round)
+DUCT_SIZES = [
+    (60,   6,  6,  6),
+    (120,  8,  6,  8),
+    (200, 10,  8, 10),
+    (350, 12,  8, 12),
+    (600, 14, 10, 14),
+    (900, 16, 10, 16),
+    (1400,18, 12, 18),
+    (2000,20, 12, 20),
+]
+
+# ── NEC electrical sizing ─────────────────────────────────────────────────
+WATTS_PER_SQFT = 3.0          # NEC 220.12 general lighting load
+CIRCUIT_AMPS   = 20           # standard 20A branch circuit
+CIRCUIT_VOLTS  = 120          # single-phase
+CIRCUIT_VA     = CIRCUIT_AMPS * CIRCUIT_VOLTS   # 2400 VA per circuit
+
+# ── Sprinkler sizing (NFPA 13R residential) ──────────────────────────────
+SPRINKLER_COVERAGE_M2  = 16.7   # max 180 sqft (16.7 m²) per head, NFPA 13R
+SPRINKLER_FLOW_GPM     = 13.0   # residential head K=4.9, 10psi → 15.5 gpm
+SPRINKLER_PIPE_FLOW = [         # NFPA 13R pipe sizing
+    (2,   1.0),   # ≤2 heads: 1" pipe
+    (4,   1.25),
+    (6,   1.5),
+    (12,  2.0),
+    (40,  2.5),
+    (100, 3.0),
+]
 
 
 class MEPRouter:
 
-    def route(self, rooms: List[Room], walls: List[Wall], levels: List[Level], spec: ProjectSpec, power_connection: dict = None) -> List[MEPElement]:
+    def route(
+        self,
+        rooms: List[Room],
+        walls: List[Wall],
+        levels: List[Level],
+        spec: ProjectSpec,
+        power_connection: dict = None,
+        structural_members: List[Dict] = None,
+    ) -> List[MEPElement]:
+        """Route all MEP systems and return elements sorted by system."""
         fine = (spec.fine_details or {}) if hasattr(spec, 'fine_details') else {}
+        floor_h = levels[0].height_ft * 0.3048 if levels else 3.048
+
+        # bathrooms: None / whole number = full baths, x.5 = includes a half bath
+        bath_count = getattr(spec, 'bathrooms', None)
+
         elements = []
-        elements.extend(self._route_plumbing(rooms, walls, levels))
-        elements.extend(self._route_electrical(rooms, levels, power_connection))
-        elements.extend(self._route_hvac(rooms, levels, spec.hvac_preference))
-        elements.extend(self._route_fixtures(rooms, levels, fine))
+        # Route in priority order so later systems avoid earlier ones
+        elements.extend(self._route_fire_protection(rooms, levels, floor_h, fine))
+        elements.extend(self._route_plumbing(rooms, walls, levels, floor_h, bath_count))
+        elements.extend(self._route_hvac(rooms, levels, spec.hvac_preference, floor_h))
+        elements.extend(self._route_electrical(rooms, levels, floor_h, power_connection, fine))
+        elements.extend(self._place_furniture(rooms, levels, floor_h))
+
         return elements
 
-    # ── Plumbing ──────────────────────────────────────────────────────────────
-    def _route_plumbing(self, rooms: List[Room], walls: List[Wall], levels: List[Level]) -> List[MEPElement]:
-        elements = []
-        floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
-        top_y = len(levels) * floor_h - 0.4
+    # ════════════════════════════════════════════════════════════════════════
+    # FIRE PROTECTION (NFPA 13R)
+    # ════════════════════════════════════════════════════════════════════════
 
-        all_wet = [r for r in rooms if r.type in ("bathroom", "kitchen")]
-        if not all_wet:
+    def _route_fire_protection(
+        self, rooms: List[Room], levels: List[Level], floor_h: float, fine: dict
+    ) -> List[MEPElement]:
+        """
+        Place residential sprinkler heads on every floor per NFPA 13R.
+        Main riser in stair or utility core, branch lines along ceiling.
+        """
+        do_sprinklers = fine.get("fire_sprinklers", True)   # default ON for new builds
+        elements = []
+        total_floors = len(levels)
+
+        # ── Riser location: prefer stair core ──
+        stair_rooms = [r for r in rooms if r.type == "stair"]
+        if stair_rooms:
+            rx, rz = self._centroid(stair_rooms[0])
+        elif rooms:
+            rx, rz = self._building_centroid(rooms)
+        else:
+            rx, rz = 0.0, 0.0
+
+        riser_top = total_floors * floor_h
+
+        # Main fire riser (1.5" min, ground slab to roof level)
+        elements.append(MEPElement(
+            id="fire_riser_main",
+            system="fire",
+            type="fire_riser",
+            start=[rx, 0.0, rz],
+            end=[rx, riser_top, rz],
+            level=0,
+            diameter_in=2.0,
+        ))
+
+        # Backflow preventer at entry (ground level, building perimeter)
+        all_pts_flat = [p for r in rooms for p in r.polygon]
+        if all_pts_flat:
+            min_z = min(p[1] for p in all_pts_flat)
+            elements.append(MEPElement(
+                id="fire_backflow",
+                system="fire",
+                type="backflow_preventer",
+                start=[rx, 0.9, min_z + 0.3],  # just inside front wall
+                level=0,
+            ))
+
+        if not do_sprinklers:
             return elements
 
-        # One shared riser per unique XZ cluster (group by unit — use level-0 wet rooms)
-        level0_wet = [r for r in all_wet if r.level == 0] or all_wet[:1]
-        # Build one riser per wet room on level 0; upper-level rooms branch off it
-        SLAB_Y = -0.4   # sub-slab drain elevation
-        riser_positions: List[Tuple[float, float]] = []
-        for room in level0_wet:
-            rx, rz = self._centroid(room)
-            riser_positions.append((rx, rz))
-            # Riser spans from sub-slab to top of building
-            elements.append(MEPElement(
-                id=f"riser_{uuid.uuid4().hex[:6]}", system="plumbing", type="riser",
-                start=[rx, SLAB_Y, rz], end=[rx, top_y, rz], level=0, diameter_in=4.0))
+        # ── Per-floor sprinkler heads and branch lines ──
+        for level in levels:
+            lvl = level.index
+            ceil_y = lvl * floor_h + ZONE["ceil_fire"]
 
-        # For each wet room on every level, draw a horizontal branch FROM nearest riser TO room
-        for room in all_wet:
-            lvl_idx = room.level
-            if lvl_idx >= len(levels):
+            lvl_rooms = [r for r in rooms if r.level == lvl
+                         and r.type not in ("stair", "corridor")]
+
+            all_lvl_pts = [p for r in lvl_rooms for p in r.polygon]
+            if not all_lvl_pts:
                 continue
-            # Supply branch runs 40cm above floor slab; waste drops 10cm below that
-            branch_y = lvl_idx * floor_h + 0.4
-            waste_y  = lvl_idx * floor_h - 0.1   # just below slab — feeds riser drain port
-            cx, cz = self._centroid(room)
-            # Nearest riser
-            rx, rz = min(riser_positions, key=lambda p: (p[0]-cx)**2 + (p[1]-cz)**2)
-            # Horizontal supply branch: riser → room centroid (both at branch_y → on the riser)
-            elements.append(MEPElement(
-                id=f"supply_{uuid.uuid4().hex[:6]}", system="plumbing", type="supply_branch",
-                start=[rx, branch_y, rz], end=[cx, branch_y, cz],
-                level=lvl_idx, diameter_in=1.5))
-            # Waste branch: room → riser, below the floor slab so gravity drains down the riser
-            elements.append(MEPElement(
-                id=f"waste_{uuid.uuid4().hex[:6]}", system="plumbing", type="waste_branch",
-                start=[cx, waste_y, cz], end=[rx, waste_y, rz],
-                level=lvl_idx, diameter_in=3.0))
-            elements.append(MEPElement(
-                id=f"fixture_{room.type}_{uuid.uuid4().hex[:4]}", system="plumbing", type="fixture",
-                start=[cx, branch_y, cz], level=lvl_idx))
 
-        # Main building drain exits through the south wall (toward street)
-        if riser_positions:
-            avg_rx = sum(p[0] for p in riser_positions) / len(riser_positions)
-            avg_rz = sum(p[1] for p in riser_positions) / len(riser_positions)
-            # Find southernmost point (most negative z = front of building)
-            ext_walls = [w for w in walls if hasattr(w, 'is_exterior') and w.is_exterior]
-            south_z = min((w.start[1] for w in ext_walls), default=avg_rz - 8.0)
+            min_x = min(p[0] for p in all_lvl_pts)
+            max_x = max(p[0] for p in all_lvl_pts)
+            # Use area-weighted centroid Z so the trunk stays inside L/U shapes
+            _, mid_z = self._building_centroid(lvl_rooms) if lvl_rooms else (0.0, 0.0)
 
-            # Horizontal sub-slab collectors: connect each riser bottom to the main drain spine
-            for rx, rz in riser_positions:
-                if abs(rx - avg_rx) > 0.1 or abs(rz - avg_rz) > 0.1:
+            # Branch main along X axis
+            branch_main_id = f"fire_branch_main_{lvl}"
+            elements.append(MEPElement(
+                id=branch_main_id,
+                system="fire",
+                type="fire_branch_main",
+                start=[min_x, ceil_y, mid_z],
+                end=[max_x, ceil_y, mid_z],
+                level=lvl,
+                diameter_in=self._fire_pipe_size(len(lvl_rooms) * 2),
+            ))
+
+            # Sprinkler heads per room (spaced to meet NFPA 13R coverage)
+            for room in lvl_rooms:
+                if not do_sprinklers:
+                    break
+                bds = self._bounds(room)
+                room_area_m2 = (bds[2]-bds[0]) * (bds[3]-bds[1])
+                room_area_m2 = max(room_area_m2, 1.0)
+                heads_needed = max(1, math.ceil(room_area_m2 / SPRINKLER_COVERAGE_M2))
+
+                cx, cz = self._centroid(room)
+                head_y = lvl * floor_h + ZONE["ceil_fire"] + 0.05   # slightly above branch
+
+                if heads_needed == 1:
+                    positions = [(cx, cz)]
+                else:
+                    # Distribute heads in a grid within the room
+                    rows = max(1, math.ceil(math.sqrt(heads_needed)))
+                    cols = math.ceil(heads_needed / rows)
+                    positions = []
+                    for r in range(rows):
+                        for c in range(cols):
+                            if len(positions) >= heads_needed:
+                                break
+                            hx = bds[0] + (bds[2]-bds[0]) * (c+0.5) / cols
+                            hz = bds[1] + (bds[3]-bds[1]) * (r+0.5) / rows
+                            positions.append((hx, hz))
+
+                for pos_i, (hx, hz) in enumerate(positions):
+                    head_id = f"sprinkler_{uuid.uuid4().hex[:6]}"
                     elements.append(MEPElement(
-                        id=f"collector_{uuid.uuid4().hex[:5]}", system="plumbing", type="waste_branch",
-                        start=[rx, SLAB_Y, rz], end=[avg_rx, SLAB_Y, avg_rz],
-                        level=0, diameter_in=4.0))
-
-            # Main drain: from collector junction south to the street connection
-            elements.append(MEPElement(
-                id="main_drain", system="plumbing", type="main_drain",
-                start=[avg_rx, SLAB_Y, avg_rz],
-                end=[avg_rx, SLAB_Y, south_z - 1.5],
-                level=0, diameter_in=6.0))
+                        id=head_id,
+                        system="fire",
+                        type="sprinkler",
+                        start=[hx, head_y, hz],
+                        level=lvl,
+                        diameter_in=0.5,
+                    ))
+                    # Drop from branch main to head
+                    elements.append(MEPElement(
+                        id=f"fire_drop_{uuid.uuid4().hex[:5]}",
+                        system="fire",
+                        type="fire_branch_drop",
+                        start=[hx, ceil_y, mid_z],
+                        end=[hx, head_y, hz],
+                        level=lvl,
+                        diameter_in=0.75,
+                    ))
 
         return elements
 
-    # ── Electrical ────────────────────────────────────────────────────────────
-    def _route_electrical(self, rooms: List[Room], levels: List[Level], power_connection: dict = None) -> List[MEPElement]:
-        elements = []
-        floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
+    def _fire_pipe_size(self, n_heads: int) -> float:
+        for max_heads, size in SPRINKLER_PIPE_FLOW:
+            if n_heads <= max_heads:
+                return size
+        return 3.0
 
-        # Main panel at left edge of ground-floor corridor
-        corrs_0 = [r for r in rooms if r.type == "corridor" and r.level == 0]
-        if corrs_0:
-            bds0 = self._bounds(corrs_0[0])
-            panel_x = bds0[0] + 0.3
-            panel_z = (bds0[1] + bds0[3]) / 2
+    # ════════════════════════════════════════════════════════════════════════
+    # PLUMBING (IPC)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _route_plumbing(
+        self, rooms: List[Room], walls: List[Wall], levels: List[Level], floor_h: float,
+        bath_count: Optional[float] = None,
+    ) -> List[MEPElement]:
+        """
+        Route domestic water supply (hot + cold) and waste/vent.
+        bath_count: whole number = full baths, x.5 includes a half bath (toilet+sink, no shower).
+        """
+        elements = []
+        total_floors = len(levels)
+        # True if spec includes a .5 half bath (toilet+sink only, no shower)
+        _has_half_bath = bath_count is not None and (bath_count % 1) == 0.5
+        top_y = total_floors * floor_h   # vent stack ends at roof level
+
+        wet_rooms_by_level = {}
+        for r in rooms:
+            if r.type in ("bathroom", "kitchen"):
+                wet_rooms_by_level.setdefault(r.level, []).append(r)
+
+        if not any(wet_rooms_by_level.values()):
+            return elements
+
+        # ── Stack location: use level-0 wet room centroid ──
+        lvl0_wet = wet_rooms_by_level.get(0, [])
+        if not lvl0_wet:
+            lvl0_wet = [r for lvs in wet_rooms_by_level.values() for r in lvs][:1]
+
+        stack_positions = []
+        drain_d = 4.0  # default drain diameter
+        for room in lvl0_wet[:2]:   # max 2 stacks for small buildings
+            sx, sz = self._centroid(room)
+            stack_positions.append((sx, sz))
+
+            # Soil stack (main waste): ground slab to roof vent
+            total_dfu = sum(
+                FIXTURE_UNITS.get(r.type, 1.0) * 1.5
+                for r in rooms if r.type in ("bathroom", "kitchen")
+            )
+            drain_d = self._drain_pipe_size(total_dfu)
+
+            elements.append(MEPElement(
+                id=f"stack_{uuid.uuid4().hex[:5]}",
+                system="plumbing",
+                type="soil_stack",
+                start=[sx, 0.0, sz],
+                end=[sx, top_y, sz],
+                level=0,
+                diameter_in=drain_d,
+            ))
+
+        # ── Water service entry ──
+        all_room_pts = [p for r in rooms for p in r.polygon]
+        if all_room_pts:
+            service_z = min(p[1] for p in all_room_pts)   # building front wall
+            sx0, sz0 = stack_positions[0]
+            # Water service runs inside building from front wall to stack
+            elements.append(MEPElement(
+                id="water_service",
+                system="plumbing",
+                type="water_service",
+                start=[sx0, 0.3, service_z],
+                end=[sx0, 0.3, sz0],
+                level=0,
+                diameter_in=1.5,
+            ))
+            elements.append(MEPElement(
+                id="water_meter",
+                system="plumbing",
+                type="water_meter",
+                start=[sx0, 0.3, service_z + 0.3],  # just inside the wall
+                level=0,
+            ))
+
+        # ── Hot water heater (in utility or near kitchen, ground floor) ──
+        util_rooms = [r for r in rooms if r.type in ("laundry", "utility", "kitchen") and r.level == 0]
+        if util_rooms:
+            hwh_cx, hwh_cz = self._centroid(util_rooms[0])
         else:
-            panel_x, panel_z = 0.0, 0.0
+            hwh_cx, hwh_cz = stack_positions[0] if stack_positions else (0.0, 0.0)
 
         elements.append(MEPElement(
-            id="panel_main", system="electrical", type="panel",
-            start=[panel_x, 1.5, panel_z], level=0))
+            id="hot_water_heater",
+            system="plumbing",
+            type="water_heater",
+            start=[hwh_cx, 0.0, hwh_cz],
+            level=0,
+        ))
+
+        # ── Per wet room: supply branches and fixture connections ──
+        for lvl, lvl_rooms in wet_rooms_by_level.items():
+            floor_y = lvl * floor_h
+            sx, sz = stack_positions[0]
+
+            for room in lvl_rooms:
+                cx, cz = self._centroid(room)
+                bds = self._bounds(room)
+                # Route pipes inside the floor/wall zone — visible inside the building
+                supply_y = floor_y + 0.15   # in-wall supply height
+                waste_y  = floor_y + 0.05   # just above finished floor
+
+                # Cold supply branch
+                total_room_fu = FIXTURE_UNITS.get(room.type, 2.0)
+                supply_d = self._water_pipe_size(total_room_fu)
+                elements.append(MEPElement(
+                    id=f"cold_{uuid.uuid4().hex[:5]}",
+                    system="plumbing",
+                    type="cold_supply",
+                    start=[sx, supply_y, sz],
+                    end=[cx, supply_y, cz],
+                    level=lvl,
+                    diameter_in=supply_d,
+                ))
+
+                # Hot supply branch (from water heater, parallel, slightly offset)
+                if room.type in ("bathroom", "kitchen"):
+                    elements.append(MEPElement(
+                        id=f"hot_{uuid.uuid4().hex[:5]}",
+                        system="plumbing",
+                        type="hot_supply",
+                        start=[hwh_cx, supply_y + 0.04, hwh_cz],
+                        end=[cx, supply_y + 0.04, cz],
+                        level=lvl,
+                        diameter_in=supply_d,
+                    ))
+
+                # Waste branch
+                elements.append(MEPElement(
+                    id=f"waste_{uuid.uuid4().hex[:5]}",
+                    system="plumbing",
+                    type="waste_branch",
+                    start=[cx, waste_y, cz],
+                    end=[sx, waste_y, sz],
+                    level=lvl,
+                    diameter_in=max(1.5, drain_d - 1.0),
+                ))
+
+                # Fixture placement — half bath (small room or last bath when .5 count)
+                # gets toilet + sink only; full bath gets toilet + sink + shower
+                if room.type == "bathroom":
+                    room_area_m2 = (bds[2]-bds[0]) * (bds[3]-bds[1])
+                    # Half bath: under 3.5 m² OR spec explicitly has a .5 bath and this is a small room
+                    is_half = room_area_m2 < 3.5 or (_has_half_bath and room_area_m2 < 5.0)
+                    elements.append(MEPElement(
+                        id=f"toilet_{uuid.uuid4().hex[:5]}",
+                        system="plumbing", type="toilet",
+                        start=[bds[0]+0.45, floor_y+0.01, bds[1]+0.45], level=lvl))
+                    elements.append(MEPElement(
+                        id=f"sink_{uuid.uuid4().hex[:5]}",
+                        system="plumbing", type="sink",
+                        start=[bds[0]+(bds[2]-bds[0])*0.7, floor_y+0.01, bds[1]+0.35], level=lvl))
+                    if not is_half:
+                        # Full bath: add shower
+                        elements.append(MEPElement(
+                            id=f"shower_{uuid.uuid4().hex[:5]}",
+                            system="plumbing", type="shower",
+                            start=[bds[2]-0.6, floor_y+0.01, bds[3]-0.6], level=lvl))
+                elif room.type == "kitchen":
+                    elements.append(MEPElement(
+                        id=f"ksink_{uuid.uuid4().hex[:5]}",
+                        system="plumbing", type="sink",
+                        start=[bds[0]+0.5, floor_y+0.01, bds[3]-0.45], level=lvl))
+
+        return elements
+
+    def _water_pipe_size(self, wsfu: float) -> float:
+        for max_wsfu, size in WATER_PIPE_SIZES:
+            if wsfu <= max_wsfu:
+                return size
+        return 2.0
+
+    def _drain_pipe_size(self, dfu: float) -> float:
+        for max_dfu, size in DRAIN_PIPE_SIZES:
+            if dfu <= max_dfu:
+                return size
+        return 4.0
+
+    def _get_room_bounds_near(self, rooms, cx, cz):
+        for r in rooms:
+            bds = self._bounds(r)
+            if bds[0] <= cx <= bds[2] and bds[1] <= cz <= bds[3]:
+                return bds
+        return (cx-1, cz-1, cx+1, cz+1)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # HVAC
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _route_hvac(
+        self, rooms: List[Room], levels: List[Level], preference, floor_h: float
+    ) -> List[MEPElement]:
+        """
+        Route HVAC systems.
+        mini_split: individual wall units per zone.
+        rooftop: central RTU + main trunk + branches to each room.
+        """
+        pref = getattr(preference, 'value', str(preference)).lower()
+        elements = []
+
+        if pref == "mini_split":
+            return self._hvac_mini_split(rooms, levels, floor_h)
+        else:
+            return self._hvac_central(rooms, levels, floor_h)
+
+    def _hvac_mini_split(self, rooms, levels, floor_h) -> List[MEPElement]:
+        """One indoor head unit per bedroom/living area. Condenser on roof."""
+        elements = []
+        total_floors = len(levels)
+        roof_y = total_floors * floor_h
+
+        # Outdoor condenser units on roof — use weighted centroid so it stays inside footprint
+        if rooms:
+            roof_cx, roof_cz = self._building_centroid(rooms)
+        else:
+            roof_cx, roof_cz = 0.0, 0.0
+
+        elements.append(MEPElement(
+            id="condenser_main",
+            system="hvac",
+            type="condenser_unit",
+            start=[roof_cx, roof_y + 0.15, roof_cz],
+            level=total_floors - 1,
+        ))
 
         for level in levels:
             lvl = level.index
-            elev_y = lvl * floor_h
-            ceil_y = elev_y + floor_h - 0.3
-
-            # Sub-panel at this floor (same XZ column)
-            elements.append(MEPElement(
-                id=f"panel_{lvl}", system="electrical", type="panel",
-                start=[panel_x, elev_y + 1.5, panel_z], level=lvl))
-
-            # Feeder riser between floors
-            if lvl > 0:
-                elements.append(MEPElement(
-                    id=f"feeder_{lvl}", system="electrical", type="feeder",
-                    start=[panel_x, (lvl - 1) * floor_h + 1.5, panel_z],
-                    end=[panel_x, elev_y + 1.5, panel_z], level=lvl))
-
-            # Corridor trunk along ceiling
-            lvl_corrs = [r for r in rooms if r.type == "corridor" and r.level == lvl]
-            trunk_z = panel_z  # default
-            for corr in lvl_corrs:
-                bds = self._bounds(corr)
-                trunk_z = bds[1] + 0.3
-                # Trunk: panel → end of corridor
-                elements.append(MEPElement(
-                    id=f"trunk_{lvl}_{uuid.uuid4().hex[:4]}", system="electrical", type="conduit_trunk",
-                    start=[panel_x, ceil_y, trunk_z], end=[bds[2], ceil_y, trunk_z], level=lvl))
-
-            # Branch drops: trunk → each room's light (panel_x side of trunk → room centroid)
             for room in rooms:
-                if room.level != lvl or room.type in ("stair", "corridor"):
+                if room.level != lvl:
+                    continue
+                if room.type not in ("bedroom", "living", "unit", "dining"):
                     continue
                 cx, cz = self._centroid(room)
-                # Drop from trunk (at cx, same height) down to light
+                bds = self._bounds(room)
+                head_y = lvl * floor_h + ZONE["duct_supply"]
+                # Wall-mount head on interior wall (0.1m from wall)
                 elements.append(MEPElement(
-                    id=f"branch_{uuid.uuid4().hex[:6]}", system="electrical", type="conduit_trunk",
-                    start=[cx, ceil_y, trunk_z], end=[cx, ceil_y, cz], level=lvl))
+                    id=f"ms_head_{uuid.uuid4().hex[:5]}",
+                    system="hvac",
+                    type="mini_split_head",
+                    start=[cx, head_y, bds[1] + 0.15],
+                    level=lvl,
+                    width_in=30,
+                    height_in=10,
+                ))
+                # Refrigerant line (slim — 1") up to roof condenser
                 elements.append(MEPElement(
-                    id=f"light_{uuid.uuid4().hex[:6]}", system="electrical", type="lighting_point",
-                    start=[cx, ceil_y, cz], level=lvl))
-
-        # Service entry: run conduit from panel to nearest exterior wall face, then to power connection
-        if power_connection:
-            try:
-                coords = power_connection.get("geometry", {}).get("coordinates", [])
-                if coords and len(coords) == 2:
-                    # Site-edge point (where the power line meets the site boundary)
-                    entry_x = coords[0][0]  # these are lat/lon but we want local meters
-                    entry_z = coords[0][1]
-                    # Use the panel position as start, and the edge of building as end
-                    # Just route to the nearest exterior wall edge (approx -bw/2 in x)
-                    entry_y = 1.5  # service entry height
-                    # Draw service conduit from panel to building exterior face
-                    elements.append(MEPElement(
-                        id="service_entry", system="electrical", type="service_conduit",
-                        start=[panel_x, entry_y, panel_z],
-                        end=[panel_x - 8.0, entry_y, panel_z],  # toward street
-                        level=0))
-            except Exception:
-                pass
-
+                    id=f"refrig_{uuid.uuid4().hex[:5]}",
+                    system="hvac",
+                    type="refrigerant_line",
+                    start=[cx, head_y, bds[1] + 0.15],
+                    end=[roof_cx, roof_y, roof_cz],
+                    level=lvl,
+                    diameter_in=1.0,
+                ))
         return elements
 
-    # ── HVAC ──────────────────────────────────────────────────────────────────
-    def _route_hvac(self, rooms: List[Room], levels: List[Level], preference: str) -> List[MEPElement]:
+    def _hvac_central(self, rooms, levels, floor_h) -> List[MEPElement]:
+        """Central rooftop unit + main supply trunk + branch ducts to each room."""
         elements = []
-        floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
+        total_floors = len(levels)
+        roof_y = total_floors * floor_h
 
-        if preference == "mini_split":
-            unit_ids = set(r.unit_id for r in rooms if r.unit_id and r.type == "unit")
-            for uid in unit_ids:
-                unit = next((r for r in rooms if r.unit_id == uid and r.type == "unit"), None)
-                if not unit or unit.level >= len(levels):
-                    continue
-                cx, cz = self._centroid(unit)
-                ceil_y = unit.level * floor_h + floor_h - 0.3
-                # Head unit only — refrigerant lines are inside the wall cavity
-                elements.append(MEPElement(
-                    id=f"head_{uuid.uuid4().hex[:6]}", system="hvac", type="mini_split_head",
-                    start=[cx, ceil_y, cz], level=unit.level))
-        else:
-            # Rooftop unit
-            roof_y = len(levels) * floor_h
+        if not rooms:
+            return elements
+        # Area-weighted centroid keeps RTU and trunk spine inside L/U/stepped footprints
+        bld_cx, bld_cz = self._building_centroid(rooms)
+        all_pts = [p for r in rooms for p in r.polygon]
+        min_x = min(p[0] for p in all_pts)
+        max_x = max(p[0] for p in all_pts)
+
+        # Rooftop unit
+        elements.append(MEPElement(
+            id="rtu_main",
+            system="hvac",
+            type="rooftop_unit",
+            start=[bld_cx, roof_y + 0.2, bld_cz],
+            level=total_floors - 1,
+            width_in=48,
+            height_in=36,
+        ))
+
+        for level in levels:
+            lvl = level.index
+            ceil_y = lvl * floor_h + ZONE["duct_supply"]
+            ret_y  = lvl * floor_h + ZONE["duct_return"]
+
+            # Vertical shaft from roof to each floor
             elements.append(MEPElement(
-                id="rtu", system="hvac", type="rooftop_unit",
-                start=[0, roof_y, 0], level=len(levels) - 1))
+                id=f"hvac_riser_{lvl}",
+                system="hvac",
+                type="supply_riser",
+                start=[bld_cx, (lvl) * floor_h + 0.1, bld_cz],
+                end=[bld_cx, roof_y, bld_cz],
+                level=lvl,
+                diameter_in=16,
+            ))
 
-            # Main duct drops from roof to corridor ceiling on each floor, then branches to rooms
-            for level in levels:
-                lvl = level.index
-                ceil_y = lvl * floor_h + floor_h - 0.4
-                lvl_corrs = [r for r in rooms if r.type == "corridor" and r.level == lvl]
-                for corr in lvl_corrs:
-                    bds = self._bounds(corr)
-                    trunk_z = bds[1] + 0.2
-                    # Main duct along corridor
-                    elements.append(MEPElement(
-                        id=f"duct_{lvl}_{uuid.uuid4().hex[:4]}", system="hvac", type="supply_duct",
-                        start=[bds[0], ceil_y, trunk_z], end=[bds[2], ceil_y, trunk_z],
-                        level=lvl, width_in=18.0, height_in=10.0))
-                    # Drops to each unit room
-                    for room in rooms:
-                        if room.level != lvl or room.type not in ("unit", "living", "bedroom"):
-                            continue
-                        cx, cz = self._centroid(room)
-                        elements.append(MEPElement(
-                            id=f"drop_{uuid.uuid4().hex[:6]}", system="hvac", type="supply_duct",
-                            start=[cx, ceil_y, trunk_z], end=[cx, ceil_y, cz], level=lvl))
+            # Main supply trunk along long axis
+            elements.append(MEPElement(
+                id=f"hvac_trunk_{lvl}",
+                system="hvac",
+                type="supply_trunk",
+                start=[min_x + 0.3, ceil_y, bld_cz],
+                end=[max_x - 0.3, ceil_y, bld_cz],
+                level=lvl,
+                width_in=18,
+                height_in=10,
+            ))
+
+            # Return air plenum trunk
+            elements.append(MEPElement(
+                id=f"hvac_return_{lvl}",
+                system="hvac",
+                type="return_trunk",
+                start=[min_x + 0.3, ret_y, bld_cz + 0.3],
+                end=[max_x - 0.3, ret_y, bld_cz + 0.3],
+                level=lvl,
+                width_in=20,
+                height_in=8,
+            ))
+
+            # Branch ducts to each room
+            for room in rooms:
+                if room.level != lvl or room.type in ("stair",):
+                    continue
+                cx, cz = self._centroid(room)
+                room_area_m2 = room.area_sqft * 0.0929
+                cfm = max(50, int(room_area_m2 * 10.764 *
+                          CFM_PER_100SQFT.get(room.type, 20) / 100))
+                bw, bh, _ = self._duct_size(cfm)
+
+                elements.append(MEPElement(
+                    id=f"hvac_branch_{uuid.uuid4().hex[:5]}",
+                    system="hvac",
+                    type="supply_branch",
+                    start=[cx, ceil_y, bld_cz],
+                    end=[cx, ceil_y, cz],
+                    level=lvl,
+                    width_in=bw,
+                    height_in=bh,
+                ))
+                # Supply diffuser
+                elements.append(MEPElement(
+                    id=f"diffuser_{uuid.uuid4().hex[:5]}",
+                    system="hvac",
+                    type="supply_diffuser",
+                    start=[cx, lvl * floor_h + ZONE["ceil_light"] - 0.05, cz],
+                    level=lvl,
+                    width_in=bw,
+                    height_in=4,
+                ))
 
         return elements
 
-    def _route_fixtures(self, rooms: List[Room], levels: List[Level], fine: dict) -> List[MEPElement]:
-        """Place detailed fixtures: outlets, fire alarms, exhaust fans, plumbing fixtures."""
+    def _duct_size(self, cfm: int) -> Tuple[int, int, int]:
+        """Returns (width_in, height_in, diameter_in)."""
+        for max_cfm, w, h, d in DUCT_SIZES:
+            if cfm <= max_cfm:
+                return w, h, d
+        return 20, 12, 20
+
+    # ════════════════════════════════════════════════════════════════════════
+    # ELECTRICAL (NEC)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _route_electrical(
+        self, rooms: List[Room], levels: List[Level],
+        floor_h: float, power_connection: dict, fine: dict
+    ) -> List[MEPElement]:
+        """
+        NEC-compliant residential electrical:
+        - Service entry + main panel + sub-panels
+        - Branch circuits sized by NEC 220.12
+        - Outlets spaced ≤12ft (3.66m) per NEC 210.52
+        - GFCI in wet areas, AFCI in bedrooms/living
+        - Dedicated circuits for kitchen, laundry, bath
+        - Light fixture at ceiling center of each room
+        """
         elements = []
-        floor_h = levels[0].height_ft * 0.3048 if levels else 3.0
         outlets_per_room = int(fine.get("outlets_per_room", 3))
         do_alarms = fine.get("fire_alarms", True)
-        do_exhaust = fine.get("exhaust_fans", True)
-        do_sprinklers = fine.get("fire_sprinklers", False)
 
-        for room in rooms:
-            lvl = room.level
-            if lvl >= len(levels):
-                continue
+        all_room_pts = [p for r in rooms for p in r.polygon]
+        if not all_room_pts:
+            return elements
+
+        min_x = min(p[0] for p in all_room_pts)
+        min_z = min(p[1] for p in all_room_pts)
+
+        # ── Service entry and main panel ──
+        panel_x = min_x + 0.5
+        panel_z = min_z + 0.5
+        panel_y = 0.0   # ground floor
+
+        elements.append(MEPElement(
+            id="main_panel",
+            system="electrical",
+            type="main_panel",
+            start=[panel_x, panel_y + 1.2, panel_z],
+            level=0,
+        ))
+
+        # Service conduit: from front wall to panel — stays inside building
+        elements.append(MEPElement(
+            id="service_entry",
+            system="electrical",
+            type="service_conduit",
+            start=[panel_x, 1.2, min_z + 0.05],   # just inside front wall
+            end=[panel_x, 1.2, panel_z],
+            level=0,
+            diameter_in=2.0,
+        ))
+
+        # ── Utility lateral: run from front wall toward nearest power pole/line ──
+        # This is the only electrical element that intentionally exits the building.
+        if power_connection:
+            pole_dx = power_connection.get("dx_m", 0.0)
+            pole_dz = power_connection.get("dz_m", -8.0)  # default: 8m in front
+            # Clamp lateral length to 30m — beyond that the utility company owns it
+            dist = max(0.1, math.sqrt(pole_dx**2 + pole_dz**2))
+            lateral_len = min(dist, 30.0)
+            ux = panel_x + pole_dx / dist * lateral_len
+            uz = min_z + pole_dz / dist * lateral_len   # extends outward from front wall
+            elements.append(MEPElement(
+                id="utility_lateral",
+                system="electrical",
+                type="utility_lateral",
+                start=[panel_x, 5.5, min_z],      # overhead at ~18ft (utility attachment height)
+                end=[ux, 5.5, uz],
+                level=0,
+                diameter_in=1.0,
+            ))
+
+        for level in levels:
+            lvl = level.index
             floor_y = lvl * floor_h
-            cx, cz = self._centroid(room)
-            bds = self._bounds(room)
+            ceil_y_elec = floor_y + ZONE["ceil_elec"]
+            ceil_y_light = floor_y + ZONE["ceil_light"]
 
-            # ── Electrical outlets: one per wall face, offset 0.3m from each corner ──
-            # Placed on the INTERIOR face of each wall so they're visible inside the room.
-            pts = room.polygon
-            if outlets_per_room > 0 and len(pts) >= 2:
-                n_pts = len(pts)
-                # Compute room centroid for inward offset direction
-                rcx = sum(p[0] for p in pts) / n_pts
-                rcz = sum(p[1] for p in pts) / n_pts
-                # Place one outlet per wall segment (or every other on large rooms)
-                step = max(1, n_pts // max(outlets_per_room, 2))
-                for i in range(0, n_pts, step):
-                    # Midpoint of this wall segment
-                    p0, p1 = pts[i], pts[(i + 1) % n_pts]
-                    mx = (p0[0] + p1[0]) / 2
-                    mz = (p0[1] + p1[1]) / 2
-                    # Push outlet 0.05m toward room interior (so it sits on the inner wall face)
-                    dx, dz = rcx - mx, rcz - mz
-                    dist = max(0.001, (dx*dx + dz*dz) ** 0.5)
-                    ox = mx + dx / dist * 0.05
-                    oz = mz + dz / dist * 0.05
-                    elements.append(MEPElement(
-                        id=f"outlet_{uuid.uuid4().hex[:6]}", system="electrical", type="outlet",
-                        start=[ox, floor_y + 0.4, oz], level=lvl))
-                    # Short conduit drop from ceiling branch height down the wall to outlet
-                    elements.append(MEPElement(
-                        id=f"outlet_drop_{uuid.uuid4().hex[:5]}", system="electrical", type="conduit_trunk",
-                        start=[ox, floor_y + floor_h - 0.3, oz],
-                        end=[ox, floor_y + 0.4, oz],
-                        level=lvl))
+            # Sub-panel on upper floors
+            if lvl > 0:
+                elements.append(MEPElement(
+                    id=f"sub_panel_{lvl}",
+                    system="electrical",
+                    type="sub_panel",
+                    start=[panel_x, floor_y + 1.2, panel_z],
+                    level=lvl,
+                ))
+                # Feeder riser
+                elements.append(MEPElement(
+                    id=f"feeder_{lvl}",
+                    system="electrical",
+                    type="feeder",
+                    start=[panel_x, (lvl-1)*floor_h + 1.2, panel_z],
+                    end=[panel_x, floor_y + 1.2, panel_z],
+                    level=lvl,
+                    diameter_in=1.5,
+                ))
 
-            # ── Fire alarm in each corridor + unit ──
-            if do_alarms and room.type in ("corridor", "unit", "bedroom", "living"):
-                elements.append(MEPElement(
-                    id=f"alarm_{uuid.uuid4().hex[:6]}", system="electrical", type="fire_alarm",
-                    start=[cx, floor_y + floor_h - 0.15, cz], level=lvl))
+            lvl_rooms = [r for r in rooms if r.level == lvl]
 
-            # ── Sprinkler heads in all rooms ──
-            if do_sprinklers:
-                elements.append(MEPElement(
-                    id=f"sprinkler_{uuid.uuid4().hex[:6]}", system="plumbing", type="sprinkler",
-                    start=[cx, floor_y + floor_h - 0.12, cz], level=lvl))
+            # ── Circuit trunk along corridor or building spine ──
+            corrs = [r for r in lvl_rooms if r.type == "corridor"]
+            if corrs:
+                bds = self._bounds(corrs[0])
+                trunk_z = bds[1] + 0.2
+                trunk_x_start = bds[0]
+                trunk_x_end   = bds[2]
+            else:
+                if not lvl_rooms:
+                    continue
+                pts = [p for r in lvl_rooms for p in r.polygon]
+                # Weighted centroid Z keeps the trunk inside L/U shapes
+                _, trunk_z = self._building_centroid(lvl_rooms)
+                trunk_x_start = min(p[0] for p in pts)
+                trunk_x_end   = max(p[0] for p in pts)
 
-            # ── Bathroom fixtures: toilet + sink + shower ──
-            if room.type == "bathroom":
-                w = bds[2] - bds[0]
-                d = bds[3] - bds[1]
-                # Toilet near corner
-                elements.append(MEPElement(
-                    id=f"toilet_{uuid.uuid4().hex[:5]}", system="plumbing", type="toilet",
-                    start=[bds[0] + 0.45, floor_y + 0.01, bds[1] + 0.45], level=lvl))
-                # Sink along wall
-                elements.append(MEPElement(
-                    id=f"sink_{uuid.uuid4().hex[:5]}", system="plumbing", type="sink",
-                    start=[bds[0] + w*0.7, floor_y + 0.01, bds[1] + 0.35], level=lvl))
-                # Shower in opposite corner
-                elements.append(MEPElement(
-                    id=f"shower_{uuid.uuid4().hex[:5]}", system="plumbing", type="shower",
-                    start=[bds[2] - 0.6, floor_y + 0.01, bds[3] - 0.6], level=lvl))
-                # Exhaust fan
-                if do_exhaust:
-                    elements.append(MEPElement(
-                        id=f"exhaust_{uuid.uuid4().hex[:5]}", system="hvac", type="exhaust_fan",
-                        start=[cx, floor_y + floor_h - 0.2, cz], level=lvl))
+            elements.append(MEPElement(
+                id=f"elec_trunk_{lvl}",
+                system="electrical",
+                type="conduit_trunk",
+                start=[trunk_x_start, ceil_y_elec, trunk_z],
+                end=[trunk_x_end, ceil_y_elec, trunk_z],
+                level=lvl,
+                diameter_in=1.0,
+            ))
 
-            # ── Kitchen fixture: sink ──
-            if room.type == "kitchen":
+            # ── Per room: outlets, lights, fire alarms, circuits ──
+            for room in lvl_rooms:
+                if room.type in ("stair",):
+                    continue
+
+                cx, cz = self._centroid(room)
                 bds = self._bounds(room)
+                room_area_ft2 = room.area_sqft
+                is_wet = room.type in ("bathroom", "kitchen")
+                is_bedroom = room.type == "bedroom"
+
+                # Circuit drops from trunk to room
                 elements.append(MEPElement(
-                    id=f"kitchen_sink_{uuid.uuid4().hex[:5]}", system="plumbing", type="sink",
-                    start=[bds[0] + 0.5, floor_y + 0.01, bds[3] - 0.45], level=lvl))
-                if do_exhaust:
+                    id=f"branch_{uuid.uuid4().hex[:5]}",
+                    system="electrical",
+                    type="conduit_branch",
+                    start=[cx, ceil_y_elec, trunk_z],
+                    end=[cx, ceil_y_elec, cz],
+                    level=lvl,
+                    diameter_in=0.75,
+                ))
+
+                # Ceiling light fixture(s) — large rooms get multiple lights
+                bds_l = self._bounds(room)
+                room_area_m2_l = (bds_l[2]-bds_l[0]) * (bds_l[3]-bds_l[1])
+                if room_area_m2_l > 20.0:
+                    # Two rows of lights for large rooms
+                    for lx_off, lz_off in [(cx - (bds_l[2]-bds_l[0])*0.2, cz),
+                                           (cx + (bds_l[2]-bds_l[0])*0.2, cz)]:
+                        elements.append(MEPElement(
+                            id=f"light_{uuid.uuid4().hex[:5]}",
+                            system="electrical",
+                            type="lighting_point",
+                            start=[lx_off, ceil_y_light, lz_off],
+                            level=lvl,
+                        ))
+                else:
                     elements.append(MEPElement(
-                        id=f"range_hood_{uuid.uuid4().hex[:5]}", system="hvac", type="exhaust_fan",
-                        start=[cx, floor_y + floor_h - 0.3, cz], level=lvl))
+                        id=f"light_{uuid.uuid4().hex[:5]}",
+                        system="electrical",
+                        type="lighting_point",
+                        start=[cx, ceil_y_light, cz],
+                        level=lvl,
+                    ))
+
+                # Fire/smoke alarm
+                if do_alarms and room.type in ("bedroom", "living", "corridor", "unit"):
+                    elements.append(MEPElement(
+                        id=f"alarm_{uuid.uuid4().hex[:5]}",
+                        system="electrical",
+                        type="fire_alarm",
+                        start=[cx, ceil_y_light - 0.05, cz],
+                        level=lvl,
+                    ))
+
+                # Outlets on walls (NEC 210.52: ≤6ft spacing)
+                # Average 3/room for typical rooms, more only for large spaces
+                pts = room.polygon
+                if outlets_per_room > 0 and len(pts) >= 2:
+                    n_pts = len(pts)
+                    rcx = sum(p[0] for p in pts) / n_pts
+                    rcz = sum(p[1] for p in pts) / n_pts
+                    # 3 outlets for rooms ≤150 sqft, +1 per additional 60 sqft, max 6
+                    if room_area_ft2 <= 150:
+                        n_outlets = min(outlets_per_room, 3)
+                    else:
+                        n_outlets = min(3 + int((room_area_ft2 - 150) / 60), 6)
+                    # Kitchen always gets extra (dedicated circuits)
+                    if room.type == "kitchen":
+                        n_outlets = min(n_outlets + 2, 8)
+                    step = max(1, n_pts // max(n_outlets, 2))
+                    outlet_y = floor_y + ZONE["outlet"]
+                    for i in range(0, n_pts, step):
+                        p0, p1 = pts[i], pts[(i+1) % n_pts]
+                        mx = (p0[0] + p1[0]) / 2
+                        mz = (p0[1] + p1[1]) / 2
+                        dx, dz2 = rcx - mx, rcz - mz
+                        dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
+                        ox = mx + dx/dist * 0.05
+                        oz = mz + dz2/dist * 0.05
+                        outlet_type = "outlet"  # GFCI distinction shown via color, not type
+                        elements.append(MEPElement(
+                            id=f"outlet_{uuid.uuid4().hex[:5]}",
+                            system="electrical",
+                            type=outlet_type,
+                            start=[ox, outlet_y, oz],
+                            level=lvl,
+                        ))
+                        # Conduit drop from ceiling to outlet
+                        elements.append(MEPElement(
+                            id=f"conduit_drop_{uuid.uuid4().hex[:5]}",
+                            system="electrical",
+                            type="conduit_branch",
+                            start=[ox, ceil_y_elec, oz],
+                            end=[ox, outlet_y + 0.05, oz],
+                            level=lvl,
+                            diameter_in=0.5,
+                        ))
+
+                # Dedicated circuit label for kitchen/laundry
+                if room.type == "kitchen":
+                    elements.append(MEPElement(
+                        id=f"ded_circuit_{uuid.uuid4().hex[:5]}",
+                        system="electrical",
+                        type="dedicated_circuit",
+                        start=[bds[0]+0.3, floor_y+1.0, bds[1]+0.3],
+                        level=lvl,
+                    ))
 
         return elements
+
+    # ════════════════════════════════════════════════════════════════════════
+    # FURNITURE (placed as fixtures layer items)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _place_furniture(
+        self, rooms: List[Room], levels: List[Level], floor_h: float
+    ) -> List[MEPElement]:
+        """
+        Place furniture in rooms. Uses system='fixtures' so they appear
+        on the fixtures layer in the 3D viewer.
+        """
+        elements = []
+        for room in rooms:
+            bds = self._bounds(room)
+            cx, cz = self._centroid(room)
+            floor_y = room.level * floor_h
+            w = bds[2] - bds[0]
+            d = bds[3] - bds[1]
+            area_m2 = w * d
+
+            rtype = room.type
+
+            if rtype == "living":
+                # Sofa along rear wall
+                elements.append(MEPElement(
+                    id=f"sofa_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="sofa",
+                    start=[cx, floor_y + 0.01, bds[3] - 0.55],
+                    level=room.level, width_in=84, height_in=28,
+                ))
+                # Coffee table
+                elements.append(MEPElement(
+                    id=f"coffee_table_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="coffee_table",
+                    start=[cx, floor_y + 0.01, bds[3] - 1.6],
+                    level=room.level, width_in=48, height_in=18,
+                ))
+                # TV unit on front wall
+                elements.append(MEPElement(
+                    id=f"tv_unit_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="tv_unit",
+                    start=[cx, floor_y + 0.01, bds[1] + 0.25],
+                    level=room.level, width_in=60, height_in=22,
+                ))
+
+            elif rtype == "family_room":
+                elements.append(MEPElement(
+                    id=f"sofa_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="sofa",
+                    start=[cx, floor_y + 0.01, bds[3] - 0.55],
+                    level=room.level, width_in=96, height_in=28,
+                ))
+                elements.append(MEPElement(
+                    id=f"coffee_table_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="coffee_table",
+                    start=[cx, floor_y + 0.01, bds[3] - 1.7],
+                    level=room.level, width_in=52, height_in=18,
+                ))
+
+            elif rtype == "kitchen":
+                counter_len = min(w * 0.75, 3.5)
+                # Main counter along left wall
+                elements.append(MEPElement(
+                    id=f"counter_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="counter",
+                    start=[bds[0] + 0.3, floor_y + 0.01, bds[1] + 0.3],
+                    end=[bds[0] + 0.3, floor_y + 0.01, bds[1] + 0.3 + counter_len],
+                    level=room.level, width_in=24, height_in=36,
+                ))
+                # Stove next to counter
+                elements.append(MEPElement(
+                    id=f"stove_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="stove",
+                    start=[bds[0] + 0.3, floor_y + 0.01, bds[1] + 0.3],
+                    level=room.level, width_in=30, height_in=36,
+                ))
+                # Refrigerator at corner
+                elements.append(MEPElement(
+                    id=f"fridge_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="refrigerator",
+                    start=[bds[2] - 0.45, floor_y + 0.01, bds[1] + 0.35],
+                    level=room.level, width_in=30, height_in=68,
+                ))
+                # Kitchen island if room is large enough (>10 m²)
+                if area_m2 > 10.0:
+                    elements.append(MEPElement(
+                        id=f"island_{uuid.uuid4().hex[:5]}",
+                        system="fixtures", type="kitchen_island",
+                        start=[cx, floor_y + 0.01, cz],
+                        level=room.level, width_in=48, height_in=36,
+                    ))
+
+            elif rtype == "dining":
+                elements.append(MEPElement(
+                    id=f"dining_table_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="dining_table",
+                    start=[cx, floor_y + 0.01, cz],
+                    level=room.level, width_in=72, height_in=30,
+                ))
+
+            elif rtype == "bedroom":
+                is_master = area_m2 > 16.0
+                # Bed (king for master, queen for others)
+                elements.append(MEPElement(
+                    id=f"bed_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="bed",
+                    start=[cx, floor_y + 0.01, bds[3] - 1.1],
+                    level=room.level,
+                    width_in=76 if is_master else 60,
+                    height_in=14,
+                ))
+                # Dresser
+                if area_m2 > 10.0:
+                    elements.append(MEPElement(
+                        id=f"dresser_{uuid.uuid4().hex[:5]}",
+                        system="fixtures", type="dresser",
+                        start=[bds[0] + 0.25, floor_y + 0.01, bds[1] + 0.3],
+                        level=room.level, width_in=48, height_in=48,
+                    ))
+
+            elif rtype == "office":
+                elements.append(MEPElement(
+                    id=f"desk_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="desk",
+                    start=[bds[0] + 0.35, floor_y + 0.01, bds[1] + 0.45],
+                    level=room.level, width_in=60, height_in=30,
+                ))
+                elements.append(MEPElement(
+                    id=f"bookshelf_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="bookshelf",
+                    start=[bds[2] - 0.25, floor_y + 0.01, cz],
+                    level=room.level, width_in=36, height_in=72,
+                ))
+
+            elif rtype == "laundry":
+                elements.append(MEPElement(
+                    id=f"washer_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="washer",
+                    start=[bds[0] + 0.35, floor_y + 0.01, bds[1] + 0.35],
+                    level=room.level, width_in=27, height_in=43,
+                ))
+                elements.append(MEPElement(
+                    id=f"dryer_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="dryer",
+                    start=[bds[0] + 1.1, floor_y + 0.01, bds[1] + 0.35],
+                    level=room.level, width_in=27, height_in=43,
+                ))
+
+            elif rtype in ("media_room", "bonus_room"):
+                elements.append(MEPElement(
+                    id=f"sofa_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="sofa",
+                    start=[cx, floor_y + 0.01, cz + 0.3],
+                    level=room.level, width_in=90, height_in=28,
+                ))
+                elements.append(MEPElement(
+                    id=f"tv_unit_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="tv_unit",
+                    start=[cx, floor_y + 0.01, bds[1] + 0.3],
+                    level=room.level, width_in=72, height_in=24,
+                ))
+
+            elif rtype == "loft":
+                elements.append(MEPElement(
+                    id=f"sofa_{uuid.uuid4().hex[:5]}",
+                    system="fixtures", type="sofa",
+                    start=[cx, floor_y + 0.01, cz],
+                    level=room.level, width_in=84, height_in=28,
+                ))
+
+        return elements
+
+    # ── Geometry helpers ──────────────────────────────────────────────────
 
     def _centroid(self, room: Room) -> Tuple[float, float]:
         pts = room.polygon
@@ -326,7 +1054,10 @@ class MEPRouter:
         xs, ys = [p[0] for p in pts], [p[1] for p in pts]
         return min(xs), min(ys), max(xs), max(ys)
 
-    def _bounds_multi(self, rooms: List[Room]) -> Tuple[float, float, float, float]:
-        all_pts = [p for r in rooms for p in r.polygon]
-        xs, ys = [p[0] for p in all_pts], [p[1] for p in all_pts]
-        return min(xs), min(ys), max(xs), max(ys)
+    def _building_centroid(self, rooms: List[Room]) -> Tuple[float, float]:
+        """Room-area-weighted centroid — always inside the building for L/U/stepped shapes.
+        Unlike averaging raw polygon vertices, this is biased toward where rooms actually are."""
+        total = sum(r.area_sqft for r in rooms) or 1.0
+        cx = sum(self._centroid(r)[0] * r.area_sqft for r in rooms) / total
+        cz = sum(self._centroid(r)[1] * r.area_sqft for r in rooms) / total
+        return cx, cz

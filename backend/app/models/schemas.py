@@ -54,6 +54,9 @@ class ProjectSpec(BaseModel):
     building_use: BuildingUse = BuildingUse.multi_family
     # Residential: number of bedrooms (1–5). Drives SFR room program & sqft cap.
     bedrooms: Optional[int] = Field(default=None, ge=1, le=5)
+    # Bathrooms: whole number = full bath (toilet+sink+shower/tub), .5 = half bath (toilet+sink only).
+    # e.g. 2.5 means two full baths + one half bath.
+    bathrooms: Optional[float] = Field(default=None, ge=0.5)
     # Residential archetype hint — used by Claude brief + facade generator.
     # e.g. "craftsman", "contemporary", "farmhouse", "cape_cod", "mediterranean"
     house_archetype: Optional[str] = None
@@ -137,6 +140,17 @@ class Column(BaseModel):
     y: float
     levels: List[int]
 
+class StructuralMember(BaseModel):
+    id: str
+    type: str           # column, beam, joist, footing, grade_beam, shear_wall
+    start: List[float]  # [x, y, z]
+    end: List[float]    # [x, y, z]
+    section: str        # e.g. "6x6 DF-L #2", "W10x22", "HSS5x5x1/4"
+    material: str       # wood, steel, concrete
+    load_kips: float = 0.0
+    size_m: float = 0.15
+    color: str = "#a855f7"
+
 class MEPElement(BaseModel):
     id: str
     system: str          # plumbing, electrical, hvac
@@ -168,6 +182,7 @@ class BuildingModel(BaseModel):
     rooms: List[Room] = []
     walls: List[Wall] = []
     columns: List[Column] = []
+    structural_members: List[StructuralMember] = []
     mep_elements: List[MEPElement] = []
     meshes: List[Dict[str, Any]] = []
     neighbor_style: Optional[Dict[str, Any]] = None

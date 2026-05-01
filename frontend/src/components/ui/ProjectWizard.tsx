@@ -3,6 +3,34 @@ import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
 import api from '@/lib/api';
 
+// ── Parcel geometry helpers ────────────────────────────────────────────
+
+/** Convert local meter offset [dx, dy] from a lat/lon center to [lon, lat] */
+function offsetToLatLon(dx: number, dy: number, centerLon: number, centerLat: number): [number, number] {
+  const mPerDegLat = 111320;
+  const mPerDegLon = 111320 * Math.cos(centerLat * Math.PI / 180);
+  return [centerLon + dx / mPerDegLon, centerLat + dy / mPerDegLat];
+}
+
+/** Build a GeoJSON Polygon from a list of [lon, lat] points */
+function makeGeoJSONPolygon(points: [number, number][]): any {
+  const ring = [...points, points[0]]; // close the ring
+  return { type: 'Polygon', coordinates: [ring] };
+}
+
+/** Approximate a circle as a 32-sided polygon */
+function circleToPolygon(radiusM: number, centerLon: number, centerLat: number): any {
+  const N = 32;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < N; i++) {
+    const angle = (2 * Math.PI * i) / N;
+    const dx = radiusM * Math.cos(angle);
+    const dy = radiusM * Math.sin(angle);
+    pts.push(offsetToLatLon(dx, dy, centerLon, centerLat));
+  }
+  return makeGeoJSONPolygon(pts);
+}
+
 // Compute sqft from a GeoJSON polygon using Shoelace on local-meter coords
 function polyAreaSqft(poly: any): number | null {
   const coords = poly?.coordinates?.[0];
@@ -105,7 +133,7 @@ function NumInput({ value, onChange, placeholder, min, max, step }: {
     <input type="number" defaultValue={value ?? ''} min={min} max={max} step={step}
       placeholder={placeholder}
       onChange={(e) => { const v = e.target.value; onChange(v === '' ? undefined : parseFloat(v)); }}
-      className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] transition-colors font-mono"
+      className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] transition-colors font-mono"
     />
   );
 }
@@ -113,7 +141,7 @@ function NumInput({ value, onChange, placeholder, min, max, step }: {
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-cyan)] transition-colors font-mono">
+      className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] transition-colors font-mono">
       {options.map((o) => <option key={o} value={o}>{o === 'ai' ? 'AI picks best' : o.replace(/_/g, ' ')}</option>)}
     </select>
   );
@@ -132,9 +160,9 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
   return (
     <button onClick={() => onChange(!checked)}
       className="flex items-center justify-between w-full px-3 py-2 rounded-lg border transition-colors"
-      style={{ borderColor: checked ? 'var(--accent-cyan)' : 'var(--border)', background: checked ? 'rgba(0,229,255,0.07)' : 'var(--surface-3)' }}>
-      <span className="text-xs font-mono" style={{ color: checked ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}>{label}</span>
-      <div className="w-8 h-4 rounded-full relative transition-colors" style={{ background: checked ? 'var(--accent-cyan)' : 'var(--surface-2)' }}>
+      style={{ borderColor: checked ? 'var(--accent-gold)' : 'var(--border)', background: checked ? 'rgba(196,168,130,0.09)' : 'var(--surface-3)' }}>
+      <span className="text-xs font-mono" style={{ color: checked ? 'var(--accent-gold)' : 'var(--text-secondary)' }}>{label}</span>
+      <div className="w-8 h-4 rounded-full relative transition-colors" style={{ background: checked ? 'var(--accent-gold)' : 'var(--surface-2)' }}>
         <div className="w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all" style={{ left: checked ? '17px' : '2px' }} />
       </div>
     </button>
@@ -142,7 +170,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function ProjectWizard() {
-  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding, drawnParcel, buildingModel } = useAppStore();
+  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding, drawnParcel, setDrawnParcel, buildingModel } = useAppStore();
 
   // Use drawn parcel area when available — more accurate than OSM parcel
   const parcelAreaSqft = useMemo(() =>
@@ -153,6 +181,78 @@ export default function ProjectWizard() {
   const [error, setError] = useState('');
   const [showMaterials, setShowMaterials] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [showLandShape, setShowLandShape] = useState(false);
+
+  // Land shape manual entry state
+  const [shapeType, setShapeType] = useState<'polygon' | 'circular'>('polygon');
+  const [numVertices, setNumVertices] = useState(4);
+  const [vertexInputs, setVertexInputs] = useState<{ x: string; y: string }[]>(
+    Array.from({ length: 4 }, () => ({ x: '', y: '' }))
+  );
+  const [circleRadius, setCircleRadius] = useState<string>('');
+  const [circleUnit, setCircleUnit] = useState<'m' | 'ft'>('ft');
+  const [shapeError, setShapeError] = useState('');
+
+  function updateVertexCount(n: number) {
+    const clamped = Math.max(3, Math.min(20, n));
+    setNumVertices(clamped);
+    setVertexInputs(prev => {
+      const next = [...prev];
+      while (next.length < clamped) next.push({ x: '', y: '' });
+      return next.slice(0, clamped);
+    });
+  }
+
+  function applyLandShape() {
+    setShapeError('');
+    if (!selectedSite) { setShapeError('Select a site first'); return; }
+    const cLon = selectedSite.lon, cLat = selectedSite.lat;
+
+    if (shapeType === 'circular') {
+      const r = parseFloat(circleRadius);
+      if (!r || r <= 0) { setShapeError('Enter a valid radius'); return; }
+      const rM = circleUnit === 'ft' ? r * 0.3048 : r;
+      if (rM > 500) { setShapeError('Radius seems too large — enter meters/feet from site center, not lat/lon'); return; }
+      setDrawnParcel(circleToPolygon(rM, cLon, cLat));
+      return;
+    }
+
+    // Polygon — validate before converting
+    const rawPts: [number, number][] = [];
+    for (let i = 0; i < numVertices; i++) {
+      const xStr = vertexInputs[i]?.x ?? '', yStr = vertexInputs[i]?.y ?? '';
+      const x = parseFloat(xStr), y = parseFloat(yStr);
+      if (isNaN(x) || isNaN(y)) { setShapeError(`Vertex ${i + 1}: enter both X and Y`); return; }
+      if (Math.abs(x) > 500 || Math.abs(y) > 500) {
+        setShapeError(`Vertex ${i + 1}: looks like lat/lon — enter meters from site center (e.g. X=15, Y=20)`);
+        return;
+      }
+      rawPts.push([x, y]);
+    }
+
+    // Sort by angle around centroid so vertices always form a proper
+    // convex polygon — no matter what order the user typed them in.
+    const cx = rawPts.reduce((s, p) => s + p[0], 0) / rawPts.length;
+    const cy = rawPts.reduce((s, p) => s + p[1], 0) / rawPts.length;
+    const sorted = [...rawPts].sort((a, b) =>
+      Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx)
+    );
+
+    const pts = sorted.map(([x, y]) => offsetToLatLon(x, y, cLon, cLat));
+    setDrawnParcel(makeGeoJSONPolygon(pts));
+  }
+
+  // Pre-fill a rectangle from parcel area estimate
+  function fillQuickRect(halfW = 15, halfD = 20) {
+    setShapeType('polygon');
+    updateVertexCount(4);
+    setVertexInputs([
+      { x: String(-halfW), y: String(-halfD) },
+      { x: String( halfW), y: String(-halfD) },
+      { x: String( halfW), y: String( halfD) },
+      { x: String(-halfW), y: String( halfD) },
+    ]);
+  }
 
   // Resolved materials: prefer the generated model's overrides (which include AI-picked),
   // fall back to user-set overrides in spec
@@ -195,6 +295,7 @@ export default function ProjectWizard() {
 
     const buildingUse = (spec as any).building_use || 'multi_family';
     const bedrooms = (spec as any).bedrooms || (buildingUse === 'single_family' ? 3 : undefined);
+    const bathrooms = (spec as any).bathrooms ?? (buildingUse === 'single_family' ? 2 : undefined);
 
     const fullSpec: any = {
       region_country: 'US', region_state: 'CA',
@@ -202,6 +303,7 @@ export default function ProjectWizard() {
       permit_set: false,
       building_use: buildingUse,
       bedrooms: bedrooms || null,
+      bathrooms: bathrooms || null,
       stories: inferredStories,
       floor_to_floor_height_ft: spec.floor_to_floor_height_ft || 10.0,
       structural_system: spec.structural_system || 'wood',
@@ -257,7 +359,7 @@ export default function ProjectWizard() {
         {selectedSite ? (
           <div className="space-y-2">
             {drawnParcel ? (
-              <div className="flex items-center gap-2 text-xs font-mono text-[var(--accent-cyan)] bg-cyan-950/30 border border-cyan-800/30 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 text-xs font-mono text-[var(--accent-gold)] rounded-lg px-3 py-2" style={{background:'rgba(196,168,130,0.07)',border:'1px solid rgba(196,168,130,0.2)'}}>
                 ⬡ Custom parcel boundary active
               </div>
             ) : (
@@ -314,6 +416,160 @@ export default function ProjectWizard() {
         )}
       </div>
 
+      {/* Land Shape Manual Entry */}
+      <div className="panel-section space-y-3">
+        <SectionToggle label="Land Shape (manual entry)" open={showLandShape} onToggle={() => setShowLandShape(v => !v)} />
+        {showLandShape && (
+          <div className="space-y-3 pt-1">
+            <div className="text-[10px] font-mono text-[var(--accent-gold)] bg-[rgba(196,168,130,0.07)] border border-[rgba(196,168,130,0.2)] rounded-lg px-3 py-2 leading-relaxed">
+              ⚠ Enter <strong>meter offsets</strong> from site center — not lat/lon.<br/>
+              X = east (+) / west (−) &nbsp;·&nbsp; Y = north (+) / south (−)<br/>
+              Example: a 30×40 ft lot → X: ±4.6, Y: ±6.1
+            </div>
+
+            {/* Shape type selector */}
+            <div className="flex gap-2">
+              {(['polygon', 'circular'] as const).map((t) => (
+                <button key={t} onClick={() => setShapeType(t)}
+                  className="flex-1 rounded-lg py-2 text-xs font-mono transition-all border capitalize"
+                  style={{
+                    background: shapeType === t ? 'rgba(196,168,130,0.12)' : 'var(--surface-3)',
+                    borderColor: shapeType === t ? 'var(--accent-gold)' : 'var(--border)',
+                    color: shapeType === t ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                  }}>
+                  {t === 'polygon' ? 'Polygon' : 'Circular'}
+                </button>
+              ))}
+            </div>
+
+            {shapeType === 'circular' ? (
+              <div className="space-y-2">
+                <div className="text-[10px] font-mono text-[var(--text-secondary)]">
+                  Circular parcel centered on selected site point
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="Radius"
+                    value={circleRadius}
+                    min={1}
+                    onChange={(e) => setCircleRadius(e.target.value)}
+                    className="flex-1 bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] font-mono"
+                  />
+                  <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
+                    {(['ft', 'm'] as const).map((u) => (
+                      <button key={u} onClick={() => setCircleUnit(u)}
+                        className="px-3 py-2 text-xs font-mono transition-colors"
+                        style={{
+                          background: circleUnit === u ? 'var(--accent-gold)' : 'var(--surface-3)',
+                          color: circleUnit === u ? '#000' : 'var(--text-secondary)',
+                        }}>
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {circleRadius && !isNaN(parseFloat(circleRadius)) && (
+                  <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70">
+                    {circleUnit === 'ft'
+                      ? `= ${(parseFloat(circleRadius) * 0.3048).toFixed(1)} m`
+                      : `= ${(parseFloat(circleRadius) / 0.3048).toFixed(1)} ft`}
+                    {' · '}area ≈ {Math.round(Math.PI * (circleUnit === 'ft' ? parseFloat(circleRadius) : parseFloat(circleRadius) / 0.3048) ** 2).toLocaleString()} sqft
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Field label={`Number of vertices (3–20)`}>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number" min={3} max={20} value={numVertices}
+                      onChange={(e) => updateVertexCount(parseInt(e.target.value) || 3)}
+                      className="w-20 bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] font-mono"
+                    />
+                    <span className="text-[10px] font-mono text-[var(--text-secondary)]">
+                      {numVertices === 4 ? '(rectangle)' : numVertices === 3 ? '(triangle)' : numVertices === 6 ? '(hexagon)' : `(${numVertices}-sided)`}
+                    </span>
+                  </div>
+                </Field>
+
+                {/* Quick fill helpers */}
+                <div className="flex gap-1 flex-wrap">
+                  {[['30×40 ft', 4.6, 6.1], ['50×60 ft', 7.6, 9.1], ['60×100 ft', 9.1, 15.2], ['100×120 ft', 15.2, 18.3]] .map(([label, hw, hd]) => (
+                    <button key={String(label)} onClick={() => fillQuickRect(Number(hw), Number(hd))}
+                      className="px-2 py-1 rounded text-[9px] font-mono transition-all border"
+                      style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', background: 'var(--surface-3)' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-[var(--text-secondary)] px-1">
+                    <span>#</span><span>X (m east)</span><span>Y (m north)</span>
+                  </div>
+                  {Array.from({ length: numVertices }, (_, i) => {
+                    const exX = ['-15','15','15','-15'][i] ?? '0';
+                    const exY = ['-20','-20','20','20'][i] ?? '0';
+                    return (
+                    <div key={i} className="grid grid-cols-3 gap-1 items-center">
+                      <span className="text-[10px] font-mono text-[var(--text-secondary)] text-center">{i + 1}</span>
+                      <input
+                        type="number" step="0.1"
+                        placeholder={exX}
+                        value={vertexInputs[i]?.x ?? ''}
+                        onChange={(e) => {
+                          const next = [...vertexInputs];
+                          next[i] = { ...next[i], x: e.target.value };
+                          setVertexInputs(next);
+                        }}
+                        className="bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] font-mono w-full"
+                      />
+                      <input
+                        type="number" step="0.1"
+                        placeholder={exY}
+                        value={vertexInputs[i]?.y ?? ''}
+                        onChange={(e) => {
+                          const next = [...vertexInputs];
+                          next[i] = { ...next[i], y: e.target.value };
+                          setVertexInputs(next);
+                        }}
+                        className="bg-[var(--surface-3)] border border-[var(--border)] rounded px-2 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] font-mono w-full"
+                      />
+                    </div>
+                  );})}
+
+                </div>
+              </div>
+            )}
+
+            {shapeError && (
+              <div className="text-[10px] font-mono text-[var(--accent-red)]">{shapeError}</div>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={applyLandShape}
+                className="flex-1 py-2 rounded-lg text-xs font-mono font-semibold transition-all"
+                style={{ background: 'var(--accent-gold)', color: '#000' }}>
+                Apply Shape
+              </button>
+              {drawnParcel && (
+                <button onClick={() => setDrawnParcel(null)}
+                  className="px-3 py-2 rounded-lg text-xs font-mono transition-all border"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+                  Clear
+                </button>
+              )}
+            </div>
+            {drawnParcel && (
+              <div className="text-[10px] font-mono text-[var(--accent-green)]">
+                Parcel active · {parcelAreaSqft?.toLocaleString()} sqft
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Goals */}
       <div className="panel-section space-y-3">
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Primary Goal</div>
@@ -324,11 +580,11 @@ export default function ProjectWizard() {
               <button key={key} onClick={() => updateSpec({ priority: key })}
                 className="rounded-xl p-3 text-left transition-all border"
                 style={{
-                  background: active ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
-                  borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
+                  background: active ? 'rgba(196,168,130,0.12)' : 'var(--surface-3)',
+                  borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
                 }}>
-                <div className="text-lg mb-1" style={{ color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)' }}>{icon}</div>
-                <div className="text-xs font-mono font-semibold" style={{ color: active ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>{label}</div>
+                <div className="text-lg mb-1" style={{ color: active ? 'var(--accent-gold)' : 'var(--text-secondary)' }}>{icon}</div>
+                <div className="text-xs font-mono font-semibold" style={{ color: active ? 'var(--accent-gold)' : 'var(--text-primary)' }}>{label}</div>
                 <div className="text-[10px] font-mono text-[var(--text-secondary)] mt-0.5">{desc}</div>
               </button>
             );
@@ -346,10 +602,10 @@ export default function ProjectWizard() {
               <button key={key} onClick={() => updateSpec({ style: key } as any)}
                 className="rounded-xl px-3 py-2.5 text-left transition-all border"
                 style={{
-                  background: active ? 'rgba(0,229,255,0.08)' : 'var(--surface-3)',
-                  borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
+                  background: active ? 'rgba(196,168,130,0.1)' : 'var(--surface-3)',
+                  borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
                 }}>
-                <div className="text-xs font-mono font-semibold" style={{ color: active ? 'var(--accent-cyan)' : 'var(--text-primary)' }}>{label}</div>
+                <div className="text-xs font-mono font-semibold" style={{ color: active ? 'var(--accent-gold)' : 'var(--text-primary)' }}>{label}</div>
                 <div className="text-[10px] font-mono text-[var(--text-secondary)] mt-0.5">{desc}</div>
               </button>
             );
@@ -367,9 +623,9 @@ export default function ProjectWizard() {
               <button key={key} onClick={() => updateSpec({ building_use: key } as any)}
                 className="flex-1 rounded-lg py-2 text-center text-xs font-mono transition-all border"
                 style={{
-                  background: active ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
-                  borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
-                  color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                  background: active ? 'rgba(196,168,130,0.12)' : 'var(--surface-3)',
+                  borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
+                  color: active ? 'var(--accent-gold)' : 'var(--text-secondary)',
                 }}>
                 {label}
               </button>
@@ -391,38 +647,65 @@ export default function ProjectWizard() {
       <div className="panel-section space-y-4">
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Parameters</div>
 
-        {/* Bedrooms — only shown for single-family / ADU */}
+        {/* Bedrooms + Bathrooms — only shown for single-family / ADU */}
         {['single_family', 'adu'].includes((spec as any).building_use || 'multi_family') && (() => {
           const br = (spec as any).bedrooms || 3;
+          const ba = (spec as any).bathrooms ?? 2;
           const pri = (spec.priority || 'cost') as string;
           const [lo, hi] = SFR_SQFT_RANGES[br] ?? [1200, 1900];
           const suggested = sfrTargetSqft(br, pri);
+          const baOptions = [1, 1.5, 2, 2.5, 3, 3.5];
           return (
-            <Field label="Bedrooms (1–5)">
-              <div className="flex gap-1.5">
-                {[1,2,3,4,5].map((n) => {
-                  const active = br === n;
-                  return (
-                    <button key={n} onClick={() => updateSpec({ bedrooms: n } as any)}
-                      className="flex-1 rounded-lg py-2 text-xs font-mono font-semibold transition-all border"
-                      style={{
-                        background: active ? 'rgba(0,229,255,0.1)' : 'var(--surface-3)',
-                        borderColor: active ? 'var(--accent-cyan)' : 'var(--border)',
-                        color: active ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                      }}>
-                      {n}
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Range hint — shows realistic sqft band + where priority lands */}
-              <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
-                {br}BR range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
-                <span className="ml-2 text-[var(--accent-cyan)]">
-                  ({pri} target: ~{suggested.toLocaleString()} sqft)
-                </span>
-              </div>
-            </Field>
+            <>
+              <Field label="Bedrooms (1–5)">
+                <div className="flex gap-1.5">
+                  {[1,2,3,4,5].map((n) => {
+                    const active = br === n;
+                    return (
+                      <button key={n} onClick={() => updateSpec({ bedrooms: n } as any)}
+                        className="flex-1 rounded-lg py-2 text-xs font-mono font-semibold transition-all border"
+                        style={{
+                          background: active ? 'rgba(196,168,130,0.12)' : 'var(--surface-3)',
+                          borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
+                          color: active ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                        }}>
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
+                  {br}BR range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
+                  <span className="ml-2 text-[var(--accent-gold)]">
+                    ({pri} target: ~{suggested.toLocaleString()} sqft)
+                  </span>
+                </div>
+              </Field>
+              <Field label="Bathrooms">
+                <div className="flex gap-1.5 flex-wrap">
+                  {baOptions.map((n) => {
+                    const active = ba === n;
+                    return (
+                      <button key={n} onClick={() => updateSpec({ bathrooms: n } as any)}
+                        className="flex-1 rounded-lg py-2 text-xs font-mono font-semibold transition-all border"
+                        style={{
+                          background: active ? 'rgba(196,168,130,0.12)' : 'var(--surface-3)',
+                          borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
+                          color: active ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                          minWidth: '2.5rem',
+                        }}>
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
+                  {ba % 1 === 0
+                    ? `${ba} full bath${ba > 1 ? 's' : ''} — toilet, sink, shower/tub`
+                    : `${Math.floor(ba)} full + 1 half bath — half bath has toilet & sink only`}
+                </div>
+              </Field>
+            </>
           );
         })()}
 
@@ -568,7 +851,7 @@ export default function ProjectWizard() {
                     />
                   </div>
                   {!userVal && aiVal && (
-                    <div className="text-[10px] font-mono pl-[7.5rem]" style={{ color: 'var(--accent-cyan)', opacity: 0.75 }}>
+                    <div className="text-[10px] font-mono pl-[7.5rem]" style={{ color: 'var(--accent-gold)', opacity: 0.75 }}>
                       AI selected: {aiVal}
                     </div>
                   )}
@@ -627,8 +910,8 @@ export default function ProjectWizard() {
         <button onClick={handleGenerate} disabled={!canGenerate || loading}
           className="w-full py-3 rounded-xl font-display font-semibold text-sm transition-all duration-200"
           style={{
-            background: !canGenerate || loading ? 'var(--surface-3)' : hasBlockingIssues ? 'linear-gradient(135deg, #f59e0b, #ef4444)' : 'linear-gradient(135deg, #00e5ff, #00ff88)',
-            color: canGenerate && !loading ? '#000' : 'var(--text-secondary)',
+            background: !canGenerate || loading ? 'var(--surface-3)' : hasBlockingIssues ? 'linear-gradient(135deg, #f59e0b, #ef4444)' : 'linear-gradient(135deg, #c4a882, #e8d5b0)',
+            color: canGenerate && !loading ? '#0a0907' : 'var(--text-secondary)',
             cursor: canGenerate && !loading ? 'pointer' : 'not-allowed',
           }}>
           {loading ? (

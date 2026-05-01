@@ -117,7 +117,7 @@ class FacadeGenerator:
         arch_style = style.get("dominant_arch_style", "modern")
 
         # Brief overrides drive visual character to match neighbors
-        window_ratio  = float(brief.get("window_ratio")    or style.get("window_ratio",   0.35))
+        window_ratio  = min(float(brief.get("window_ratio") or style.get("window_ratio", 0.35)), 0.55)
         balcony_depth = float(brief.get("balcony_depth_m") or style.get("balcony_depth_m", 1.0))
         bal_every_n   = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
         add_bands     = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
@@ -130,9 +130,9 @@ class FacadeGenerator:
             band_h_frac = 0.30
             add_bands = True
         elif arch_style in ("modern", "minimalist", "contemporary"):
-            # Clean flat facade, no spandrel bands, large windows
+            # Clean flat facade, no spandrel bands, designed windows (not curtain wall)
             add_bands = False
-            window_ratio = max(window_ratio, 0.55)
+            window_ratio = min(max(window_ratio, 0.40), 0.52)   # cap — not full glass wall
             band_h_frac = 0.0
         elif arch_style in ("colonial", "spanish", "mediterranean"):
             # Moderate bands, symmetrical windows, arched suggestion
@@ -221,6 +221,9 @@ class FacadeGenerator:
                 # ── Windows ──────────────────────────────────────────────
                 win_spacing = max(1.4, 2.8 * (1.0 - window_ratio))
                 num_windows = max(1, int(wall_len / win_spacing))
+                # Hard cap: residential houses shouldn't have a row of 6+ windows
+                is_sfr_style = 'classic' in arch_style or 'gabled' in arch_style
+                num_windows = min(num_windows, 2 if is_sfr_style else 3)
                 raw_win_w   = wall_len / num_windows * window_ratio * 2.0
                 win_w       = max(0.55, min(raw_win_w, win_w_cap))
                 win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)

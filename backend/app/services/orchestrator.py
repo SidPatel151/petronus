@@ -31,12 +31,55 @@ class GenerationOrchestrator:
     async def run(self, spec: ProjectSpec, massing_choice: int = 0) -> BuildingModel:
         project_id = str(uuid.uuid4())
 
-        # For SFR/ADU: if no target area set, derive it from bedroom count + priority
         is_sfr = getattr(spec, 'building_use', 'multi_family') in ('single_family', 'adu')
-        if is_sfr and not spec.target_gross_area_sqft:
+        is_adu = getattr(spec, 'building_use', 'multi_family') == 'adu'
+
+        # ── Hard platform caps (applied before anything else) ─────────────
+        # These enforce the "no luxury mansion" rule and honour user-set max_* fields.
+        PLATFORM_MAX_SFR_SQFT  = 5_500   # single-family / ADU absolute ceiling
+        PLATFORM_MAX_MF_SQFT   = 50_000  # multi-family: generous but prevents runaway
+        PLATFORM_MAX_STORIES   = 3       # matches wizard UI
+        PLATFORM_MAX_BEDROOMS  = 5       # matches SFR_SQFT_RANGES
+
+        updates: dict = {}
+
+        # Clamp bedrooms
+        if is_sfr:
             br = getattr(spec, 'bedrooms', None) or 3
-            pri = getattr(spec.priority, 'value', str(spec.priority))
-            spec = spec.model_copy(update={"target_gross_area_sqft": sfr_target_sqft(br, pri)})
+            max_br = getattr(spec, 'max_bedrooms', None) or PLATFORM_MAX_BEDROOMS
+            br = min(br, max_br, PLATFORM_MAX_BEDROOMS)
+            updates['bedrooms'] = br
+
+        # Clamp stories
+        stories = spec.stories or 2
+        max_floors = getattr(spec, 'max_floors', None) or PLATFORM_MAX_STORIES
+        # Also derive a story cap from max_height_ft if provided
+        max_h = getattr(spec, 'max_height_ft', None)
+        if max_h:
+            floor_h = spec.floor_to_floor_height_ft or 10.0
+            max_floors = min(max_floors, max(1, int(max_h / floor_h)))
+        stories = min(stories, max_floors, PLATFORM_MAX_STORIES)
+        updates['stories'] = stories
+
+        # For SFR/ADU: derive target area from bedroom count + priority if not set
+        pri = getattr(spec.priority, 'value', str(spec.priority))
+        br_final = updates.get('bedrooms') or (getattr(spec, 'bedrooms', None) or 3)
+        if is_sfr and not spec.target_gross_area_sqft:
+            updates['target_gross_area_sqft'] = sfr_target_sqft(br_final, pri)
+
+        # Clamp target area: user max_sqft → then platform cap
+        raw_area = updates.get('target_gross_area_sqft') or spec.target_gross_area_sqft or 0
+        user_max = getattr(spec, 'max_sqft', None)
+        platform_cap = PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT
+        if raw_area > 0:
+            capped = raw_area
+            if user_max:
+                capped = min(capped, user_max)
+            capped = min(capped, platform_cap)
+            updates['target_gross_area_sqft'] = capped
+
+        if updates:
+            spec = spec.model_copy(update=updates)
 
         # Auto-resolve materials from priority + style, then merge user overrides on top
         pri_val  = getattr(spec.priority, 'value', str(spec.priority))
@@ -71,6 +114,34 @@ class GenerationOrchestrator:
             f"Flood zone: {site_ctx.flood_zone} | "
             f"Seismic: {site_ctx.seismic_category} | {slope_msg}"
         )
+
+        # ── Power infrastructure check ─────────────────────────────────────
+        from app.models.schemas import ComplianceIssue
+        has_power = bool(infra.get("power_lines") or infra.get("power_poles"))
+        if not has_power:
+            model.issues.append(ComplianceIssue(
+                id="UTIL-001",
+                type="warning",
+                severity="warning",
+                message="No utility power infrastructure (poles or lines) detected within 200m. "
+                        "Verify electrical service availability before permitting.",
+                fix_suggestion="Contact local utility provider to confirm service point location.",
+                elements_involved=[],
+            ))
+            log.append("⚠ No power infrastructure detected near site")
+
+        # ── Sqft guard — surface hard error if request still exceeds cap ──
+        raw_req = spec.target_gross_area_sqft or 0
+        if raw_req > PLATFORM_MAX_SFR_SQFT and is_sfr:
+            model.issues.append(ComplianceIssue(
+                id="AREA-001",
+                type="compliance",
+                severity="error",
+                message=f"Requested area {raw_req:,.0f} sqft exceeds the 5,500 sqft SFR platform cap. "
+                        f"Design has been clamped to {PLATFORM_MAX_SFR_SQFT:,} sqft.",
+                fix_suggestion=f"Reduce target area to {PLATFORM_MAX_SFR_SQFT:,} sqft or below.",
+                elements_involved=[],
+            ))
 
         # Extract neighbor buildings — exclude the building being replaced (the one at site center)
         all_buildings = infra.get("buildings", [])
@@ -154,6 +225,7 @@ class GenerationOrchestrator:
             spec, site_ctx,
             neighbor_buildings=neighbor_buildings,
             design_brief=design_brief,
+            style=getattr(spec, 'style', None),
         )
         model.massing_options = massing_options
         model.levels = levels
@@ -182,12 +254,59 @@ class GenerationOrchestrator:
         self.progress_cb(72, "Routing MEP systems…")
         log.append("Routing plumbing, electrical, HVAC")
         power_conn = infra.get("power_connection") if infra else None
+        # Enrich power_connection with local-meter offsets (dx_m, dz_m) so MEP can draw
+        # the utility lateral toward the pole without needing lat/lon inside the generator.
+        if power_conn:
+            try:
+                coords = power_conn.get("geometry", {}).get("coordinates", [])
+                if len(coords) == 2:
+                    _lat, _lon = spec.site.latlon.lat, spec.site.latlon.lon
+                    import math as _m2
+                    _dlon = coords[1][0] - _lon
+                    _dlat = coords[1][1] - _lat
+                    _mpp_lat = 111320.0
+                    _mpp_lon = 111320.0 * _m2.cos(_m2.radians(_lat))
+                    power_conn = dict(power_conn)
+                    power_conn["dx_m"] = round(_dlon * _mpp_lon, 1)
+                    power_conn["dz_m"] = round(-_dlat * _mpp_lat, 1)  # Z = south (negative lat)
+            except Exception:
+                pass
         mep_elements = self.mep_router.route(rooms, walls, levels, spec, power_connection=power_conn)
         model.mep_elements = mep_elements
         plumbing = len([e for e in mep_elements if e.system == "plumbing"])
         electrical = len([e for e in mep_elements if e.system == "electrical"])
         hvac = len([e for e in mep_elements if e.system == "hvac"])
         log.append(f"MEP: {plumbing} plumbing | {electrical} electrical | {hvac} HVAC elements")
+
+        # Step 6b: Structural engineering
+        self.progress_cb(76, "Computing structural members…")
+        from app.generators.structural_engine import StructuralEngine
+        struct_engine = StructuralEngine()
+        massing_footprint = [(c[0], c[1]) for c in chosen["footprint"]]
+        structural_members = struct_engine.generate(
+            footprint_coords=massing_footprint,
+            levels=levels,
+            structural_system=spec.structural_system,
+            site_ctx_dict={
+                "seismic_category": site_ctx.seismic_category,
+                "wind_speed_mph": site_ctx.wind_speed_mph,
+            },
+            target_area_m2=chosen.get("total_area_m2", 200.0),
+            is_sfr=is_sfr,
+        )
+        from app.models.schemas import StructuralMember as StructMemberSchema
+        model.structural_members = [StructMemberSchema(**m) for m in structural_members]
+        log.append(f"Structural: {len(structural_members)} members computed")
+
+        # Step 6c: Clash detection
+        self.progress_cb(80, "Running MEP clash detection…")
+        from app.generators.clash_detector import detect_clashes, get_routing_summary
+        clash_issues = detect_clashes(model.mep_elements)
+        model.issues.extend(clash_issues)
+        routing_summary = get_routing_summary(model.mep_elements)
+        log.append(f"Clash detection: {len(clash_issues)} clashes found")
+        for sys_name, stats in routing_summary.items():
+            log.append(f"  {sys_name}: {stats['count']} elements")
 
         # Step 7: Compliance
         self.progress_cb(88, "Running compliance checks…")

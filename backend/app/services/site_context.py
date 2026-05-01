@@ -44,6 +44,12 @@ class SiteContextService:
         if parcel_polygon is None:
             parcel_polygon = await self._get_parcel_from_osm(latlon)
         parcel_shape = shape(parcel_polygon)
+        # Heal self-intersecting polygons (e.g. bowtie from wrong vertex order)
+        # convex_hull always returns a valid convex polygon.
+        if not parcel_shape.is_valid or parcel_shape.geom_type != 'Polygon':
+            parcel_shape = parcel_shape.convex_hull
+        if not parcel_shape.is_valid or parcel_shape.is_empty:
+            raise ValueError("Parcel polygon is invalid — check vertex coordinates")
         area_sqft = self._area_sqft(parcel_shape, latlon)
         buildable = self._apply_setbacks(parcel_shape, DEFAULT_SETBACKS, latlon)
         centroid = self._centroid(parcel_shape)
