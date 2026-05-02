@@ -644,8 +644,24 @@ function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness 
       verts[R0 * 3]     = r0x; verts[R0 * 3 + 1] = ridgeY; verts[R0 * 3 + 2] = r0z;
       verts[R1 * 3]     = r1x; verts[R1 * 3 + 1] = ridgeY; verts[R1 * 3 + 2] = r1z;
 
-      // For each eave edge: connect to whichever ridge point(s) are appropriate.
-      // Distance of each vertex to R0 vs R1 determines which slope it belongs to.
+      // Footprint centroid — used to determine outward normal direction
+      const bcx = raw.reduce((s: number, p: [number,number]) => s + p[0], 0) / n;
+      const bcz = raw.reduce((s: number, p: [number,number]) => s + p[1], 0) / n;
+
+      // Ensure triangle (a,b,c) normal points outward from building centroid
+      const ensureOut = (a: number, b: number, c: number): [number,number,number] => {
+        const e1x = verts[b*3]-verts[a*3], e1y = verts[b*3+1]-verts[a*3+1], e1z = verts[b*3+2]-verts[a*3+2];
+        const e2x = verts[c*3]-verts[a*3], e2y = verts[c*3+1]-verts[a*3+1], e2z = verts[c*3+2]-verts[a*3+2];
+        const nx = e1y*e2z - e1z*e2y;
+        const ny = e1z*e2x - e1x*e2z;
+        const nz = e1x*e2y - e1y*e2x;
+        const fcx = (verts[a*3]+verts[b*3]+verts[c*3])/3 - bcx;
+        const fcz = (verts[a*3+2]+verts[b*3+2]+verts[c*3+2])/3 - bcz;
+        // Positive dot = normal points outward; add small upward bias for gable ends
+        return (nx*fcx + nz*fcz + ny*0.1) >= 0 ? [a,b,c] : [a,c,b];
+      };
+
+      // For each eave edge: connect to nearest ridge point(s)
       const d2 = (ax: number, az: number, bx: number, bz: number) =>
         (ax - bx) ** 2 + (az - bz) ** 2;
 
@@ -656,15 +672,15 @@ function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness 
         const nearR0_j = d2(raw[j][0], raw[j][1], r0x, r0z) <= d2(raw[j][0], raw[j][1], r1x, r1z);
 
         if (nearR0_i && nearR0_j) {
-          // Both on R0 side → triangle to R0
-          idx.push(i, j, R0);
+          idx.push(...ensureOut(i, j, R0));
         } else if (!nearR0_i && !nearR0_j) {
-          // Both on R1 side → triangle to R1
-          idx.push(i, j, R1);
+          idx.push(...ensureOut(i, j, R1));
         } else {
-          // Edge straddles the ridge — quad split into two triangles through both ridge pts
-          idx.push(i, j, R0);
-          idx.push(j, R1, R0);
+          // Straddle: two triangles covering both slopes
+          const R_i = nearR0_i ? R0 : R1;
+          const R_j = nearR0_j ? R0 : R1;
+          idx.push(...ensureOut(i, j, R_i));
+          idx.push(...ensureOut(j, R_j, R_i));
         }
       }
 
@@ -1158,11 +1174,27 @@ function Scene() {
     : 3.0;
   const FLOOR_H = floorH;
 
-  // Resolve wall texture: material_overrides.walls > design_brief (Claude AI) > neighbor_style (OSM)
+  // Resolve wall texture: material_overrides.walls > design_brief > arch_style default > neighbor_style
   const wallOverride = (spec as any)?.material_overrides?.walls ?? '';
   const briefMat = (buildingModel as any)?.design_brief?.facade_material ?? '';
   const neighborMat = (buildingModel as any)?.neighbor_style?.dominant_material ?? '';
-  const effectiveMat = (wallOverride && wallOverride !== 'ai') ? wallOverride : (briefMat || neighborMat);
+  const archStyle: string = (spec as any)?.style
+    ?? (buildingModel as any)?.neighbor_style?.dominant_arch_style
+    ?? '';
+  const STYLE_MAT: Record<string, string> = {
+    // user-selected styles from wizard
+    classic_gabled: 'brick',
+    modern_linear:  'concrete',
+    solid_sculpted: 'stone',
+    // neighbor arch_style fallbacks
+    craftsman: 'wood', victorian: 'wood',
+    colonial: 'brick', tudor: 'stone',
+    spanish: 'stucco', mediterranean: 'stucco',
+    modern: 'concrete', contemporary: 'concrete', minimalist: 'concrete',
+    farmhouse: 'wood', cape_cod: 'wood',
+  };
+  const styleDefaultMat = STYLE_MAT[archStyle.toLowerCase()] ?? '';
+  const effectiveMat = (wallOverride && wallOverride !== 'ai') ? wallOverride : (briefMat || styleDefaultMat || neighborMat);
   const { texName, roughness: texRoughness, metalness: texMetalness } = useMemo(
     () => resolveTexture((spec as any)?.structural_system ?? 'wood', effectiveMat),
     [(spec as any)?.structural_system, effectiveMat]
@@ -1235,6 +1267,12 @@ function Scene() {
                   .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
                   .map((r: any, i: number) => (
                     <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
+                  ))}
+                {/* Interior partition walls */}
+                {(buildingModel.walls || [])
+                  .filter((w: any) => !w.is_exterior)
+                  .map((w: any, i: number) => (
+                    <WallMesh key={`iw_${i}`} wall={w} matColor={COLORS.wall_interior} floorH={floorH} />
                   ))}
               </>
             );
