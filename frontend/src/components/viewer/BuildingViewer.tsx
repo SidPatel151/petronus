@@ -613,9 +613,9 @@ function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness 
       const W = maxX - minX;  // east-west span
       const D = maxZ - minZ;  // north-south span
 
-      // Pitch: 35° off the shorter axis
+      // Pitch: 22° off the shorter axis (5:12 residential standard)
       const shortHalf = Math.min(W, D) / 2;
-      const peakH = Math.max(0.8, shortHalf * Math.tan(35 * Math.PI / 180));
+      const peakH = Math.max(0.6, shortHalf * Math.tan(22 * Math.PI / 180));
 
       // Ridge runs along the LONG axis at the midpoint of the short axis.
       // R0 = one end of ridge, R1 = other end.
@@ -653,12 +653,11 @@ function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness 
         const e1x = verts[b*3]-verts[a*3], e1y = verts[b*3+1]-verts[a*3+1], e1z = verts[b*3+2]-verts[a*3+2];
         const e2x = verts[c*3]-verts[a*3], e2y = verts[c*3+1]-verts[a*3+1], e2z = verts[c*3+2]-verts[a*3+2];
         const nx = e1y*e2z - e1z*e2y;
-        const ny = e1z*e2x - e1x*e2z;
         const nz = e1x*e2y - e1y*e2x;
         const fcx = (verts[a*3]+verts[b*3]+verts[c*3])/3 - bcx;
         const fcz = (verts[a*3+2]+verts[b*3+2]+verts[c*3+2])/3 - bcz;
-        // Positive dot = normal points outward; add small upward bias for gable ends
-        return (nx*fcx + nz*fcz + ny*0.1) >= 0 ? [a,b,c] : [a,c,b];
+        // Positive dot = normal points outward (pure XZ check — no bias)
+        return (nx*fcx + nz*fcz) >= 0 ? [a,b,c] : [a,c,b];
       };
 
       // For each eave edge: connect to nearest ridge point(s)

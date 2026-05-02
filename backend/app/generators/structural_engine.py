@@ -159,12 +159,8 @@ class StructuralEngine:
         grid_m = min(MAX_GRID_M.get(mat, 4.5), bw / 2, bd / 2)
         grid_m = max(grid_m, 2.5)
 
-        # Wood SFR uses perimeter-only columns (platform framing uses bearing walls, not columns)
-        # For large houses (>400 m²) or non-wood/non-SFR: use full grid
-        if is_sfr and mat == "wood" and target_area_m2 < 400:
-            col_positions = self._perimeter_columns(footprint, bounds, grid_m)
-        else:
-            col_positions = self._column_grid(footprint, bounds, grid_m)
+        # Always use interior grid so columns/beams appear inside the building
+        col_positions = self._column_grid(footprint, bounds, grid_m)
 
         # ── 3. Column sizing and placement ──────────────────────────────
         trib_area_m2 = grid_m ** 2  # tributary area per column (m²)
