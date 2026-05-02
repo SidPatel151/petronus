@@ -583,12 +583,10 @@ function RoofMesh({ mesh }: { mesh: any }) {
   );
 }
 
-// ── HipRoofMesh ────────────────────────────────────────────────────────
-// Eave ring matches wall top exactly (totalH), pushed outward 0.22m to
-// sit on the floor-band beam. Steep 40° pitch for a clearly triangular look.
-const EAVE_OVERHANG = 0.22;  // matches BAND_OUT in massing.py
-
-function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }: {
+// ── GableRoofMesh ──────────────────────────────────────────────────────
+// Real house roof: ridge along the long axis, two sloped rectangular faces,
+// two triangular gable ends. Eave Y = totalH (flush with wall tops).
+function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness }: {
   massing: any; levels: any[]; floorH: number;
   texName: string; roughness: number; metalness: number;
 }) {
@@ -598,53 +596,71 @@ function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }:
 
   const geometry = useMemo(() => {
     try {
-      const raw = footprint[footprint.length - 1][0] === footprint[0][0] &&
-                  footprint[footprint.length - 1][1] === footprint[0][1]
+      const raw = (footprint[footprint.length - 1][0] === footprint[0][0] &&
+                   footprint[footprint.length - 1][1] === footprint[0][1])
         ? footprint.slice(0, -1) : footprint;
-      const n = raw.length;
-      if (n < 3) return null;
+      if (raw.length < 3) return null;
 
       const xs = raw.map(p => p[0]);
       const zs = raw.map(p => p[1]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+      const W = maxX - minX;  // east-west span
+      const D = maxZ - minZ;  // north-south span
 
-      // Centroid — apex is always inside for any polygon shape
-      const cx = xs.reduce((a, b) => a + b, 0) / n;
-      const cz = zs.reduce((a, b) => a + b, 0) / n;
+      // Pitch: 35° off the shorter axis
+      const shortHalf = Math.min(W, D) / 2;
+      const peakH = Math.max(0.8, shortHalf * Math.tan(35 * Math.PI / 180));
 
-      const w = Math.max(...xs) - Math.min(...xs);
-      const d = Math.max(...zs) - Math.min(...zs);
-      const minDim = Math.min(w, d);
-
-      // 40° pitch: peakH = half-width * tan(40°) ≈ 0.84 × half-width
-      const peakH = Math.max(1.0, (minDim / 2) * 0.84);
-      const apexY = totalH + peakH;
-
-      // Eave ring: push each corner outward by OVERHANG so it sits on the beam
-      const eaveX: number[] = [];
-      const eaveZ: number[] = [];
-      for (let i = 0; i < n; i++) {
-        const dx = raw[i][0] - cx;
-        const dz = raw[i][1] - cz;
-        const dist = Math.sqrt(dx * dx + dz * dz) || 1;
-        eaveX.push(raw[i][0] + (dx / dist) * EAVE_OVERHANG);
-        eaveZ.push(raw[i][1] + (dz / dist) * EAVE_OVERHANG);
+      // Ridge runs along the LONG axis at the midpoint of the short axis.
+      // R0 = one end of ridge, R1 = other end.
+      let r0x: number, r0z: number, r1x: number, r1z: number;
+      if (W >= D) {
+        // Ridge left-right along X
+        r0x = minX; r0z = (minZ + maxZ) / 2;
+        r1x = maxX; r1z = (minZ + maxZ) / 2;
+      } else {
+        // Ridge front-back along Z
+        r0x = (minX + maxX) / 2; r0z = minZ;
+        r1x = (minX + maxX) / 2; r1z = maxZ;
       }
+      const ridgeY = totalH + peakH;
 
-      // Vertices: n eave points + apex
-      const verts = new Float32Array((n + 1) * 3);
+      const n = raw.length;
+      const R0 = n, R1 = n + 1;
+
+      // All vertices: eave ring (wall tops) + two ridge endpoints
+      const verts = new Float32Array((n + 2) * 3);
       for (let i = 0; i < n; i++) {
-        verts[i * 3]     = eaveX[i];
-        verts[i * 3 + 1] = totalH;   // exactly wall-top Y, eave sits on beam
-        verts[i * 3 + 2] = eaveZ[i];
+        verts[i * 3]     = raw[i][0];
+        verts[i * 3 + 1] = totalH;     // flush with wall top
+        verts[i * 3 + 2] = raw[i][1];
       }
-      verts[n * 3]     = cx;
-      verts[n * 3 + 1] = apexY;
-      verts[n * 3 + 2] = cz;
+      verts[R0 * 3]     = r0x; verts[R0 * 3 + 1] = ridgeY; verts[R0 * 3 + 2] = r0z;
+      verts[R1 * 3]     = r1x; verts[R1 * 3 + 1] = ridgeY; verts[R1 * 3 + 2] = r1z;
 
-      // Fan: each eave edge → apex
+      // For each eave edge: connect to whichever ridge point(s) are appropriate.
+      // Distance of each vertex to R0 vs R1 determines which slope it belongs to.
+      const d2 = (ax: number, az: number, bx: number, bz: number) =>
+        (ax - bx) ** 2 + (az - bz) ** 2;
+
       const idx: number[] = [];
       for (let i = 0; i < n; i++) {
-        idx.push(i, (i + 1) % n, n);
+        const j = (i + 1) % n;
+        const nearR0_i = d2(raw[i][0], raw[i][1], r0x, r0z) <= d2(raw[i][0], raw[i][1], r1x, r1z);
+        const nearR0_j = d2(raw[j][0], raw[j][1], r0x, r0z) <= d2(raw[j][0], raw[j][1], r1x, r1z);
+
+        if (nearR0_i && nearR0_j) {
+          // Both on R0 side → triangle to R0
+          idx.push(i, j, R0);
+        } else if (!nearR0_i && !nearR0_j) {
+          // Both on R1 side → triangle to R1
+          idx.push(i, j, R1);
+        } else {
+          // Edge straddles the ridge — quad split into two triangles through both ridge pts
+          idx.push(i, j, R0);
+          idx.push(j, R1, R0);
+        }
       }
 
       const geo = new THREE.BufferGeometry();
@@ -1250,15 +1266,15 @@ function Scene() {
             return <>
               {meshes.map((m: any, i: number) => {
                 if (m.element_type === 'terrain')      return <TerrainMesh key={`t_${i}`} mesh={m} />;
-                if (m.element_type === 'floor_band')   return activeLayers['structure'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
+                if (m.element_type === 'floor_band')   return null; // hidden — overhangs render outside wall face
                 if (m.element_type === 'overlap')      return <OverlapMesh key={`ov_${i}`} mesh={m} />;
                 if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
-                if (m.element_type === 'roof')         return null; // replaced by HipRoofMesh below
+                if (m.element_type === 'roof')         return null; // replaced by GableRoofMesh below
                 if (m.element_type === 'parapet')      return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
                 return null;
               })}
               {hasHipRoof && activeLayers['roof'] && (
-                <HipRoofMesh
+                <GableRoofMesh
                   massing={massing}
                   levels={buildingModel.levels}
                   floorH={floorH}
