@@ -572,13 +572,79 @@ function DoorMesh({ mesh }: { mesh: any }) {
   );
 }
 
-// ── Roof mesh ──────────────────────────────────────────────────────────
+// ── RoofMesh — kept for parapet/mono-pitch backend meshes ─────────────
 function RoofMesh({ mesh }: { mesh: any }) {
   const geometry = useBufferGeo(mesh.vertices, mesh.faces);
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
       <PBRMaterial texName="roof_tiles" fallbackColor={mesh.color || '#374151'} roughness={0.85} metalness={0.05} />
+    </mesh>
+  );
+}
+
+// ── HipRoofMesh — built from the same footprint as MassingShell ────────
+// Eave ring = wall top ring (same pts, same totalH) → zero gap guaranteed.
+function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }: {
+  massing: any; levels: any[]; floorH: number;
+  texName: string; roughness: number; metalness: number;
+}) {
+  const footprint: [number, number][] = massing?.footprint || [];
+  if (footprint.length < 3) return null;
+  const totalH = levels.length * floorH;
+
+  const geometry = useMemo(() => {
+    try {
+      // Strip closing point if Shapely included it
+      const raw = footprint[footprint.length - 1][0] === footprint[0][0] &&
+                  footprint[footprint.length - 1][1] === footprint[0][1]
+        ? footprint.slice(0, -1) : footprint;
+      const n = raw.length;
+      if (n < 3) return null;
+
+      const xs = raw.map(p => p[0]);
+      const zs = raw.map(p => p[1]);
+      const minD = Math.min(
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...zs) - Math.min(...zs),
+      );
+      const peakH = Math.max(0.6, minD * 0.28);   // ~17° pitch, min 0.6m
+
+      // Apex at footprint centroid — always inside even for L/U shapes
+      const apexX = xs.reduce((a, b) => a + b, 0) / n;
+      const apexZ = zs.reduce((a, b) => a + b, 0) / n;
+      const apexY = totalH + peakH;
+
+      // Vertices: eave ring at EXACTLY totalH, then apex
+      const verts = new Float32Array((n + 1) * 3);
+      for (let i = 0; i < n; i++) {
+        verts[i * 3]     = raw[i][0];
+        verts[i * 3 + 1] = totalH;          // ← exactly matches MassingShell top
+        verts[i * 3 + 2] = raw[i][1];
+      }
+      verts[n * 3]     = apexX;
+      verts[n * 3 + 1] = apexY;
+      verts[n * 3 + 2] = apexZ;
+
+      // Fan triangles: each wall-top edge → apex
+      const idx: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        idx.push(i, j, n);   // CCW winding, apex = index n
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      return geo;
+    } catch { return null; }
+  }, [footprint, totalH]);
+
+  if (!geometry) return null;
+  return (
+    <mesh geometry={geometry} castShadow receiveShadow>
+      <PBRMaterial texName={texName} fallbackColor="#374151" roughness={roughness} metalness={metalness} />
     </mesh>
   );
 }
@@ -1160,16 +1226,35 @@ function Scene() {
             return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
           })}
 
-          {/* Massing meshes: terrain, footprint outline, overlap, roof */}
-          {(buildingModel.massing_options?.[buildingModel.chosen_massing_index]?.meshes || []).map((m: any, i: number) => {
-            if (m.element_type === 'terrain') return <TerrainMesh key={`t_${i}`} mesh={m} />;
-            if (m.element_type === 'floor_band') return activeLayers['structure'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
-            if (m.element_type === 'overlap') return <OverlapMesh key={`ov_${i}`} mesh={m} />;
-            if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
-            if (m.element_type === 'roof') return activeLayers['roof'] ? <RoofMesh key={`rf_${i}`} mesh={m} /> : null;
-            if (m.element_type === 'parapet') return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
-            return null;
-          })}
+          {/* Massing meshes: terrain, footprint outline, overlap, parapet */}
+          {(() => {
+            const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
+            const meshes: any[] = massing?.meshes || [];
+            // If backend generated a hip/gabled roof mesh, replace it with the
+            // frontend HipRoofMesh that's built from the same footprint — zero gap.
+            const hasHipRoof = meshes.some((m: any) => m.element_type === 'roof');
+            return <>
+              {meshes.map((m: any, i: number) => {
+                if (m.element_type === 'terrain')      return <TerrainMesh key={`t_${i}`} mesh={m} />;
+                if (m.element_type === 'floor_band')   return activeLayers['structure'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
+                if (m.element_type === 'overlap')      return <OverlapMesh key={`ov_${i}`} mesh={m} />;
+                if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
+                if (m.element_type === 'roof')         return null; // replaced by HipRoofMesh below
+                if (m.element_type === 'parapet')      return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
+                return null;
+              })}
+              {hasHipRoof && activeLayers['roof'] && (
+                <HipRoofMesh
+                  massing={massing}
+                  levels={buildingModel.levels}
+                  floorH={floorH}
+                  texName={texName}
+                  roughness={texRoughness}
+                  metalness={texMetalness}
+                />
+              )}
+            </>;
+          })()}
 
           {/* Facade details: windows, doors, parapet */}
           {(buildingModel.meshes || []).map((mesh: any, i: number) => {
