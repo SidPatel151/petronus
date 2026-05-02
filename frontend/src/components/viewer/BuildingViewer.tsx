@@ -34,10 +34,11 @@ function usePBRSet(name: string) {
 }
 
 // Procedural canvas texture fallback — always renders, never conditionally calls hooks
-function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0 }: {
+function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0, doubleSide = false }: {
   texName: string; fallbackColor: string;
   roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
   polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
+  doubleSide?: boolean;
 }) {
   const tex = useMemo(() => { try { return getTexture(texName); } catch { return null; } }, [texName]);
   return (
@@ -45,32 +46,36 @@ function ProceduralMaterial({ texName, fallbackColor, roughness = 0.9, metalness
       map={tex ?? undefined} color={tex ? '#ffffff' : fallbackColor}
       roughness={roughness} metalness={metalness}
       transparent={transparent} opacity={opacity}
+      side={doubleSide ? THREE.DoubleSide : THREE.FrontSide}
       polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits}
     />
   );
 }
 
 // Dispatcher — renders PBR inner if texture set exists, otherwise procedural
-function PBRMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0 }: {
+function PBRMaterial({ texName, fallbackColor, roughness = 0.9, metalness = 0.0, transparent = false, opacity = 1, polygonOffset = false, polygonOffsetFactor = 0, polygonOffsetUnits = 0, doubleSide = false }: {
   texName: string; fallbackColor: string;
   roughness?: number; metalness?: number; transparent?: boolean; opacity?: number;
   polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
+  doubleSide?: boolean;
 }) {
   if (PBR_SETS[texName]) {
-    return <PBRMaterialInner texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />;
+    return <PBRMaterialInner texName={texName} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} doubleSide={doubleSide} />;
   }
-  return <ProceduralMaterial texName={texName} fallbackColor={fallbackColor} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />;
+  return <ProceduralMaterial texName={texName} fallbackColor={fallbackColor} roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity} polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} doubleSide={doubleSide} />;
 }
 
 // Loads diff + optional roughness JPG — no EXR, always renders
-function PBRMaterialInner({ texName, roughness, metalness, transparent, opacity, polygonOffset, polygonOffsetFactor, polygonOffsetUnits }: {
+function PBRMaterialInner({ texName, roughness, metalness, transparent, opacity, polygonOffset, polygonOffsetFactor, polygonOffsetUnits, doubleSide = false }: {
   texName: string; roughness: number; metalness: number; transparent: boolean; opacity: number;
   polygonOffset?: boolean; polygonOffsetFactor?: number; polygonOffsetUnits?: number;
+  doubleSide?: boolean;
 }) {
   const { diff, rough } = usePBRSet(texName);
   return (
     <meshStandardMaterial map={diff} roughnessMap={rough ?? undefined}
       roughness={roughness} metalness={metalness} transparent={transparent} opacity={opacity}
+      side={doubleSide ? THREE.DoubleSide : THREE.FrontSide}
       polygonOffset={polygonOffset} polygonOffsetFactor={polygonOffsetFactor} polygonOffsetUnits={polygonOffsetUnits} />
   );
 }
@@ -674,7 +679,7 @@ function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness 
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <PBRMaterial texName={texName} fallbackColor="#374151" roughness={roughness} metalness={metalness} />
+      <PBRMaterial texName={texName} fallbackColor="#374151" roughness={roughness} metalness={metalness} doubleSide />
     </mesh>
   );
 }
@@ -694,8 +699,9 @@ function FacadeMesh({ mesh }: { mesh: any; floorH?: number }) {
   }, [mesh.vertices, mesh.faces]);
 
   if (!geometry) return null;
-  // Spandrel bands are opaque panels that cover the textured shell — skip them
+  // Elements that protrude outside the building — skip them
   if (mesh.element_type === 'spandrel_band') return null;
+  if (mesh.element_type === 'balcony' || mesh.element_type === 'balcony_rail') return null;
   const isWindow = mesh.element_type === 'window';
   const isBalcony = mesh.element_type === 'balcony';
   const isRail = mesh.element_type === 'balcony_rail';
@@ -1241,6 +1247,8 @@ function Scene() {
           }
           {/* MEP: pipes, ducts, conduit, fixtures — fire system on its own 'fire' layer */}
           {buildingModel.mep_elements.map((el: any) => {
+            // utility_lateral exits the building toward the power pole — hide it from 3D view
+            if (el.type === 'utility_lateral' || el.type === 'rooftop_unit') return null;
             const FIXTURE_TYPES = ['toilet','sink','shower','outlet','fire_alarm','sprinkler','exhaust_fan','kitchen_sink','range_hood'];
             const isFireFixture = ['sprinkler', 'fire_alarm'].includes(el.type);
             const isFixture = FIXTURE_TYPES.includes(el.type);

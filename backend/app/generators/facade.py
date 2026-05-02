@@ -118,7 +118,7 @@ class FacadeGenerator:
 
         # Brief overrides drive visual character to match neighbors
         window_ratio  = min(float(brief.get("window_ratio") or style.get("window_ratio", 0.35)), 0.55)
-        balcony_depth = float(brief.get("balcony_depth_m") or style.get("balcony_depth_m", 1.0))
+        balcony_depth = 0.0  # disabled — residential buildings don't get balconies
         bal_every_n   = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
         add_bands     = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
 
