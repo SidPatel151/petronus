@@ -448,17 +448,14 @@ class FloorplanGenerator:
                 try:
                     clipped = footprint.buffer(-0.05).intersection(unit_shape)
                 except Exception:
-                    clipped = unit_shape
+                    cursor_x += tmpl["w"]; unit_idx += 1; continue
                 if hasattr(clipped, 'geoms'):
                     clipped = max(clipped.geoms, key=lambda g: g.area)
-                if clipped.is_empty or clipped.area < 6.0:
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 6.0:
                     cursor_x += tmpl["w"]
                     unit_idx += 1
                     continue
-                if hasattr(clipped, 'exterior'):
-                    unit_poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                else:
-                    unit_poly = raw_poly
+                unit_poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
                 rooms.append(Room(
                     id=uid,
                     type="unit",
@@ -594,16 +591,13 @@ class FloorplanGenerator:
                 try:
                     clipped = footprint.buffer(-0.05).intersection(cell)
                 except Exception:
-                    clipped = cell
+                    x_cursor += rw; continue
                 if hasattr(clipped, 'geoms'):
                     clipped = max(clipped.geoms, key=lambda g: g.area)
-                if clipped.is_empty or clipped.area < 2.0:
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 2.0:
                     x_cursor += rw
                     continue
-                if hasattr(clipped, 'exterior'):
-                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                else:
-                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
                 room_id = f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}"
                 rooms.append(Room(
                     id=room_id, type=rdef["type"],
@@ -612,18 +606,29 @@ class FloorplanGenerator:
                     area_sqft=clipped.area * 10.764,
                 ))
                 if x_cursor > minx + 0.5:
-                    walls.append(Wall(
-                        id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                        start=[rx0, row_y0], end=[rx0, row_y1],
-                        height_ft=level.height_ft, level=lvl, is_exterior=False,
-                    ))
+                    wall_line = LineString([[rx0, row_y0], [rx0, row_y1]])
+                    try:
+                        clipped_wall = footprint.buffer(-0.02).intersection(wall_line)
+                        if not clipped_wall.is_empty and hasattr(clipped_wall, 'coords'):
+                            wc = list(clipped_wall.coords)
+                            walls.append(Wall(id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
+                                start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
+                                height_ft=level.height_ft, level=lvl, is_exterior=False))
+                    except Exception:
+                        pass
                 x_cursor += rw
             if row_y1 < maxy - 0.5:
-                walls.append(Wall(
-                    id=f"row_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                    start=[minx, row_y1], end=[maxx, row_y1],
-                    height_ft=level.height_ft, level=lvl, is_exterior=False,
-                ))
+                # Clip wall to actual footprint so it doesn't stick outside
+                wall_line = LineString([[minx, row_y1], [maxx, row_y1]])
+                try:
+                    clipped_wall = footprint.buffer(-0.02).intersection(wall_line)
+                    if not clipped_wall.is_empty and hasattr(clipped_wall, 'coords'):
+                        wc = list(clipped_wall.coords)
+                        walls.append(Wall(id=f"row_wall_{lvl}_{uuid.uuid4().hex[:5]}",
+                            start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
+                            height_ft=level.height_ft, level=lvl, is_exterior=False))
+                except Exception:
+                    pass
             y_cursor += row_d
 
         ext_walls = self._place_exterior_walls(footprint, level)

@@ -377,11 +377,11 @@ class MassingGenerator:
             roof_faces = []
             n_eave = len(eave_verts)
 
-            # Fan: each wall-top edge → apex
+            # Fan triangles from each wall-top edge to apex.
+            # Three.js DoubleSide handles back-face — no duplicate needed.
             for i in range(n_eave):
                 j = (i + 1) % n_eave
                 roof_faces.append([i, j, apex_idx])
-                roof_faces.append([apex_idx, j, i])  # back-face for double-sided
 
             meshes.append({
                 "element_id": f"{prefix}_roof",

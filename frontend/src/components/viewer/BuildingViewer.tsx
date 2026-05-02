@@ -132,12 +132,12 @@ function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
 
   if (!geometry) return null;
   const subRoomColors: Record<string,string> = {
-    bedroom: '#1a3a5c', living: '#1e3a4a', kitchen: '#2a3a2a',
-    bathroom: '#1a2a3a', dining: '#2a2a1a',
-    foyer: '#1e3050', office: '#1e2e1e', pantry: '#1a2e1a', mudroom: '#2e1a1a',
-    walk_in_closet: '#1a1a3a', family_room: '#1a3050', bonus_room: '#1a2e3a',
-    loft: '#203060', media_room: '#0a0a20', library: '#1a1a0e', gym: '#1a2e1a',
-    laundry: '#1a1a3a',
+    bedroom: '#2a5080', living: '#2e5468', kitchen: '#3a5038',
+    bathroom: '#2a4058', dining: '#484430',
+    foyer: '#2e4870', office: '#2e4230', pantry: '#2a4428', mudroom: '#48302a',
+    walk_in_closet: '#2a2a58', family_room: '#2a4868', bonus_room: '#2a4458',
+    loft: '#30487a', media_room: '#181830', library: '#2a2a18', gym: '#2a4228',
+    laundry: '#2a2a58',
   };
   const color = room.type === 'unit' ? matColor : subRoomColors[room.type] || COLORS[room.type] || '#1a2030';
   // Floor slabs sit 2cm above the structural slab so they're not z-fighting
@@ -1137,14 +1137,6 @@ function Scene() {
               </>
             );
           })()}
-          {/* Interior walls — show room partitions inside the shell */}
-          {activeLayers['architecture'] && buildingModel.walls
-            .filter((w: any) => !w.is_exterior)
-            .map((w: any) => (
-              <WallMesh key={w.id} wall={w} matColor={COLORS.wall_interior} texName="" roughness={0.88} metalness={0} floorH={floorH} />
-            ))
-          }
-
           {/* Structural members — backend output only; no generic pillar fallback for residential */}
           {activeLayers['structure'] && (buildingModel.structural_members || []).length > 0 &&
             (buildingModel.structural_members || []).map((m: any) => (
