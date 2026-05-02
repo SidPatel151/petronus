@@ -583,8 +583,11 @@ function RoofMesh({ mesh }: { mesh: any }) {
   );
 }
 
-// ── HipRoofMesh — built from the same footprint as MassingShell ────────
-// Eave ring = wall top ring (same pts, same totalH) → zero gap guaranteed.
+// ── HipRoofMesh ────────────────────────────────────────────────────────
+// Eave ring matches wall top exactly (totalH), pushed outward 0.22m to
+// sit on the floor-band beam. Steep 40° pitch for a clearly triangular look.
+const EAVE_OVERHANG = 0.22;  // matches BAND_OUT in massing.py
+
 function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }: {
   massing: any; levels: any[]; floorH: number;
   texName: string; roughness: number; metalness: number;
@@ -595,7 +598,6 @@ function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }:
 
   const geometry = useMemo(() => {
     try {
-      // Strip closing point if Shapely included it
       const raw = footprint[footprint.length - 1][0] === footprint[0][0] &&
                   footprint[footprint.length - 1][1] === footprint[0][1]
         ? footprint.slice(0, -1) : footprint;
@@ -604,33 +606,45 @@ function HipRoofMesh({ massing, levels, floorH, texName, roughness, metalness }:
 
       const xs = raw.map(p => p[0]);
       const zs = raw.map(p => p[1]);
-      const minD = Math.min(
-        Math.max(...xs) - Math.min(...xs),
-        Math.max(...zs) - Math.min(...zs),
-      );
-      const peakH = Math.max(0.6, minD * 0.28);   // ~17° pitch, min 0.6m
 
-      // Apex at footprint centroid — always inside even for L/U shapes
-      const apexX = xs.reduce((a, b) => a + b, 0) / n;
-      const apexZ = zs.reduce((a, b) => a + b, 0) / n;
+      // Centroid — apex is always inside for any polygon shape
+      const cx = xs.reduce((a, b) => a + b, 0) / n;
+      const cz = zs.reduce((a, b) => a + b, 0) / n;
+
+      const w = Math.max(...xs) - Math.min(...xs);
+      const d = Math.max(...zs) - Math.min(...zs);
+      const minDim = Math.min(w, d);
+
+      // 40° pitch: peakH = half-width * tan(40°) ≈ 0.84 × half-width
+      const peakH = Math.max(1.0, (minDim / 2) * 0.84);
       const apexY = totalH + peakH;
 
-      // Vertices: eave ring at EXACTLY totalH, then apex
+      // Eave ring: push each corner outward by OVERHANG so it sits on the beam
+      const eaveX: number[] = [];
+      const eaveZ: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const dx = raw[i][0] - cx;
+        const dz = raw[i][1] - cz;
+        const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+        eaveX.push(raw[i][0] + (dx / dist) * EAVE_OVERHANG);
+        eaveZ.push(raw[i][1] + (dz / dist) * EAVE_OVERHANG);
+      }
+
+      // Vertices: n eave points + apex
       const verts = new Float32Array((n + 1) * 3);
       for (let i = 0; i < n; i++) {
-        verts[i * 3]     = raw[i][0];
-        verts[i * 3 + 1] = totalH;          // ← exactly matches MassingShell top
-        verts[i * 3 + 2] = raw[i][1];
+        verts[i * 3]     = eaveX[i];
+        verts[i * 3 + 1] = totalH;   // exactly wall-top Y, eave sits on beam
+        verts[i * 3 + 2] = eaveZ[i];
       }
-      verts[n * 3]     = apexX;
+      verts[n * 3]     = cx;
       verts[n * 3 + 1] = apexY;
-      verts[n * 3 + 2] = apexZ;
+      verts[n * 3 + 2] = cz;
 
-      // Fan triangles: each wall-top edge → apex
+      // Fan: each eave edge → apex
       const idx: number[] = [];
       for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
-        idx.push(i, j, n);   // CCW winding, apex = index n
+        idx.push(i, (i + 1) % n, n);
       }
 
       const geo = new THREE.BufferGeometry();
