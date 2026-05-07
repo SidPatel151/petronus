@@ -10,40 +10,61 @@ Two modes:
 import uuid
 import math
 from typing import List, Tuple, Dict, Any, Optional
-from shapely.geometry import shape, Polygon, box, LineString
+from shapely.geometry import shape, Polygon, box, LineString, Point
 from shapely.ops import transform
 import pyproj
 
 from app.models.schemas import Room, Wall, ProjectSpec, Level
 from app.constants import BuildingUse, SFR_SQFT_RANGES, PRIORITY_SQFT_POSITION, sfr_target_sqft
 
-# ── Multi-family unit templates ───────────────────────────────────────────────
+# Interior inset from exterior wall face — one constant, used everywhere.
+# All rooms, walls, and MEP elements must have their CENTER inside fp.buffer(-FP_INSET).
+FP_INSET = 0.20
+
+# ── Multi-family unit templates (row-based: each row is a horizontal band,
+#    rooms within a row are placed side-by-side left→right) ─────────────────
 UNIT_TEMPLATES = {
     "studio": {
         "w": 6.0, "d": 8.0, "area_sqft": 480,
-        "rooms": [
-            {"type": "living",   "frac_w": 1.0, "frac_d": 0.55},
-            {"type": "kitchen",  "frac_w": 0.5, "frac_d": 0.25},
-            {"type": "bathroom", "frac_w": 0.5, "frac_d": 0.25},
+        "rows": [
+            {"frac_d": 0.55, "rooms": [
+                {"type": "living",  "frac_w": 1.0},
+            ]},
+            {"frac_d": 0.45, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.55},
+                {"type": "bathroom", "frac_w": 0.45},
+            ]},
         ]
     },
     "1br": {
         "w": 7.5, "d": 9.0, "area_sqft": 720,
-        "rooms": [
-            {"type": "living",   "frac_w": 1.0, "frac_d": 0.45},
-            {"type": "kitchen",  "frac_w": 0.5, "frac_d": 0.25},
-            {"type": "bathroom", "frac_w": 0.4, "frac_d": 0.30},
-            {"type": "bedroom",  "frac_w": 0.6, "frac_d": 0.30},
+        "rows": [
+            {"frac_d": 0.40, "rooms": [
+                {"type": "living",  "frac_w": 1.0},
+            ]},
+            {"frac_d": 0.25, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.55},
+                {"type": "bathroom", "frac_w": 0.45},
+            ]},
+            {"frac_d": 0.35, "rooms": [
+                {"type": "bedroom", "frac_w": 1.0},
+            ]},
         ]
     },
     "2br": {
         "w": 9.0, "d": 10.0, "area_sqft": 960,
-        "rooms": [
-            {"type": "living",   "frac_w": 1.0, "frac_d": 0.40},
-            {"type": "kitchen",  "frac_w": 0.5, "frac_d": 0.25},
-            {"type": "bathroom", "frac_w": 0.4, "frac_d": 0.20},
-            {"type": "bedroom",  "frac_w": 0.5, "frac_d": 0.35},
-            {"type": "bedroom",  "frac_w": 0.5, "frac_d": 0.35},
+        "rows": [
+            {"frac_d": 0.35, "rooms": [
+                {"type": "living",  "frac_w": 1.0},
+            ]},
+            {"frac_d": 0.25, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.50},
+                {"type": "bathroom", "frac_w": 0.50},
+            ]},
+            {"frac_d": 0.40, "rooms": [
+                {"type": "bedroom", "frac_w": 0.50},
+                {"type": "bedroom", "frac_w": 0.50},
+            ]},
         ]
     },
 }
@@ -393,12 +414,20 @@ class FloorplanGenerator:
 
         stair_x = minx + (w - STAIR_W_M) / 2
         stair_y = miny
-        stair_poly = [
+        raw_stair = Polygon([
             [stair_x, stair_y],
             [stair_x + STAIR_W_M, stair_y],
             [stair_x + STAIR_W_M, stair_y + STAIR_D_M],
             [stair_x, stair_y + STAIR_D_M],
-        ]
+        ])
+        fp_interior_mf = footprint.buffer(-FP_INSET)
+        try:
+            cs = fp_interior_mf.intersection(raw_stair)
+            if hasattr(cs, 'geoms'):
+                cs = max(cs.geoms, key=lambda g: g.area)
+            stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]] if (not cs.is_empty and hasattr(cs, 'exterior')) else [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
+        except Exception:
+            stair_poly = [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
         rooms.append(Room(
             id=f"stair_{lvl}",
             type="stair",
@@ -408,12 +437,19 @@ class FloorplanGenerator:
         ))
 
         corr_y = miny + STAIR_D_M
-        corridor_poly = [
+        raw_corr = Polygon([
             [minx, corr_y],
             [maxx, corr_y],
             [maxx, corr_y + CORRIDOR_WIDTH_M],
             [minx, corr_y + CORRIDOR_WIDTH_M],
-        ]
+        ])
+        try:
+            cc = fp_interior_mf.intersection(raw_corr)
+            if hasattr(cc, 'geoms'):
+                cc = max(cc.geoms, key=lambda g: g.area)
+            corridor_poly = [[c[0], c[1]] for c in list(cc.exterior.coords)[:-1]] if (not cc.is_empty and hasattr(cc, 'exterior')) else [[c[0], c[1]] for c in raw_corr.exterior.coords[:-1]]
+        except Exception:
+            corridor_poly = [[c[0], c[1]] for c in raw_corr.exterior.coords[:-1]]
         rooms.append(Room(
             id=f"corridor_{lvl}",
             type="corridor",
@@ -446,7 +482,7 @@ class FloorplanGenerator:
                 ]
                 unit_shape = Polygon(raw_poly)
                 try:
-                    clipped = footprint.buffer(-0.05).intersection(unit_shape)
+                    clipped = footprint.buffer(-FP_INSET).intersection(unit_shape)
                 except Exception:
                     cursor_x += tmpl["w"]; unit_idx += 1; continue
                 if hasattr(clipped, 'geoms'):
@@ -465,10 +501,13 @@ class FloorplanGenerator:
                     area_sqft=clipped.area * 10.764,
                 ))
 
-                sub_rooms = self._place_unit_rooms(uid, ux, uy, uw, ud, tmpl, lvl)
+                # Pass fp_interior so every sub-room is clipped to the actual
+                # footprint polygon — no room can extend outside the walls.
+                cb = clipped.bounds
+                sub_rooms = self._place_unit_rooms(uid, cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl, fp_interior=fp_interior_mf)
                 rooms.extend(sub_rooms)
 
-                wet_walls = self._place_wet_walls(ux, uy, uw, ud, tmpl, lvl)
+                wet_walls = self._place_wet_walls(cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl)
                 walls.extend(wet_walls)
 
                 cursor_x += uw
@@ -489,38 +528,85 @@ class FloorplanGenerator:
         mix["studio"] = 0
         return mix
 
-    def _place_unit_rooms(self, uid, ux, uy, uw, ud, tmpl, lvl) -> List[Room]:
+    def _place_unit_rooms(self, uid, ux, uy, uw, ud, tmpl, lvl, fp_interior=None) -> List[Room]:
+        """Place sub-rooms inside a unit using row-based layout.
+        Each row is a horizontal band; rooms within a row are side-by-side.
+        fp_interior: if provided, each room cell is intersected with the actual
+        footprint interior so rooms never extend outside the building walls."""
         rooms = []
         y_cursor = uy
-        for rdef in tmpl["rooms"]:
-            rw = uw * rdef["frac_w"]
-            rd = ud * rdef["frac_d"]
-            if y_cursor + rd > uy + ud + 0.01:
-                break
-            poly = [[ux, y_cursor], [ux + rw, y_cursor],
-                    [ux + rw, y_cursor + rd], [ux, y_cursor + rd]]
-            rooms.append(Room(
-                id=f"{uid}_{rdef['type']}_{uuid.uuid4().hex[:4]}",
-                type=rdef["type"],
-                unit_id=uid,
-                polygon=poly,
-                level=lvl,
-                area_sqft=rw * rd * 10.764,
-            ))
-            y_cursor += rd
+        for row in tmpl.get("rows", []):
+            row_d = ud * row["frac_d"]
+            x_cursor = ux
+            for rdef in row.get("rooms", []):
+                rw = uw * rdef["frac_w"]
+                cell = Polygon([
+                    [x_cursor,        y_cursor],
+                    [x_cursor + rw,   y_cursor],
+                    [x_cursor + rw,   y_cursor + row_d],
+                    [x_cursor,        y_cursor + row_d],
+                ])
+                if fp_interior is not None:
+                    try:
+                        clipped = fp_interior.intersection(cell)
+                        if hasattr(clipped, 'geoms'):
+                            clipped = max(clipped.geoms, key=lambda g: g.area)
+                        if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 1.0:
+                            x_cursor += rw
+                            continue
+                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                        area = clipped.area * 10.764
+                    except Exception:
+                        x_cursor += rw
+                        continue
+                else:
+                    poly = [[c[0], c[1]] for c in cell.exterior.coords[:-1]]
+                    area = rw * row_d * 10.764
+                rooms.append(Room(
+                    id=f"{uid}_{rdef['type']}_{uuid.uuid4().hex[:4]}",
+                    type=rdef["type"],
+                    unit_id=uid,
+                    polygon=poly,
+                    level=lvl,
+                    area_sqft=area,
+                ))
+                x_cursor += rw
+            y_cursor += row_d
         return rooms
 
     def _place_wet_walls(self, ux, uy, uw, ud, tmpl, lvl) -> List[Wall]:
+        """Walls between all rooms in a unit:
+        - Vertical walls between side-by-side rooms in the same row
+        - Horizontal walls at every row boundary (separating living/kitchen/bedroom rows)
+        The last row's bottom edge is the unit exterior — no wall there."""
         walls = []
-        wx = ux + uw * 0.6
-        walls.append(Wall(
-            id=f"wet_wall_{uuid.uuid4().hex[:6]}",
-            start=[wx, uy],
-            end=[wx, uy + ud * 0.5],
-            height_ft=9.0,
-            level=lvl,
-            is_exterior=False,
-        ))
+        y_cursor = uy
+        rows = tmpl.get("rows", [])
+        for row_i, row in enumerate(rows):
+            row_d = ud * row["frac_d"]
+            row_rooms = row.get("rooms", [])
+
+            # Vertical walls between side-by-side rooms in this row
+            x_cursor = ux
+            for rdef in row_rooms[:-1]:
+                x_cursor += uw * rdef["frac_w"]
+                walls.append(Wall(
+                    id=f"unit_vwall_{uuid.uuid4().hex[:6]}",
+                    start=[x_cursor, y_cursor],
+                    end=[x_cursor, y_cursor + row_d],
+                    height_ft=9.0, level=lvl, is_exterior=False,
+                ))
+
+            # Horizontal wall at the bottom of this row (between this row and the next)
+            if row_i < len(rows) - 1:
+                walls.append(Wall(
+                    id=f"unit_hwall_{uuid.uuid4().hex[:6]}",
+                    start=[ux,      y_cursor + row_d],
+                    end=[ux + uw,   y_cursor + row_d],
+                    height_ft=9.0, level=lvl, is_exterior=False,
+                ))
+
+            y_cursor += row_d
         return walls
 
     def _place_exterior_walls(self, footprint, level: Level) -> List[Wall]:
@@ -578,6 +664,9 @@ class FloorplanGenerator:
             total = sum(r["row_frac_d"] for r in row_program)
             row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
 
+        # One canonical interior boundary — everything must have its center inside this.
+        fp_interior = footprint.buffer(-FP_INSET)
+
         y_cursor = miny
         for row in row_program:
             row_d = d * row["row_frac_d"]
@@ -587,46 +676,44 @@ class FloorplanGenerator:
             for rdef in row["rooms"]:
                 rw = w * rdef["frac_w"]
                 rx0, rx1 = x_cursor, x_cursor + rw
-                cell = Polygon([[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]])
-                try:
-                    clipped = footprint.buffer(-0.05).intersection(cell)
-                except Exception:
-                    x_cursor += rw; continue
-                if hasattr(clipped, 'geoms'):
-                    clipped = max(clipped.geoms, key=lambda g: g.area)
-                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 2.0:
+                cell_cx = (rx0 + rx1) / 2
+                cell_cz = (row_y0 + row_y1) / 2
+                if not fp_interior.contains(Point(cell_cx, cell_cz)):
                     x_cursor += rw
                     continue
-                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                room_id = f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}"
+                # Cell center is inside — keep the room as a clean rectangle
+                poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
                 rooms.append(Room(
-                    id=room_id, type=rdef["type"],
+                    id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rdef["type"],
                     unit_id="house",
                     polygon=poly, level=lvl,
-                    area_sqft=clipped.area * 10.764,
+                    area_sqft=rw * row_d * 10.764,
                 ))
                 if x_cursor > minx + 0.5:
-                    wall_line = LineString([[rx0, row_y0], [rx0, row_y1]])
-                    try:
-                        clipped_wall = footprint.buffer(-0.02).intersection(wall_line)
-                        if not clipped_wall.is_empty and hasattr(clipped_wall, 'coords'):
-                            wc = list(clipped_wall.coords)
-                            walls.append(Wall(id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                                start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
-                                height_ft=level.height_ft, level=lvl, is_exterior=False))
-                    except Exception:
-                        pass
+                    # Interior column wall — only place if both endpoints are inside
+                    if fp_interior.contains(Point(rx0, (row_y0 + row_y1) / 2)):
+                        walls.append(Wall(
+                            id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
+                            start=[rx0, row_y0], end=[rx0, row_y1],
+                            height_ft=level.height_ft, level=lvl, is_exterior=False,
+                        ))
                 x_cursor += rw
             if row_y1 < maxy - 0.5:
-                # Clip wall to actual footprint so it doesn't stick outside
+                # Interior row wall — clip to footprint to avoid overrun in L/U shapes
                 wall_line = LineString([[minx, row_y1], [maxx, row_y1]])
                 try:
-                    clipped_wall = footprint.buffer(-0.02).intersection(wall_line)
-                    if not clipped_wall.is_empty and hasattr(clipped_wall, 'coords'):
-                        wc = list(clipped_wall.coords)
-                        walls.append(Wall(id=f"row_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                            start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
-                            height_ft=level.height_ft, level=lvl, is_exterior=False))
+                    clipped_wall = fp_interior.intersection(wall_line)
+                    segs = [clipped_wall] if hasattr(clipped_wall, 'coords') else (list(clipped_wall.geoms) if hasattr(clipped_wall, 'geoms') else [])
+                    for seg in segs:
+                        if hasattr(seg, 'coords'):
+                            wc = list(seg.coords)
+                            if len(wc) >= 2:
+                                walls.append(Wall(
+                                    id=f"row_wall_{lvl}_{uuid.uuid4().hex[:5]}",
+                                    start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
+                                    height_ft=level.height_ft, level=lvl, is_exterior=False,
+                                ))
                 except Exception:
                     pass
             y_cursor += row_d

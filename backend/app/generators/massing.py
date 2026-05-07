@@ -291,97 +291,56 @@ class MassingGenerator:
             "level": 0, "color": color,
         })
 
-        # ── Floor bands — one per floor level ──
-        BAND_H = 0.18   # band thickness
-        BAND_OUT = 0.22  # overhang past wall face
-
-        for floor_i in range(stories):
-            band_y = floor_i * floor_height_m
-            verts_b = []
-            faces_b = []
-
-            # Inner ring (at wall face), outer ring (overhang)
-            for x, z in coords:
-                gy = self._ground_y(x, z, grad_x, grad_z)
-                verts_b.append([x, gy + band_y, z])            # inner bottom
-            for x, z in coords:
-                gy = self._ground_y(x, z, grad_x, grad_z)
-                verts_b.append([x, gy + band_y + BAND_H, z])   # inner top
-
-            # Outer ring: push each point outward by BAND_OUT
-            cx_f = sum(x for x, z in coords) / n
-            cz_f = sum(z for x, z in coords) / n
-            for x, z in coords:
-                dx = x - cx_f
-                dz = z - cz_f
-                dist = math.sqrt(dx*dx + dz*dz) or 1
-                ox = x + dx/dist * BAND_OUT
-                oz = z + dz/dist * BAND_OUT
-                gy = self._ground_y(ox, oz, grad_x, grad_z)
-                verts_b.append([ox, gy + band_y, oz])           # outer bottom
-            for x, z in coords:
-                dx = x - cx_f
-                dz = z - cz_f
-                dist = math.sqrt(dx*dx + dz*dz) or 1
-                ox = x + dx/dist * BAND_OUT
-                oz = z + dz/dist * BAND_OUT
-                gy = self._ground_y(ox, oz, grad_x, grad_z)
-                verts_b.append([ox, gy + band_y + BAND_H, oz])  # outer top
-
-            # inner_bot=0..n-1, inner_top=n..2n-1, outer_bot=2n..3n-1, outer_top=3n..4n-1
-            nb = n
-            for i in range(nb):
-                j = (i + 1) % nb
-                # Outer face (front-facing)
-                faces_b.append([2*nb+i, 2*nb+j, 3*nb+j])
-                faces_b.append([2*nb+i, 3*nb+j, 3*nb+i])
-                # Top face
-                faces_b.append([nb+i, 3*nb+i, 3*nb+j])
-                faces_b.append([nb+i, 3*nb+j, nb+j])
-                # Bottom face
-                faces_b.append([i, j, 2*nb+j])
-                faces_b.append([i, 2*nb+j, 2*nb+i])
-
-            meshes.append({
-                "element_id": f"{prefix}_band_{floor_i}",
-                "element_type": "floor_band",
-                "vertices": verts_b, "faces": faces_b,
-                "level": floor_i, "color": "#c0c8d8",
-            })
-
         # ── Roof — three distinct forms per style ──
         roof_height_rel = stories * floor_height_m
         is_gabled   = 'classic' in style or 'gabled' in style
         is_sculpted = 'sculpted' in style
 
         if is_gabled:
-            # ── True hip/pyramid roof — works for any polygon shape ──
-            # Single apex above footprint centroid, fan triangles to every eave edge.
+            # ── Gabled roof with ridge line — two slopes, triangular gable ends ──
             b = footprint.bounds
             bw = b[2] - b[0]
             bd = b[3] - b[1]
-            peak_height = min(bw, bd) * 0.30   # ~17° pitch
+            peak_height = min(bw, bd) * 0.32   # ~18° pitch
+            cx_b = (b[0] + b[2]) / 2
+            cz_b = (b[1] + b[3]) / 2
 
-            # Use representative_point so apex is always inside concave shapes (L, U)
-            rep = footprint.representative_point()
-            apex_x, apex_z = rep.x, rep.y
-            apex_y = self._ground_y(apex_x, apex_z, grad_x, grad_z) + roof_height_rel + peak_height
+            # Ridge runs along the LONG axis — same logic as the old frontend GableRoofMesh
+            # but done here in the backend so it uses the real footprint coordinates.
+            if bw >= bd:
+                r0 = [b[0], self._ground_y(b[0], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
+                r1 = [b[2], self._ground_y(b[2], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
+            else:
+                r0 = [cx_b, self._ground_y(cx_b, b[1], grad_x, grad_z) + roof_height_rel + peak_height, b[1]]
+                r1 = [cx_b, self._ground_y(cx_b, b[3], grad_x, grad_z) + roof_height_rel + peak_height, b[3]]
 
             eave_verts = []
             for x, z in coords:
                 gy = self._ground_y(x, z, grad_x, grad_z)
                 eave_verts.append([x, gy + roof_height_rel, z])
 
-            apex_idx = len(eave_verts)
-            roof_verts = eave_verts + [[apex_x, apex_y, apex_z]]
-            roof_faces = []
             n_eave = len(eave_verts)
+            R0, R1 = n_eave, n_eave + 1
+            roof_verts = eave_verts + [r0, r1]
+            roof_faces = []
 
-            # Fan triangles from each wall-top edge to apex.
-            # Three.js DoubleSide handles back-face — no duplicate needed.
             for i in range(n_eave):
                 j = (i + 1) % n_eave
-                roof_faces.append([i, j, apex_idx])
+                ev_i, ev_j = eave_verts[i], eave_verts[j]
+                d0i = (ev_i[0]-r0[0])**2 + (ev_i[2]-r0[2])**2
+                d1i = (ev_i[0]-r1[0])**2 + (ev_i[2]-r1[2])**2
+                d0j = (ev_j[0]-r0[0])**2 + (ev_j[2]-r0[2])**2
+                d1j = (ev_j[0]-r1[0])**2 + (ev_j[2]-r1[2])**2
+                near0_i = d0i <= d1i
+                near0_j = d0j <= d1j
+                if near0_i and near0_j:
+                    roof_faces.extend([[i, j, R0], [R0, j, i]])
+                elif not near0_i and not near0_j:
+                    roof_faces.extend([[i, j, R1], [R1, j, i]])
+                else:
+                    Ri = R0 if near0_i else R1
+                    Rj = R0 if near0_j else R1
+                    roof_faces.extend([[i, j, Ri], [Ri, j, i], [j, Rj, Ri], [Ri, Rj, j]])
 
             meshes.append({
                 "element_id": f"{prefix}_roof",
@@ -426,29 +385,28 @@ class MassingGenerator:
 
         else:
             # ── Flat roof with parapet walls (modern_linear) ──
-            PARAPET_H = 0.7   # parapet height above roof deck
+            PARAPET_H = 0.7
+            DECK_LIFT = 0.02  # sit 2cm above MassingShell top to eliminate z-fighting
 
-            # Roof deck (flat slab, 20cm thick — sits atop wall plate)
+            # Flat deck top face — fan from centroid so it works for any polygon shape
+            deck_top_y = roof_height_rel + DECK_LIFT + 0.16
             deck_verts = []
             deck_faces = []
             for x, z in coords:
                 gy = self._ground_y(x, z, grad_x, grad_z)
-                deck_verts.append([x, gy + roof_height_rel, z])       # deck bottom
+                deck_verts.append([x, gy + roof_height_rel + DECK_LIFT, z])  # bottom
             for x, z in coords:
                 gy = self._ground_y(x, z, grad_x, grad_z)
-                deck_verts.append([x, gy + roof_height_rel + 0.18, z]) # deck top
-            # Top face (fan from centroid)
+                deck_verts.append([x, gy + deck_top_y, z])                   # top
             dcx = sum(v[0] for v in deck_verts[n:]) / n
             dcy = sum(v[1] for v in deck_verts[n:]) / n
             dcz = sum(v[2] for v in deck_verts[n:]) / n
-            ci = len(deck_verts)
+            ci_d = len(deck_verts)
             deck_verts.append([dcx, dcy, dcz])
             for i in range(n):
                 j = (i + 1) % n
-                deck_faces.append([n+i, ci, n+j])   # top
-                deck_faces.append([ci, n+j, n+i])
-                deck_faces.append([i, j, n+j])       # side
-                deck_faces.append([i, n+j, n+i])
+                deck_faces.append([n+i, ci_d, n+j])
+                deck_faces.append([ci_d, n+j, n+i])
             meshes.append({
                 "element_id": f"{prefix}_roof",
                 "element_type": "roof",
@@ -456,10 +414,9 @@ class MassingGenerator:
                 "level": stories - 1, "color": "#374151",
             })
 
-            # Parapet walls around perimeter
             par_verts = []
             par_faces = []
-            par_base_y = roof_height_rel + 0.18
+            par_base_y = deck_top_y
             par_top_y  = par_base_y + PARAPET_H
             for x, z in coords:
                 gy = self._ground_y(x, z, grad_x, grad_z)

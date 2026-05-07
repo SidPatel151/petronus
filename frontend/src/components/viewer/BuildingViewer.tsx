@@ -87,7 +87,7 @@ const COLORS: Record<string, string> = {
   walk_in_closet: '#1a1a2a', family_room: '#1e3040', bonus_room: '#1a2a3a',
   loft: '#1e3050', media_room: '#0a0a1a', library: '#1a1a0a', gym: '#1a2a1a',
   laundry: '#1a1a2a', dining: '#2a2a1a',
-  wall_exterior: '#334155', wall_interior: '#1e293b', wall_shear: '#7c3aed',
+  wall_exterior: '#334155', wall_interior: '#94a3b8', wall_shear: '#7c3aed',
   plumbing: '#3b82f6', electrical: '#f59e0b', hvac: '#10b981', fire: '#ef4444',
   fixture: '#60a5fa', panel: '#fbbf24', mini_split_head: '#34d399',
   issue_error: '#ef4444', issue_warning: '#f59e0b',
@@ -281,11 +281,11 @@ function StructuralMemberMesh({ member }: { member: any }) {
   }
 
   if (type === 'footing' || type === 'grade_beam') {
-    // Flat box — footing is wider than the column above it
-    const footW = type === 'footing' ? size * 3.5 : size * 1.5;
+    // size_m for footings IS the footing width (backend already sets it correctly)
+    // grade beams: same — use size directly, no extra multiplier
     return (
       <mesh position={[cx, cy, cz]} castShadow receiveShadow>
-        <boxGeometry args={[footW, length, footW]} />
+        <boxGeometry args={[size, length, size]} />
         <meshStandardMaterial color={color} roughness={0.9} metalness={0.0} transparent opacity={0.8} />
       </mesh>
     );
@@ -577,21 +577,23 @@ function DoorMesh({ mesh }: { mesh: any }) {
   );
 }
 
-// ── RoofMesh — kept for parapet/mono-pitch backend meshes ─────────────
+// ── RoofMesh — renders hip/shed roofs (roof_tiles) and parapet walls (solid color) ──
 function RoofMesh({ mesh }: { mesh: any }) {
   const geometry = useBufferGeo(mesh.vertices, mesh.faces);
   if (!geometry) return null;
+  const isParapet = mesh.element_type === 'parapet';
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <PBRMaterial texName="roof_tiles" fallbackColor={mesh.color || '#374151'} roughness={0.85} metalness={0.05} />
+      {isParapet
+        ? <meshStandardMaterial color={mesh.color || '#475569'} roughness={0.9} metalness={0.0} side={THREE.DoubleSide} />
+        : <PBRMaterial texName="roof_tiles" fallbackColor={mesh.color || '#374151'} roughness={0.85} metalness={0.05} doubleSide />
+      }
     </mesh>
   );
 }
 
-// ── GableRoofMesh ──────────────────────────────────────────────────────
-// Real house roof: ridge along the long axis, two sloped rectangular faces,
-// two triangular gable ends. Eave Y = totalH (flush with wall tops).
-function GableRoofMesh({ massing, levels, floorH, texName, roughness, metalness }: {
+// ── GableRoofMesh (unused — backend hip roof mesh renders directly via RoofMesh) ──
+function _GableRoofMesh_unused({ massing, levels, floorH, texName, roughness, metalness }: {
   massing: any; levels: any[]; floorH: number;
   texName: string; roughness: number; metalness: number;
 }) {
@@ -786,8 +788,8 @@ function TerrainMesh({ mesh }: { mesh: any }) {
   );
 }
 
-// ── Floor band mesh (visible floor plates) ─────────────────────────────
-function FloorBandMesh({ mesh }: { mesh: any }) {
+// ── Floor band mesh (unused — bands removed from backend) ──────────────
+function _FloorBandMesh_unused({ mesh }: { mesh: any }) {
   const geometry = useBufferGeo(mesh.vertices, mesh.faces);
   if (!geometry) return null;
   return (
@@ -1244,35 +1246,44 @@ function Scene() {
       {/* Generated building */}
       {buildingModel && (
         <>
-          {/* ── Solid exterior shell ── */}
-          {activeLayers['architecture'] && (() => {
+          {/* ── Exterior shell + interior walls (architecture layer) ── */}
+          {(() => {
             const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
             return (
               <>
-                <MassingShell
-                  massing={massing}
-                  levels={buildingModel.levels}
-                  floorH={floorH}
-                  texName={texName}
-                  roughness={texRoughness}
-                  metalness={texMetalness}
-                />
-                {/* Floor slabs at each level boundary */}
-                {buildingModel.levels.map((_: any, i: number) => (
-                  <FloorSlab key={`slab_${i}`} massing={massing} levelIdx={i} floorH={floorH} />
-                ))}
-                {/* Room floors — thin colored slabs showing room layout */}
-                {buildingModel.rooms
-                  .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
-                  .map((r: any, i: number) => (
-                    <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
-                  ))}
-                {/* Interior partition walls */}
-                {(buildingModel.walls || [])
-                  .filter((w: any) => !w.is_exterior)
-                  .map((w: any, i: number) => (
-                    <WallMesh key={`iw_${i}`} wall={w} matColor={COLORS.wall_interior} floorH={floorH} />
-                  ))}
+                {activeLayers['architecture'] && (
+                  <MassingShell
+                    massing={massing}
+                    levels={buildingModel.levels}
+                    floorH={floorH}
+                    texName={texName}
+                    roughness={texRoughness}
+                    metalness={texMetalness}
+                  />
+                )}
+                {/* Interior partition walls — visible whenever architecture OR floors is on */}
+                {(activeLayers['architecture'] || activeLayers['floors']) &&
+                  (buildingModel.walls || [])
+                    .filter((w: any) => !w.is_exterior)
+                    .map((w: any, i: number) => (
+                      <WallMesh key={`iw_${i}`} wall={w} matColor={COLORS.wall_interior} floorH={floorH} roughness={0.8} metalness={0.0} />
+                    ))
+                }
+                {/* Facade: windows + doors (architecture only) */}
+
+                {/* ── Floor slabs + room layout (floors layer) ── */}
+                {activeLayers['floors'] && (
+                  <>
+                    {buildingModel.levels.map((_: any, i: number) => (
+                      <FloorSlab key={`slab_${i}`} massing={massing} levelIdx={i} floorH={floorH} />
+                    ))}
+                    {buildingModel.rooms
+                      .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
+                      .map((r: any, i: number) => (
+                        <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
+                      ))}
+                  </>
+                )}
               </>
             );
           })()}
@@ -1301,33 +1312,20 @@ function Scene() {
             return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
           })}
 
-          {/* Massing meshes: terrain, footprint outline, overlap, parapet */}
+          {/* Massing meshes: terrain, footprint outline, overlap, roof, parapet */}
           {(() => {
             const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
             const meshes: any[] = massing?.meshes || [];
-            // If backend generated a hip/gabled roof mesh, replace it with the
-            // frontend HipRoofMesh that's built from the same footprint — zero gap.
-            const hasHipRoof = meshes.some((m: any) => m.element_type === 'roof');
             return <>
               {meshes.map((m: any, i: number) => {
                 if (m.element_type === 'terrain')      return <TerrainMesh key={`t_${i}`} mesh={m} />;
-                if (m.element_type === 'floor_band')   return null; // hidden — overhangs render outside wall face
+                if (m.element_type === 'floor_band')   return null;
                 if (m.element_type === 'overlap')      return <OverlapMesh key={`ov_${i}`} mesh={m} />;
                 if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
-                if (m.element_type === 'roof')         return null; // replaced by GableRoofMesh below
+                if (m.element_type === 'roof')         return activeLayers['roof'] ? <RoofMesh key={`r_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'parapet')      return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
                 return null;
               })}
-              {hasHipRoof && activeLayers['roof'] && (
-                <GableRoofMesh
-                  massing={massing}
-                  levels={buildingModel.levels}
-                  floorH={floorH}
-                  texName={texName}
-                  roughness={texRoughness}
-                  metalness={texMetalness}
-                />
-              )}
             </>;
           })()}
 
@@ -1383,6 +1381,7 @@ function Scene() {
 const LAYER_GROUPS: { group: string; layers: { key: LayerKey; label: string; color: string }[] }[] = [
   { group: 'Building', layers: [
     { key: 'architecture', label: 'Walls & Windows', color: '#94a3b8' },
+    { key: 'floors',       label: 'Floors & Rooms', color: '#c8d0dc' },
     { key: 'roof',         label: 'Roof', color: '#475569' },
     { key: 'structure',    label: 'Structure (cols/beams)', color: '#a855f7' },
   ]},

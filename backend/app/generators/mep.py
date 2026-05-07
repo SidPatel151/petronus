@@ -68,7 +68,9 @@ DRAIN_PIPE_SIZES = [
 # ── Duct sizing by CFM (ASHRAE Manual D, simplified) ─────────────────────
 # CFM per room type per 100 sqft (approximate for residential)
 CFM_PER_100SQFT = {
-    "bedroom": 25, "living": 30, "kitchen": 40, "bathroom": 50,
+    "bedroom": 25, "living": 30, ""
+    ""
+    "": 40, "bathroom": 50,
     "dining": 20, "corridor": 15, "stair": 10,
 }
 
@@ -121,13 +123,36 @@ class MEPRouter:
         # bathrooms: None / whole number = full baths, x.5 = includes a half bath
         bath_count = getattr(spec, 'bathrooms', None)
 
+        # Rebuild footprint polygon from level-0 exterior walls.
+        # Use it to filter rooms BEFORE routing — any room whose centroid is
+        # outside the actual polygon (e.g. in the void of an L/U shape) is excluded,
+        # which prevents MEP from routing to coordinates that are outside the building.
+        from shapely.geometry import Polygon as _ShpPoly, Point as _ShpPoint
+        ext_walls_l0 = [w for w in walls if getattr(w, 'is_exterior', False) and w.level == 0]
+        fp_poly = None
+        if ext_walls_l0:
+            try:
+                fp_pts = [w.start for w in ext_walls_l0]
+                fp_poly = _ShpPoly(fp_pts)
+            except Exception:
+                pass
+
+        if fp_poly is not None:
+            fp_interior = fp_poly.buffer(-0.20)
+            rooms_inside = [
+                r for r in rooms
+                if fp_interior.contains(_ShpPoint(*self._centroid(r)))
+            ]
+            print(f"MEP: {len(rooms)} total rooms → {len(rooms_inside)} inside footprint")
+        else:
+            rooms_inside = rooms
+
         elements = []
-        # Route in priority order so later systems avoid earlier ones
-        elements.extend(self._route_fire_protection(rooms, levels, floor_h, fine))
-        elements.extend(self._route_plumbing(rooms, walls, levels, floor_h, bath_count))
-        elements.extend(self._route_hvac(rooms, levels, spec.hvac_preference, floor_h))
-        elements.extend(self._route_electrical(rooms, levels, floor_h, power_connection, fine))
-        elements.extend(self._place_furniture(rooms, levels, floor_h))
+        elements.extend(self._route_fire_protection(rooms_inside, levels, floor_h, fine))
+        elements.extend(self._route_plumbing(rooms_inside, walls, levels, floor_h, bath_count))
+        elements.extend(self._route_hvac(rooms_inside, levels, spec.hvac_preference, floor_h))
+        elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine))
+        elements.extend(self._place_furniture(rooms_inside, levels, floor_h))
 
         return elements
 
@@ -183,81 +208,47 @@ class MEPRouter:
         if not do_sprinklers:
             return elements
 
-        # ── Per-floor sprinkler heads and branch lines ──
+        # ── Per-floor sprinkler heads — route directly from riser to each room ──
+        # No horizontal trunk across the full building (would cross L/U voids).
+        # Each branch drops straight from the riser at ceiling height to the head.
         for level in levels:
             lvl = level.index
             ceil_y = lvl * floor_h + ZONE["ceil_fire"]
 
             lvl_rooms = [r for r in rooms if r.level == lvl
                          and r.type not in ("stair", "corridor")]
-
-            all_lvl_pts = [p for r in lvl_rooms for p in r.polygon]
-            if not all_lvl_pts:
+            if not lvl_rooms:
                 continue
 
-            min_x = min(p[0] for p in all_lvl_pts)
-            max_x = max(p[0] for p in all_lvl_pts)
-            # Use area-weighted centroid Z so the trunk stays inside L/U shapes
-            _, mid_z = self._building_centroid(lvl_rooms) if lvl_rooms else (0.0, 0.0)
-
-            # Branch main along X axis
-            branch_main_id = f"fire_branch_main_{lvl}"
-            elements.append(MEPElement(
-                id=branch_main_id,
-                system="fire",
-                type="fire_branch_main",
-                start=[min_x, ceil_y, mid_z],
-                end=[max_x, ceil_y, mid_z],
-                level=lvl,
-                diameter_in=self._fire_pipe_size(len(lvl_rooms) * 2),
-            ))
-
-            # Sprinkler heads per room (spaced to meet NFPA 13R coverage)
+            # Sprinkler heads per room — route from riser position
             for room in lvl_rooms:
                 if not do_sprinklers:
                     break
-                bds = self._bounds(room)
-                room_area_m2 = (bds[2]-bds[0]) * (bds[3]-bds[1])
-                room_area_m2 = max(room_area_m2, 1.0)
-                heads_needed = max(1, math.ceil(room_area_m2 / SPRINKLER_COVERAGE_M2))
-
                 cx, cz = self._centroid(room)
-                head_y = lvl * floor_h + ZONE["ceil_fire"] + 0.05   # slightly above branch
+                head_y = ceil_y + 0.05
 
-                if heads_needed == 1:
-                    positions = [(cx, cz)]
-                else:
-                    # Distribute heads in a grid within the room
-                    rows = max(1, math.ceil(math.sqrt(heads_needed)))
-                    cols = math.ceil(heads_needed / rows)
-                    positions = []
-                    for r in range(rows):
-                        for c in range(cols):
-                            if len(positions) >= heads_needed:
-                                break
-                            hx = bds[0] + (bds[2]-bds[0]) * (c+0.5) / cols
-                            hz = bds[1] + (bds[3]-bds[1]) * (r+0.5) / rows
-                            positions.append((hx, hz))
+                positions = [(cx, cz)]
 
-                for pos_i, (hx, hz) in enumerate(positions):
-                    head_id = f"sprinkler_{uuid.uuid4().hex[:6]}"
+                # Large rooms get an extra head
+                bds = self._bounds(room)
+                room_area_m2 = max((bds[2]-bds[0]) * (bds[3]-bds[1]), 1.0)
+                if room_area_m2 > SPRINKLER_COVERAGE_M2:
+                    positions.append(((bds[0]+cx)/2, (bds[1]+cz)/2))
+
+                for (hx, hz) in positions:
                     elements.append(MEPElement(
-                        id=head_id,
-                        system="fire",
-                        type="sprinkler",
+                        id=f"sprinkler_{uuid.uuid4().hex[:6]}",
+                        system="fire", type="sprinkler",
                         start=[hx, head_y, hz],
-                        level=lvl,
-                        diameter_in=0.5,
+                        level=lvl, diameter_in=0.5,
                     ))
-                    # Drop from branch main to head
+                    # Vertical drop from riser at ceiling down to head
                     elements.append(MEPElement(
                         id=f"fire_drop_{uuid.uuid4().hex[:5]}",
-                        system="fire",
-                        type="fire_branch_drop",
-                        start=[hx, ceil_y, mid_z],
+                        system="fire", type="fire_branch_drop",
+                        start=[rx, ceil_y, rz],
                         end=[hx, head_y, hz],
-                        level=lvl,
-                        diameter_in=0.75,
+                        level=lvl, diameter_in=0.75,
                     ))
 
         return elements
@@ -557,42 +548,16 @@ class MEPRouter:
             ceil_y = lvl * floor_h + ZONE["duct_supply"]
             ret_y  = lvl * floor_h + ZONE["duct_return"]
 
-            # Vertical shaft from roof to each floor
+            # Vertical riser from this floor up to RTU on roof
             elements.append(MEPElement(
                 id=f"hvac_riser_{lvl}",
-                system="hvac",
-                type="supply_riser",
-                start=[bld_cx, (lvl) * floor_h + 0.1, bld_cz],
+                system="hvac", type="supply_riser",
+                start=[bld_cx, lvl * floor_h + 0.1, bld_cz],
                 end=[bld_cx, roof_y, bld_cz],
-                level=lvl,
-                diameter_in=16,
+                level=lvl, diameter_in=16,
             ))
 
-            # Main supply trunk along long axis
-            elements.append(MEPElement(
-                id=f"hvac_trunk_{lvl}",
-                system="hvac",
-                type="supply_trunk",
-                start=[min_x + 0.3, ceil_y, bld_cz],
-                end=[max_x - 0.3, ceil_y, bld_cz],
-                level=lvl,
-                width_in=18,
-                height_in=10,
-            ))
-
-            # Return air plenum trunk
-            elements.append(MEPElement(
-                id=f"hvac_return_{lvl}",
-                system="hvac",
-                type="return_trunk",
-                start=[min_x + 0.3, ret_y, bld_cz + 0.3],
-                end=[max_x - 0.3, ret_y, bld_cz + 0.3],
-                level=lvl,
-                width_in=20,
-                height_in=8,
-            ))
-
-            # Branch ducts to each room
+            # Direct branch from riser to each room centroid — no spanning trunk
             for room in rooms:
                 if room.level != lvl or room.type in ("stair",):
                     continue
@@ -604,23 +569,16 @@ class MEPRouter:
 
                 elements.append(MEPElement(
                     id=f"hvac_branch_{uuid.uuid4().hex[:5]}",
-                    system="hvac",
-                    type="supply_branch",
-                    start=[cx, ceil_y, bld_cz],
+                    system="hvac", type="supply_branch",
+                    start=[bld_cx, ceil_y, bld_cz],
                     end=[cx, ceil_y, cz],
-                    level=lvl,
-                    width_in=bw,
-                    height_in=bh,
+                    level=lvl, width_in=bw, height_in=bh,
                 ))
-                # Supply diffuser
                 elements.append(MEPElement(
                     id=f"diffuser_{uuid.uuid4().hex[:5]}",
-                    system="hvac",
-                    type="supply_diffuser",
+                    system="hvac", type="supply_diffuser",
                     start=[cx, lvl * floor_h + ZONE["ceil_light"] - 0.05, cz],
-                    level=lvl,
-                    width_in=bw,
-                    height_in=4,
+                    level=lvl, width_in=bw, height_in=4,
                 ))
 
         return elements
@@ -637,7 +595,7 @@ class MEPRouter:
     # ════════════════════════════════════════════════════════════════════════
 
     def _route_electrical(
-        self, rooms: List[Room], levels: List[Level],
+        self, rooms: List[Room], walls: List[Wall], levels: List[Level],
         floor_h: float, power_connection: dict, fine: dict
     ) -> List[MEPElement]:
         """
@@ -813,49 +771,75 @@ class MEPRouter:
                         level=lvl,
                     ))
 
-                # Outlets on walls (NEC 210.52: ≤6ft spacing)
-                # Average 3/room for typical rooms, more only for large spaces
-                pts = room.polygon
-                if outlets_per_room > 0 and len(pts) >= 2:
-                    n_pts = len(pts)
-                    rcx = sum(p[0] for p in pts) / n_pts
-                    rcz = sum(p[1] for p in pts) / n_pts
-                    # 3 outlets for rooms ≤150 sqft, +1 per additional 60 sqft, max 6
+                # Outlets placed on wall segments that bound this room.
+                # Match room edges to actual wall segments (interior or exterior).
+                # A wall "bounds" this room if its midpoint is within 0.5m of a room edge midpoint.
+                outlet_y = floor_y + ZONE["outlet"]
+                if outlets_per_room > 0:
                     if room_area_ft2 <= 150:
                         n_outlets = min(outlets_per_room, 3)
                     else:
                         n_outlets = min(3 + int((room_area_ft2 - 150) / 60), 6)
-                    # Kitchen always gets extra (dedicated circuits)
                     if room.type == "kitchen":
                         n_outlets = min(n_outlets + 2, 8)
-                    step = max(1, n_pts // max(n_outlets, 2))
-                    outlet_y = floor_y + ZONE["outlet"]
-                    for i in range(0, n_pts, step):
-                        p0, p1 = pts[i], pts[(i+1) % n_pts]
-                        mx = (p0[0] + p1[0]) / 2
-                        mz = (p0[1] + p1[1]) / 2
-                        dx, dz2 = rcx - mx, rcz - mz
-                        dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
-                        ox = mx + dx/dist * 0.05
-                        oz = mz + dz2/dist * 0.05
-                        outlet_type = "outlet"  # GFCI distinction shown via color, not type
+
+                    # Collect all walls at this level
+                    lvl_walls = [w for w in walls if w.level == lvl]
+                    pts = room.polygon
+                    n_pts = len(pts)
+                    rcx = sum(p[0] for p in pts) / n_pts
+                    rcz = sum(p[1] for p in pts) / n_pts
+
+                    # For each room edge, find a matching wall and place outlet on it
+                    placed = 0
+                    for i in range(n_pts):
+                        if placed >= n_outlets:
+                            break
+                        p0, p1 = pts[i], pts[(i + 1) % n_pts]
+                        edge_mx = (p0[0] + p1[0]) / 2
+                        edge_mz = (p0[1] + p1[1]) / 2
+
+                        # Find closest wall whose midpoint is near this edge midpoint
+                        best_wall = None
+                        best_dist = 0.6  # max 60cm match distance
+                        for w in lvl_walls:
+                            wm_x = (w.start[0] + w.end[0]) / 2
+                            wm_z = (w.start[1] + w.end[1]) / 2
+                            d = math.sqrt((wm_x - edge_mx)**2 + (wm_z - edge_mz)**2)
+                            if d < best_dist:
+                                best_dist = d
+                                best_wall = w
+
+                        if best_wall:
+                            # Place outlet on the wall face, pushed 5cm into the room
+                            wm_x = (best_wall.start[0] + best_wall.end[0]) / 2
+                            wm_z = (best_wall.start[1] + best_wall.end[1]) / 2
+                            dx = rcx - wm_x
+                            dz2 = rcz - wm_z
+                            dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
+                            ox = wm_x + dx / dist * 0.05
+                            oz = wm_z + dz2 / dist * 0.05
+                        else:
+                            # No matching wall — fall back to room edge midpoint
+                            dx = rcx - edge_mx
+                            dz2 = rcz - edge_mz
+                            dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
+                            ox = edge_mx + dx / dist * 0.05
+                            oz = edge_mz + dz2 / dist * 0.05
+
                         elements.append(MEPElement(
                             id=f"outlet_{uuid.uuid4().hex[:5]}",
-                            system="electrical",
-                            type=outlet_type,
-                            start=[ox, outlet_y, oz],
-                            level=lvl,
+                            system="electrical", type="outlet",
+                            start=[ox, outlet_y, oz], level=lvl,
                         ))
-                        # Conduit drop from ceiling to outlet
                         elements.append(MEPElement(
                             id=f"conduit_drop_{uuid.uuid4().hex[:5]}",
-                            system="electrical",
-                            type="conduit_branch",
+                            system="electrical", type="conduit_branch",
                             start=[ox, ceil_y_elec, oz],
                             end=[ox, outlet_y + 0.05, oz],
-                            level=lvl,
-                            diameter_in=0.5,
+                            level=lvl, diameter_in=0.5,
                         ))
+                        placed += 1
 
                 # Dedicated circuit label for kitchen/laundry
                 if room.type == "kitchen":

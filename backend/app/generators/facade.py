@@ -366,35 +366,6 @@ class FacadeGenerator:
                             "faces": [[0,1,2],[0,2,3],[5,4,7],[5,7,6],[3,2,6],[3,6,7],[0,3,7],[0,7,4],[1,5,6],[1,6,2]],
                         })
 
-        # ── Top-floor setback ────────────────────────────────────────────────
-        if stories >= 2:
-            self._add_setback_cap(meshes, massing_option, stories, floor_h, facade_color)
-
-        # ── Roof: pitched or flat parapet ────────────────────────────────────
-        add_pitched = style.get("add_pitched_roof", False)
-        dominant_roof = style.get("dominant_roof_shape", "flat")
-        if add_pitched:
-            # Skip pitched roof for large or complex footprints — bounding-box
-            # assumption breaks for U-shapes and oversized buildings.
-            fp = massing_option.get("footprint", [])
-            n_fp = len(fp)
-            n_uniq = n_fp - 1 if n_fp > 1 and fp[0] == fp[-1] else n_fp
-            if n_uniq > 0:
-                _xs = [p[0] for p in fp[:n_uniq]]
-                _zs = [p[1] for p in fp[:n_uniq]]
-                fp_area = abs(sum(
-                    (fp[i][0] * fp[(i + 1) % n_uniq][1] - fp[(i + 1) % n_uniq][0] * fp[i][1])
-                    for i in range(n_uniq)
-                )) / 2
-            else:
-                fp_area = 0
-            if fp_area < 500 and n_uniq <= 5:
-                self._add_pitched_roof(meshes, massing_option, stories, floor_h, facade_color, dominant_roof)
-            else:
-                self._add_flat_parapet(meshes, massing_option, stories, floor_h, facade_color)
-        else:
-            self._add_flat_parapet(meshes, massing_option, stories, floor_h, facade_color)
-
         return meshes
 
     # ── Flat parapet (original logic, extracted) ──────────────────────────────

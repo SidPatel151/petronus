@@ -9,7 +9,7 @@ All sizes reported in both imperial (design) and metric (output).
 import math
 import uuid
 from typing import List, Dict, Tuple, Optional, Any
-from shapely.geometry import Polygon, box
+from shapely.geometry import Polygon, box, LineString as ShpLine, Point as ShpPoint
 from shapely.affinity import scale as shp_scale
 from app.models.schemas import Level
 
@@ -192,13 +192,13 @@ class StructuralEngine:
                 color=col_color,
             ))
 
-            # Footing at base
+            # Footing at base — vertical member, size_m = footing width, start/end along Y only
             footing_size = max(0.6, col_size_m * 3.5)
             members.append(StructuralMember(
                 member_id=f"ftg_{uuid.uuid4().hex[:6]}",
                 member_type="footing",
-                start=[cx - footing_size/2, -0.6, cz - footing_size/2],
-                end=[cx + footing_size/2,  0.0,  cz + footing_size/2],
+                start=[cx, -0.6, cz],
+                end=[cx, 0.0,  cz],
                 section=f"{footing_size*39.37:.0f}in sq spread footing",
                 material="concrete",
                 load_kips=total_P_kips,
@@ -217,12 +217,16 @@ class StructuralEngine:
             load_psf = roof_load_psf if is_roof else floor_load_psf
             b_section, b_size, b_color = self._size_beam(mat, load_psf, grid_m, grid_m)
 
+            fp_inset_beam = footprint.buffer(-0.05)
             for i, (cx1, cz1) in enumerate(col_positions):
                 for j, (cx2, cz2) in enumerate(col_positions):
                     if i >= j:
                         continue
                     dist = math.sqrt((cx2-cx1)**2 + (cz2-cz1)**2)
                     if abs(dist - grid_m) < 0.5:  # adjacent columns
+                        # Skip if beam path exits the footprint (L/U/stepped shapes)
+                        if not fp_inset_beam.contains(ShpLine([(cx1, cz1), (cx2, cz2)])):
+                            continue
                         span_load = load_psf * grid_m / 1000.0  # kips/ft total
                         M_kips_ft = span_load * (grid_m * 3.281) ** 2 / 8
                         members.append(StructuralMember(
@@ -237,24 +241,9 @@ class StructuralEngine:
                             color=b_color,
                         ))
 
-        # ── 5. Perimeter grade beams (foundation) ────────────────────────
         fp_coords = list(footprint.exterior.coords[:-1])
-        for i in range(len(fp_coords)):
-            x1, z1 = fp_coords[i]
-            x2, z2 = fp_coords[(i+1) % len(fp_coords)]
-            members.append(StructuralMember(
-                member_id=f"gb_{uuid.uuid4().hex[:5]}",
-                member_type="grade_beam",
-                start=[x1, -0.45, z1],
-                end=[x2, -0.45, z2],
-                section="12x18 conc grade beam",
-                material="concrete",
-                load_kips=0,
-                size_m=0.30,
-                color="#475569",
-            ))
 
-        # ── 6. Shear walls (seismic + wind) ─────────────────────────────
+        # ── 5. Shear walls (seismic + wind) ─────────────────────────────
         # Place shear walls at building perimeter and one interior cross wall
         if sdc in ("C", "D", "E", "F") or wind_mph >= 100:
             shear_members = self._add_shear_walls(footprint, fp_coords, floor_h, stories, mat)
@@ -334,35 +323,22 @@ class StructuralEngine:
     # ── Column grid generation ────────────────────────────────────────────────
 
     def _column_grid(self, footprint: Polygon, bounds: Tuple, grid_m: float) -> List[Tuple[float, float]]:
-        """Generate grid of column positions clipped to footprint (inset by 0.3m)."""
+        """Generate column grid strictly inside footprint (0.5m inset from wall face)."""
         minx, miny, maxx, maxy = bounds
-        fp_inset = footprint.buffer(-0.3)
+        fp_inset = footprint.buffer(-0.5)
+        if fp_inset.is_empty:
+            fp_inset = footprint.buffer(-0.2)
         positions = []
 
-        # Generate grid points
-        x = minx
-        while x <= maxx + 0.1:
-            z = miny
-            while z <= maxy + 0.1:
-                pt_box = Polygon([(x-0.1, z-0.1), (x+0.1, z-0.1), (x+0.1, z+0.1), (x-0.1, z+0.1)])
-                if fp_inset.intersects(pt_box):
+        # Center the grid within each span so columns avoid walls
+        x = minx + grid_m / 2
+        while x < maxx:
+            z = miny + grid_m / 2
+            while z < maxy:
+                if fp_inset.contains(ShpPoint(x, z)):
                     positions.append((x, z))
                 z += grid_m
             x += grid_m
-
-        # Always include footprint corners (setback 0.5m)
-        fp_coords = list(footprint.exterior.coords[:-1])
-        for (cx, cz) in fp_coords:
-            # Find direction toward centroid
-            centx = sum(p[0] for p in fp_coords) / len(fp_coords)
-            centz = sum(p[1] for p in fp_coords) / len(fp_coords)
-            dx, dz = centx - cx, centz - cz
-            dist = max(0.01, math.sqrt(dx*dx + dz*dz))
-            corner_x = cx + dx/dist * 0.5
-            corner_z = cz + dz/dist * 0.5
-            # Deduplicate
-            if not any(math.sqrt((p[0]-corner_x)**2 + (p[1]-corner_z)**2) < grid_m*0.4 for p in positions):
-                positions.append((corner_x, corner_z))
 
         return positions
 
@@ -403,22 +379,27 @@ class StructuralEngine:
 
     def _add_shear_walls(self, footprint, fp_coords, floor_h, stories, mat) -> List[StructuralMember]:
         members = []
-        # Add shear wall panels at each perimeter wall segment (mark thicker)
+        centx = sum(p[0] for p in fp_coords) / len(fp_coords)
+        centz = sum(p[1] for p in fp_coords) / len(fp_coords)
+        INSET = 0.15  # push panel center 15cm inside so it stays fully within the footprint
         for i in range(len(fp_coords)):
             x1, z1 = fp_coords[i]
             x2, z2 = fp_coords[(i+1) % len(fp_coords)]
             seg_len = math.sqrt((x2-x1)**2 + (z2-z1)**2)
             if seg_len < 1.2:
                 continue
-            # Shear wall panel: 20% of each perimeter wall
             panel_len = min(seg_len * 0.20, 1.5)
             mid_x = (x1 + x2) / 2
             mid_z = (z1 + z2) / 2
             ux, uz = (x2-x1)/seg_len, (z2-z1)/seg_len
-            px1 = mid_x - ux * panel_len/2
-            pz1 = mid_z - uz * panel_len/2
-            px2 = mid_x + ux * panel_len/2
-            pz2 = mid_z + uz * panel_len/2
+            # Inward normal toward centroid
+            nix, niz = centx - mid_x, centz - mid_z
+            ni_len = max(0.01, math.sqrt(nix*nix + niz*niz))
+            nix, niz = nix/ni_len * INSET, niz/ni_len * INSET
+            px1 = mid_x - ux * panel_len/2 + nix
+            pz1 = mid_z - uz * panel_len/2 + niz
+            px2 = mid_x + ux * panel_len/2 + nix
+            pz2 = mid_z + uz * panel_len/2 + niz
             for lvl_i in range(stories):
                 base_y = lvl_i * floor_h
                 members.append(StructuralMember(
