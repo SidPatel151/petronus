@@ -579,27 +579,16 @@ export default function LandingPage() {
           >
             <Icon d={theme === 'dark' ? ICONS.sun : ICONS.moon} size={15} color={accentColor} />
           </button>
-          <button onClick={() => router.push('/billing')} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontFamily: 'monospace', fontSize: 12, color: t.textMute,
-            transition: 'color .2s', padding: '7px 12px',
-          }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = '#c4a882'}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = '#5a5550'}
-          >
+          <SpotlightBtn onClick={() => router.push('/billing')}
+            accent="#c4a882" border="transparent" textColor={t.textMute}
+            style={{ borderRadius: 8, padding: '7px 12px', fontFamily: 'monospace', fontSize: 12, background: 'transparent' }}>
             Pricing
-          </button>
-          <button onClick={() => router.push('/login')} style={{
-            background: 'none', border: `1px solid ${borderColor}`,
-            borderRadius: 8, padding: '7px 16px', cursor: 'pointer',
-            fontFamily: 'monospace', fontSize: 12, color: mutedColor,
-            transition: 'all .2s',
-          }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = accentColor; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = mutedColor; }}
-          >
+          </SpotlightBtn>
+          <SpotlightBtn onClick={() => router.push('/login')}
+            accent="#c4a882" border={borderColor} textColor={mutedColor}
+            style={{ borderRadius: 8, padding: '7px 16px', fontFamily: 'monospace', fontSize: 12 }}>
             Sign in
-          </button>
+          </SpotlightBtn>
           <button onClick={() => setDrawerOpen(o => !o)} style={{
             background: drawerOpen ? 'rgba(196,168,130,0.08)' : 'rgba(255,255,255,0.03)',
             border: `1px solid ${drawerOpen ? 'rgba(196,168,130,0.25)' : 'rgba(255,255,255,0.07)'}`,
@@ -647,14 +636,11 @@ export default function LandingPage() {
             </p>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <EnterButton onClick={() => router.push('/app')} />
-              <button onClick={() => document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' })}
-                style={{
-                  padding: '13px 26px', borderRadius: 10, fontFamily: 'monospace', fontSize: 12,
-                  background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
-                  color: t.textMute, cursor: 'pointer', transition: 'all .2s',
-                }}>
+              <SpotlightBtn onClick={() => document.getElementById('how')?.scrollIntoView({ behavior: 'smooth' })}
+                accent="rgba(255,255,255,0.6)" border="rgba(255,255,255,0.15)" textColor={t.textMute}
+                style={{ padding: '13px 26px', borderRadius: 10, fontFamily: 'monospace', fontSize: 12 }}>
                 See how it works
-              </button>
+              </SpotlightBtn>
             </div>
             <div style={{ display: 'flex', gap: 36, marginTop: 52 }}>
               {[['< 30s', 'Generation time'], ['50+', 'Code checks'], ['3', 'Massing options'], ['Full', 'MEP systems']].map(([val, lbl]) => (
@@ -958,43 +944,96 @@ function TerminalBlock() {
   );
 }
 
+// ─── Spotlight button — cursor-tracking radial gradient ──────────────────────
+function SpotlightBtn({
+  onClick, children, accent = '#c4a882', border, baseColor, textColor: tc, style = {},
+}: {
+  onClick?: () => void;
+  children: React.ReactNode;
+  accent?: string;
+  border?: string;
+  baseColor?: string;
+  textColor?: string;
+  style?: React.CSSProperties;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [on, setOn] = useState(false);
+
+  const move = (e: React.MouseEvent) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+  };
+
+  return (
+    <button ref={ref} onClick={onClick}
+      onMouseMove={move} onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}
+      style={{
+        position: 'relative', overflow: 'hidden',
+        cursor: 'pointer', transition: 'border-color .2s, transform .2s, box-shadow .2s',
+        transform: on ? 'translateY(-1px)' : 'none',
+        background: baseColor ?? 'rgba(255,255,255,0.02)',
+        border: `1px solid ${on ? (border ?? accent) : (border ? `${border}55` : 'rgba(196,168,130,0.18)')}`,
+        boxShadow: on ? `0 4px 28px ${accent}18` : 'none',
+        color: tc ?? accent,
+        ...style,
+      }}>
+      {/* Spotlight overlay — follows the cursor */}
+      <span style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 'inherit',
+        background: on
+          ? `radial-gradient(circle 80px at ${pos.x}px ${pos.y}px, ${accent}28 0%, transparent 70%)`
+          : 'transparent',
+        transition: 'background .05s',
+      }} />
+      <span style={{ position: 'relative', zIndex: 1 }}>{children}</span>
+    </button>
+  );
+}
+
 // ─── Enter button ────────────────────────────────────────────────────────────
 function EnterButton({ onClick }: { onClick: () => void }) {
   const { theme } = useTheme(); const t = tk(theme);
-  const [h, setH] = useState(false);
   return (
-    <button onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-      style={{
-        padding: '13px 30px', borderRadius: 10, fontFamily: 'monospace', fontSize: 12, fontWeight: 600,
-        cursor: 'pointer', letterSpacing: '.5px', transition: 'all .25s ease',
-        background: h ? t.cardHover : t.card,
-        border: `1px solid ${h ? t.accent : t.borderAccent}`,
-        color: t.accent,
-        transform: h ? 'translateY(-1px)' : 'none',
-      }}>
+    <SpotlightBtn onClick={onClick} accent="#c4a882" textColor={t.accent}
+      style={{ padding: '13px 30px', borderRadius: 10, fontFamily: 'monospace', fontSize: 12, fontWeight: 600, letterSpacing: '.5px' }}>
       Launch Petronus →
-    </button>
+    </SpotlightBtn>
   );
 }
 
 // ─── Feature card ────────────────────────────────────────────────────────────
 function FeatureCard({ iconKey, title, desc, color }: { iconKey: keyof typeof ICONS; title: string; desc: string; color: string }) {
   const { theme } = useTheme(); const t = tk(theme);
-  const [h, setH] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [on, setOn] = useState(false);
+  const move = (e: React.MouseEvent) => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+  };
   return (
-    <div onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+    <div ref={ref} onMouseMove={move} onMouseEnter={() => setOn(true)} onMouseLeave={() => setOn(false)}
       style={{
         padding: 26, borderRadius: 14, transition: 'all .28s ease', cursor: 'default',
-        background: h ? t.cardHover : t.card,
-        border: `1px solid ${h ? t.borderAccent : t.border}`,
-        boxShadow: h ? '0 0 28px rgba(140,106,62,0.06)' : 'none',
-        transform: h ? 'translateY(-3px)' : 'none',
+        position: 'relative', overflow: 'hidden',
+        background: t.card,
+        border: `1px solid ${on ? t.borderAccent : t.border}`,
+        boxShadow: on ? `0 0 28px ${color}10` : 'none',
+        transform: on ? 'translateY(-3px)' : 'none',
       }}>
-      <div style={{ marginBottom: 16, opacity: h ? 1 : 0.7, transition: 'opacity .28s' }}>
-        <Icon d={ICONS[iconKey]} color={color} size={22} />
+      <span style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 'inherit',
+        background: on ? `radial-gradient(circle 100px at ${pos.x}px ${pos.y}px, ${color}18 0%, transparent 70%)` : 'transparent',
+        transition: 'background .05s',
+      }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <div style={{ marginBottom: 16, opacity: on ? 1 : 0.7, transition: 'opacity .28s' }}>
+          <Icon d={ICONS[iconKey]} color={color} size={22} />
+        </div>
+        <h3 style={{ fontFamily: 'Space Grotesk,sans-serif', fontWeight: 600, fontSize: 16, color: t.text, margin: '0 0 10px' }}>{title}</h3>
+        <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 13, color: t.textMute, lineHeight: 1.75, margin: 0 }}>{desc}</p>
       </div>
-      <h3 style={{ fontFamily: 'Space Grotesk,sans-serif', fontWeight: 600, fontSize: 16, color: t.text, margin: '0 0 10px' }}>{title}</h3>
-      <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 13, color: t.textMute, lineHeight: 1.75, margin: 0 }}>{desc}</p>
     </div>
   );
 }

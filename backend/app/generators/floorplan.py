@@ -507,8 +507,24 @@ class FloorplanGenerator:
                 sub_rooms = self._place_unit_rooms(uid, cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl, fp_interior=fp_interior_mf)
                 rooms.extend(sub_rooms)
 
-                wet_walls = self._place_wet_walls(cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl)
-                walls.extend(wet_walls)
+                raw_wet = self._place_wet_walls(cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl)
+                # Clip every unit wall to the actual footprint interior
+                for w in raw_wet:
+                    wl = LineString([w.start, w.end])
+                    try:
+                        cw = fp_interior_mf.intersection(wl)
+                        segs = [cw] if hasattr(cw, 'coords') else (list(cw.geoms) if hasattr(cw, 'geoms') else [])
+                        for seg in segs:
+                            if hasattr(seg, 'coords'):
+                                wc = list(seg.coords)
+                                if len(wc) >= 2:
+                                    walls.append(Wall(
+                                        id=f"unit_wall_{uuid.uuid4().hex[:6]}",
+                                        start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
+                                        height_ft=w.height_ft, level=lvl, is_exterior=False,
+                                    ))
+                    except Exception:
+                        walls.append(w)
 
                 cursor_x += uw
                 unit_idx += 1
@@ -691,13 +707,22 @@ class FloorplanGenerator:
                     area_sqft=rw * row_d * 10.764,
                 ))
                 if x_cursor > minx + 0.5:
-                    # Interior column wall — only place if both endpoints are inside
-                    if fp_interior.contains(Point(rx0, (row_y0 + row_y1) / 2)):
-                        walls.append(Wall(
-                            id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                            start=[rx0, row_y0], end=[rx0, row_y1],
-                            height_ft=level.height_ft, level=lvl, is_exterior=False,
-                        ))
+                    # Column wall — clip to fp_interior (same as row walls)
+                    col_line = LineString([[rx0, row_y0], [rx0, row_y1]])
+                    try:
+                        clipped_col = fp_interior.intersection(col_line)
+                        segs = [clipped_col] if hasattr(clipped_col, 'coords') else (list(clipped_col.geoms) if hasattr(clipped_col, 'geoms') else [])
+                        for seg in segs:
+                            if hasattr(seg, 'coords'):
+                                wc = list(seg.coords)
+                                if len(wc) >= 2:
+                                    walls.append(Wall(
+                                        id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
+                                        start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
+                                        height_ft=level.height_ft, level=lvl, is_exterior=False,
+                                    ))
+                    except Exception:
+                        pass
                 x_cursor += rw
             if row_y1 < maxy - 0.5:
                 # Interior row wall — clip to footprint to avoid overrun in L/U shapes

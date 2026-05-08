@@ -1378,24 +1378,24 @@ function Scene() {
   );
 }
 
-const LAYER_GROUPS: { group: string; layers: { key: LayerKey; label: string; color: string }[] }[] = [
-  { group: 'Building', layers: [
+const LAYER_GROUPS: { group: string; domain: string; layers: { key: LayerKey; label: string; color: string }[] }[] = [
+  { group: 'Building', domain: '#c4a882', layers: [
     { key: 'architecture', label: 'Walls & Windows', color: '#94a3b8' },
-    { key: 'floors',       label: 'Floors & Rooms', color: '#c8d0dc' },
-    { key: 'roof',         label: 'Roof', color: '#475569' },
-    { key: 'structure',    label: 'Structure (cols/beams)', color: '#a855f7' },
+    { key: 'floors',       label: 'Floors & Rooms',  color: '#c8d0dc' },
+    { key: 'roof',         label: 'Roof',             color: '#7c8fa8' },
+    { key: 'structure',    label: 'Structure',        color: '#a855f7' },
   ]},
-  { group: 'MEP', layers: [
-    { key: 'plumbing',   label: 'Plumbing Pipes', color: '#3b82f6' },
-    { key: 'electrical', label: 'Electrical Conduit', color: '#f59e0b' },
-    { key: 'hvac',       label: 'HVAC Ducts', color: '#10b981' },
-    { key: 'fire',       label: 'Fire Protection', color: '#ef4444' },
-    { key: 'fixtures',   label: 'Fixtures & Outlets', color: '#60a5fa' },
+  { group: 'MEP', domain: '#3b82f6', layers: [
+    { key: 'plumbing',   label: 'Plumbing',    color: '#3b82f6' },
+    { key: 'electrical', label: 'Electrical',  color: '#f59e0b' },
+    { key: 'hvac',       label: 'HVAC',        color: '#10b981' },
+    { key: 'fire',       label: 'Fire',        color: '#ef4444' },
+    { key: 'fixtures',   label: 'Fixtures',    color: '#60a5fa' },
   ]},
-  { group: 'Site', layers: [
-    { key: 'neighbors',  label: 'Neighbors', color: '#64748b' },
+  { group: 'Site', domain: '#8fa898', layers: [
+    { key: 'neighbors',  label: 'Neighbors',  color: '#64748b' },
     { key: 'power_grid', label: 'Power Grid', color: '#facc15' },
-    { key: 'issues',     label: 'Issues / Clashes', color: '#ef4444' },
+    { key: 'issues',     label: 'Issues',     color: '#ef4444' },
   ]},
 ];
 
@@ -1428,22 +1428,51 @@ export default function BuildingViewer() {
         <OrbitControls makeDefault minDistance={0.5} maxDistance={500} maxPolarAngle={Math.PI} enablePan />
       </Canvas>
 
-      {/* Layer toggles */}
-      <div className="absolute top-4 right-4 panel p-3 space-y-2 animate-fade-in" style={{ minWidth: '160px' }}>
-        <div className="text-[var(--text-secondary)] font-mono text-xs uppercase tracking-wider mb-1">Layers</div>
-        {LAYER_GROUPS.map(({ group, layers }) => (
-          <div key={group}>
-            <div className="text-[9px] font-mono text-[var(--text-secondary)] uppercase tracking-widest opacity-50 mb-1 mt-1">{group}</div>
-            {layers.map(({ key, label, color }) => (
-              <button key={key} onClick={() => toggleLayer(key)} className="flex items-center gap-2 w-full text-left py-0.5">
-                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-opacity"
-                  style={{ background: color, opacity: activeLayers[key] ? 1 : 0.2 }} />
-                <span className="text-[11px] font-mono transition-colors"
-                  style={{ color: activeLayers[key] ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                  {label}
-                </span>
-              </button>
-            ))}
+      {/* Layer toggles — domain-colored panels with half-gradient buttons */}
+      <div className="absolute top-4 right-4 flex flex-col gap-1.5 animate-fade-in" style={{ minWidth: '172px' }}>
+        {LAYER_GROUPS.map(({ group, domain, layers }) => (
+          <div key={group} className="rounded-xl overflow-hidden"
+            style={{
+              background: 'rgba(10,8,6,0.82)',
+              backdropFilter: 'blur(14px)',
+              border: `1px solid ${domain}30`,
+              boxShadow: `0 0 0 0.5px ${domain}15 inset`,
+            }}>
+            {/* Group header — full-width domain color wash */}
+            <div className="px-3 pt-2 pb-1.5 flex items-center gap-2"
+              style={{ background: `linear-gradient(90deg, ${domain}20 0%, ${domain}08 50%, transparent 100%)`,
+                       borderBottom: `1px solid ${domain}20` }}>
+              <div className="w-1 h-3 rounded-full" style={{ background: domain, opacity: 0.7 }} />
+              <span className="text-[9px] font-mono uppercase tracking-[0.18em]" style={{ color: domain, opacity: 0.9 }}>
+                {group}
+              </span>
+            </div>
+            {/* Layer rows */}
+            {layers.map(({ key, label, color }) => {
+              const on = activeLayers[key];
+              return (
+                <button key={key} onClick={() => toggleLayer(key)}
+                  className="flex items-center gap-2 w-full px-3 py-1.5 transition-all"
+                  style={{
+                    background: on ? `linear-gradient(90deg, ${color}18 0%, ${color}06 45%, transparent 80%)` : 'transparent',
+                    borderBottom: `1px solid ${domain}0a`,
+                  }}>
+                  {/* Left accent bar */}
+                  <div className="w-[3px] h-3.5 rounded-full flex-shrink-0 transition-all"
+                    style={{ background: color, opacity: on ? 1 : 0.2,
+                             boxShadow: on ? `0 0 5px ${color}90` : 'none' }} />
+                  <span className="text-[11px] font-mono flex-1 text-left transition-all"
+                    style={{ color: on ? 'var(--text-primary)' : 'var(--text-secondary)',
+                             opacity: on ? 1 : 0.45 }}>
+                    {label}
+                  </span>
+                  {/* Right glow dot */}
+                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 transition-all"
+                    style={{ background: color, opacity: on ? 0.85 : 0.12,
+                             boxShadow: on ? `0 0 6px ${color}` : 'none' }} />
+                </button>
+              );
+            })}
           </div>
         ))}
       </div>
