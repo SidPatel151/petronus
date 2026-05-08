@@ -517,19 +517,13 @@ export default function LandingPage() {
 
   // Load persisted theme
   useEffect(() => {
-    const saved = (localStorage.getItem('petronus_theme') as Theme) || 'dark';
-    setTheme(saved);
-    document.documentElement.setAttribute('data-theme', saved);
+    // Force dark mode — light mode removed
+    setTheme('dark');
+    localStorage.setItem('petronus_theme', 'dark');
+    document.documentElement.setAttribute('data-theme', 'dark');
   }, []);
 
-  const toggleTheme = useCallback(() => {
-    setTheme(t => {
-      const next: Theme = t === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('petronus_theme', next);
-      document.documentElement.setAttribute('data-theme', next);
-      return next;
-    });
-  }, []);
+  const toggleTheme = useCallback(() => {}, []);
 
   useEffect(() => {
     document.documentElement.classList.remove('app-page');
@@ -569,16 +563,6 @@ export default function LandingPage() {
       }}>
         <PetronusLogo height={22} color="#c4a882" iconOnly={false} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Theme toggle */}
-          <button onClick={toggleTheme} style={{
-            background: 'none', border: `1px solid ${borderColor}`, borderRadius: 8,
-            padding: '7px 9px', cursor: 'pointer', display: 'flex', alignItems: 'center',
-            transition: 'all .2s', color: accentColor,
-          }}
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            <Icon d={theme === 'dark' ? ICONS.sun : ICONS.moon} size={15} color={accentColor} />
-          </button>
           <SpotlightBtn onClick={() => router.push('/billing')}
             accent="#c4a882" border="transparent" textColor={t.textMute}
             style={{ borderRadius: 8, padding: '7px 12px', fontFamily: 'monospace', fontSize: 12, background: 'transparent' }}>
