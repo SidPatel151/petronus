@@ -12,19 +12,19 @@ const useTheme = () => useContext(ThemeCtx);
 function tk(theme: Theme) {
   const dark = theme === 'dark';
   return {
-    text:     dark ? '#f5f1ec' : '#12100c',   // headings
-    textSub:  dark ? '#c8bfb4' : '#352e26',   // body copy
-    textMute: dark ? '#a09890' : '#4a4238',   // secondary body
-    textDim:  dark ? '#787068' : '#635a52',   // labels / metadata
-    accent:   dark ? '#c4a882' : '#8c6a3e',
-    accentAlt:dark ? '#8fa898' : '#456358',
-    amber:    dark ? '#d4943a' : '#b07020',
-    border:   dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.1)',
-    borderAccent: dark ? 'rgba(196,168,130,0.2)' : 'rgba(140,106,62,0.3)',
-    card:     dark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.04)',
-    cardHover:dark ? 'rgba(196,168,130,0.04)' : 'rgba(140,106,62,0.07)',
+    text:     dark ? '#f5f1ec' : '#1a1714',
+    textSub:  dark ? '#c8bfb4' : '#3d3530',
+    textMute: dark ? '#a09890' : '#6b5f57',
+    textDim:  dark ? '#787068' : '#8c7e75',
+    accent:   dark ? '#c4a882' : '#9e7a4a',
+    accentAlt:dark ? '#8fa898' : '#3d6b5a',
+    amber:    dark ? '#d4943a' : '#b36a10',
+    border:   dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.09)',
+    borderAccent: dark ? 'rgba(196,168,130,0.2)' : 'rgba(158,122,74,0.3)',
+    card:     dark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.03)',
+    cardHover:dark ? 'rgba(196,168,130,0.04)' : 'rgba(158,122,74,0.06)',
     redBg:    dark ? 'rgba(180,60,60,0.03)'   : 'rgba(120,30,30,0.04)',
-    redBorder:dark ? 'rgba(180,60,60,0.18)'   : 'rgba(120,30,30,0.2)',
+    redBorder:dark ? 'rgba(180,60,60,0.18)'   : 'rgba(120,30,30,0.22)',
     redText:  dark ? '#b04040' : '#8b2020',
   };
 }
@@ -98,10 +98,10 @@ function ArchBackground() {
   }, [imgs]);
 
   const overlay = theme === 'light'
-    ? 'linear-gradient(180deg,rgba(242,237,230,0.72) 0%,rgba(242,237,230,0.58) 40%,rgba(242,237,230,0.78) 100%)'
+    ? 'linear-gradient(180deg,rgba(248,246,243,0.78) 0%,rgba(248,246,243,0.62) 40%,rgba(248,246,243,0.82) 100%)'
     : 'linear-gradient(180deg,rgba(6,5,4,0.82) 0%,rgba(6,5,4,0.72) 40%,rgba(6,5,4,0.88) 100%)';
   const vignette = theme === 'light'
-    ? 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 50%, rgba(230,224,216,0.65) 100%)'
+    ? 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 50%, rgba(238,234,228,0.7) 100%)'
     : 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 50%, rgba(4,3,2,0.7) 100%)';
 
   return (
@@ -120,8 +120,8 @@ function ArchBackground() {
         opacity: fading ? 1 : 0,
         transition: fading ? 'opacity 1.2s ease' : 'none',
       }} />
-      <div style={{ position: 'absolute', inset: 0, background: overlay, transition: 'background 0.8s ease' }} />
-      <div style={{ position: 'absolute', inset: 0, background: vignette, transition: 'background 0.8s ease' }} />
+      <div style={{ position: 'absolute', inset: 0, background: overlay }} />
+      <div style={{ position: 'absolute', inset: 0, background: vignette }} />
     </div>
   );
 }
@@ -514,16 +514,40 @@ export default function LandingPage() {
   const [splashDone, setSplashDone] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>('dark');
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   // Load persisted theme
   useEffect(() => {
-    // Force dark mode — light mode removed
-    setTheme('dark');
-    localStorage.setItem('petronus_theme', 'dark');
-    document.documentElement.setAttribute('data-theme', 'dark');
+    const saved = localStorage.getItem('petronus_theme') as Theme | null;
+    const initial: Theme = saved === 'light' ? 'light' : 'dark';
+    setTheme(initial);
+    document.documentElement.setAttribute('data-theme', initial);
   }, []);
 
-  const toggleTheme = useCallback(() => {}, []);
+  const toggleTheme = useCallback(() => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark';
+    const nextBg = next === 'light' ? '#f8f6f3' : '#060504';
+    const el = overlayRef.current;
+    if (!el) return;
+
+    // Reset to invisible at destination color, then fade in
+    el.style.background = nextBg;
+    el.style.transition = 'none';
+    el.style.opacity = '0';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.transition = 'opacity 0.18s ease-in';
+      el.style.opacity = '1';
+    }));
+
+    // Swap theme while fully covered, then fade out slowly
+    setTimeout(() => {
+      setTheme(next);
+      localStorage.setItem('petronus_theme', next);
+      document.documentElement.setAttribute('data-theme', next);
+      el.style.transition = 'opacity 0.52s cubic-bezier(0.4,0,0.2,1)';
+      el.style.opacity = '0';
+    }, 220);
+  }, [theme]);
 
   useEffect(() => {
     document.documentElement.classList.remove('app-page');
@@ -536,16 +560,16 @@ export default function LandingPage() {
   useEffect(() => { if (splashDone) setShowContent(true); }, [splashDone]);
 
   const t = tk(theme);
-  const bg = theme === 'light' ? '#f2ede6' : '#060504';
+  const bg = theme === 'light' ? '#f8f6f3' : '#060504';
   const textColor = t.text;
   const accentColor = t.accent;
   const mutedColor = t.textSub;
-  const navBg = theme === 'light' ? 'rgba(242,237,230,0.75)' : 'rgba(6,5,4,0.7)';
+  const navBg = theme === 'light' ? 'rgba(248,246,243,0.82)' : 'rgba(6,5,4,0.7)';
   const borderColor = t.border;
 
   return (
     <ThemeCtx.Provider value={{ theme, toggle: toggleTheme }}>
-    <div style={{ background: bg, minHeight: '100vh', position: 'relative', overflowX: 'clip', transition: 'background 0.5s ease' }}>
+    <div style={{ background: bg, minHeight: '100vh', position: 'relative', overflowX: 'clip' }}>
       <ArchBackground />
       {!splashDone && <SplashScreen onDone={() => { sessionStorage.setItem('petronus_splash', '1'); setSplashDone(true); }} />}
       <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} router={router} />
@@ -559,7 +583,6 @@ export default function LandingPage() {
         background: navBg,
         backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${borderColor}`,
-        transition: 'background 0.5s ease, border-color 0.5s ease',
       }}>
         <PetronusLogo height={22} color="#c4a882" iconOnly={false} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -572,6 +595,11 @@ export default function LandingPage() {
             accent="#c4a882" border={borderColor} textColor={mutedColor}
             style={{ borderRadius: 8, padding: '7px 16px', fontFamily: 'monospace', fontSize: 12 }}>
             Sign in
+          </SpotlightBtn>
+          <SpotlightBtn onClick={toggleTheme}
+            accent={t.accent} border={borderColor} textColor={t.textMute}
+            style={{ borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon d={theme === 'dark' ? ICONS.sun : ICONS.moon} size={15} color={t.textMute} />
           </SpotlightBtn>
           <button onClick={() => setDrawerOpen(o => !o)} style={{
             background: drawerOpen ? 'rgba(196,168,130,0.08)' : 'rgba(255,255,255,0.03)',
@@ -610,10 +638,10 @@ export default function LandingPage() {
             <h1 style={{
               margin: '0 0 22px', lineHeight: 1.02,
               fontFamily: 'Space Grotesk,sans-serif', fontWeight: 700, fontSize: 'clamp(46px,5.5vw,76px)',
-              color: textColor, transition: 'color 0.5s ease',
+              color: textColor,
             }}>
               Design buildings.<br />
-              <span style={{ color: accentColor, transition: 'color 0.5s ease' }}>Not spreadsheets.</span>
+              <span style={{ color: accentColor }}>Not spreadsheets.</span>
             </h1>
             <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 17, color: t.textMute, lineHeight: 1.75, maxWidth: 480, margin: '0 0 38px' }}>
               Drop a pin on any California parcel. Petronus generates a complete architectural + MEP building model in under 30 seconds — site analysis, floor plans, plumbing, electrical, HVAC, and code compliance included.
@@ -873,6 +901,12 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+
+    {/* Theme transition overlay — fades in over page, theme swaps underneath, fades out */}
+    <div ref={overlayRef} style={{
+      position: 'fixed', inset: 0, zIndex: 997,
+      opacity: 0, pointerEvents: 'none',
+    }} />
     </ThemeCtx.Provider>
   );
 }
