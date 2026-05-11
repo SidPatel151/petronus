@@ -463,6 +463,15 @@ class FloorplanGenerator:
         unit_idx = 0
         cursor_x = minx
 
+        # Collect all room rects (stair, corridor, unit shells, sub-rooms) for
+        # unified wall generation — each shared edge emitted exactly once.
+        stair_b = Polygon(stair_poly).bounds
+        all_rects: List[Tuple[float, float, float, float]] = [
+            (stair_b[0], stair_b[1], stair_b[2], stair_b[3]),
+        ]
+        corr_b = Polygon(corridor_poly).bounds
+        all_rects.append((corr_b[0], corr_b[1], corr_b[2], corr_b[3]))
+
         for unit_type, count in unit_mix.items():
             tmpl = UNIT_TEMPLATES[unit_type]
             for _ in range(count):
@@ -501,40 +510,29 @@ class FloorplanGenerator:
                     area_sqft=clipped.area * 10.764,
                 ))
 
-                # Pass fp_interior so every sub-room is clipped to the actual
-                # footprint polygon — no room can extend outside the walls.
                 cb = clipped.bounds
-                sub_rooms = self._place_unit_rooms(uid, cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl, fp_interior=fp_interior_mf)
+                sub_rooms = self._place_unit_rooms(
+                    uid, cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1],
+                    tmpl, lvl, fp_interior=fp_interior_mf,
+                )
                 rooms.extend(sub_rooms)
 
-                raw_wet = self._place_wet_walls(cb[0], cb[1], cb[2]-cb[0], cb[3]-cb[1], tmpl, lvl)
-                # Clip every unit wall to the actual footprint interior
-                for w in raw_wet:
-                    wl = LineString([w.start, w.end])
-                    try:
-                        cw = fp_interior_mf.intersection(wl)
-                        segs = [cw] if hasattr(cw, 'coords') else (list(cw.geoms) if hasattr(cw, 'geoms') else [])
-                        for seg in segs:
-                            if hasattr(seg, 'coords'):
-                                wc = list(seg.coords)
-                                if len(wc) >= 2:
-                                    walls.append(Wall(
-                                        id=f"unit_wall_{uuid.uuid4().hex[:6]}",
-                                        start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
-                                        height_ft=w.height_ft, level=lvl, is_exterior=False,
-                                    ))
-                    except Exception:
-                        walls.append(w)
+                # Unit shell + all sub-room rects for unified wall generation
+                all_rects.append((cb[0], cb[1], cb[2], cb[3]))
+                all_rects.extend(self._unit_subrects(cb, tmpl))
 
                 cursor_x += uw
                 unit_idx += 1
+
+        # One wall per unique shared edge; exterior edges automatically skipped
+        self._emit_interior_walls(all_rects, footprint, fp_interior_mf, level, walls)
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
 
         return rooms, walls
 
-    def _determine_unit_mix(self, building_w: float, usable_depth: float) -> Dict[str, int]:
+    def _determine_unit_mix(self, building_w: float, _usable_depth: float) -> Dict[str, int]:
         mix = {}
         slots = int(building_w / UNIT_TEMPLATES["1br"]["w"])
         two_br_count = max(0, slots // 3)
@@ -625,6 +623,82 @@ class FloorplanGenerator:
             y_cursor += row_d
         return walls
 
+    def _emit_interior_walls(
+        self,
+        room_rects: List[Tuple[float, float, float, float]],
+        footprint,
+        fp_interior,
+        level: Level,
+        walls: List[Wall],
+    ) -> None:
+        """For each room rect generate all 4 wall segments, deduplicate shared walls,
+        and skip segments that lie on the exterior footprint boundary (those are
+        handled by _place_exterior_walls). Clips each kept segment to fp_interior."""
+        lvl = level.index
+        fp_ext_band = footprint.exterior.buffer(0.05)
+        seen: set = set()
+
+        def try_add(x0: float, y0: float, x1: float, y1: float) -> None:
+            # Canonical order so (A→B) and (B→A) hash the same
+            if (x0, y0) > (x1, y1):
+                x0, y0, x1, y1 = x1, y1, x0, y0
+            key = (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3))
+            if key in seen:
+                return
+            seen.add(key)
+
+            line = LineString([[x0, y0], [x1, y1]])
+            # Skip walls that are entirely on the exterior boundary
+            try:
+                if fp_ext_band.contains(line):
+                    return
+            except Exception:
+                pass
+
+            # Clip to interior and emit
+            try:
+                clipped = fp_interior.intersection(line)
+                segs = ([clipped] if hasattr(clipped, 'coords')
+                        else (list(clipped.geoms) if hasattr(clipped, 'geoms') else []))
+                for seg in segs:
+                    if hasattr(seg, 'coords'):
+                        wc = list(seg.coords)
+                        if len(wc) >= 2 and LineString(wc).length > 0.05:
+                            walls.append(Wall(
+                                id=f"int_wall_{lvl}_{uuid.uuid4().hex[:6]}",
+                                start=[wc[0][0], wc[0][1]],
+                                end=[wc[-1][0], wc[-1][1]],
+                                height_ft=level.height_ft,
+                                level=lvl, is_exterior=False,
+                            ))
+            except Exception:
+                pass
+
+        for (rx0, ry0, rx1, ry1) in room_rects:
+            try_add(rx0, ry0, rx1, ry0)  # top edge
+            try_add(rx1, ry0, rx1, ry1)  # right edge
+            try_add(rx0, ry1, rx1, ry1)  # bottom edge
+            try_add(rx0, ry0, rx0, ry1)  # left edge
+
+    def _unit_subrects(
+        self, cb: Tuple[float, float, float, float], tmpl: Dict
+    ) -> List[Tuple[float, float, float, float]]:
+        """Return (x0,y0,x1,y1) for every sub-room cell in a unit template,
+        scaled to the clipped unit bounds cb=(minx,miny,maxx,maxy)."""
+        ux, uy = cb[0], cb[1]
+        uw, ud = cb[2] - cb[0], cb[3] - cb[1]
+        rects = []
+        y_cursor = uy
+        for row in tmpl.get("rows", []):
+            row_d = ud * row["frac_d"]
+            x_cursor = ux
+            for rdef in row.get("rooms", []):
+                rw = uw * rdef["frac_w"]
+                rects.append((x_cursor, y_cursor, x_cursor + rw, y_cursor + row_d))
+                x_cursor += rw
+            y_cursor += row_d
+        return rects
+
     def _place_exterior_walls(self, footprint, level: Level) -> List[Wall]:
         walls = []
         coords = list(footprint.exterior.coords)
@@ -647,7 +721,7 @@ class FloorplanGenerator:
         rooms: List[Room] = []
         walls: List[Wall] = []
         lvl = level.index
-        minx, miny, maxx, maxy = bounds
+        minx, miny = bounds[0], bounds[1]
         n_floors = len(all_levels)
         br = max(1, min(5, bedrooms))
 
@@ -683,6 +757,8 @@ class FloorplanGenerator:
         # One canonical interior boundary — everything must have its center inside this.
         fp_interior = footprint.buffer(-FP_INSET)
 
+        # Phase 1: place rooms, collect their rects for wall generation
+        room_rects: List[Tuple[float, float, float, float]] = []
         y_cursor = miny
         for row in row_program:
             row_d = d * row["row_frac_d"]
@@ -694,54 +770,21 @@ class FloorplanGenerator:
                 rx0, rx1 = x_cursor, x_cursor + rw
                 cell_cx = (rx0 + rx1) / 2
                 cell_cz = (row_y0 + row_y1) / 2
-                if not fp_interior.contains(Point(cell_cx, cell_cz)):
-                    x_cursor += rw
-                    continue
-                # Cell center is inside — keep the room as a clean rectangle
-                poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                rooms.append(Room(
-                    id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                    type=rdef["type"],
-                    unit_id="house",
-                    polygon=poly, level=lvl,
-                    area_sqft=rw * row_d * 10.764,
-                ))
-                if x_cursor > minx + 0.5:
-                    # Column wall — clip to fp_interior (same as row walls)
-                    col_line = LineString([[rx0, row_y0], [rx0, row_y1]])
-                    try:
-                        clipped_col = fp_interior.intersection(col_line)
-                        segs = [clipped_col] if hasattr(clipped_col, 'coords') else (list(clipped_col.geoms) if hasattr(clipped_col, 'geoms') else [])
-                        for seg in segs:
-                            if hasattr(seg, 'coords'):
-                                wc = list(seg.coords)
-                                if len(wc) >= 2:
-                                    walls.append(Wall(
-                                        id=f"int_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                                        start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
-                                        height_ft=level.height_ft, level=lvl, is_exterior=False,
-                                    ))
-                    except Exception:
-                        pass
+                if fp_interior.contains(Point(cell_cx, cell_cz)):
+                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                    rooms.append(Room(
+                        id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type=rdef["type"],
+                        unit_id="house",
+                        polygon=poly, level=lvl,
+                        area_sqft=rw * row_d * 10.764,
+                    ))
+                    room_rects.append((rx0, row_y0, rx1, row_y1))
                 x_cursor += rw
-            if row_y1 < maxy - 0.5:
-                # Interior row wall — clip to footprint to avoid overrun in L/U shapes
-                wall_line = LineString([[minx, row_y1], [maxx, row_y1]])
-                try:
-                    clipped_wall = fp_interior.intersection(wall_line)
-                    segs = [clipped_wall] if hasattr(clipped_wall, 'coords') else (list(clipped_wall.geoms) if hasattr(clipped_wall, 'geoms') else [])
-                    for seg in segs:
-                        if hasattr(seg, 'coords'):
-                            wc = list(seg.coords)
-                            if len(wc) >= 2:
-                                walls.append(Wall(
-                                    id=f"row_wall_{lvl}_{uuid.uuid4().hex[:5]}",
-                                    start=[wc[0][0], wc[0][1]], end=[wc[-1][0], wc[-1][1]],
-                                    height_ft=level.height_ft, level=lvl, is_exterior=False,
-                                ))
-                except Exception:
-                    pass
             y_cursor += row_d
+
+        # Phase 2: emit one interior wall per unique shared edge, skip exterior edges
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
