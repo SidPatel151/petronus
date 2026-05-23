@@ -31,8 +31,16 @@ def detect_archetype(spec) -> Optional[str]:
     is_sfr   = use in ('single_family', 'adu')
     struct   = getattr(spec.structural_system, 'value', str(spec.structural_system))
     stories  = spec.stories or 2
+    style    = getattr(getattr(spec, 'style', None), 'value',
+                       str(getattr(spec, 'style', '') or ''))
 
-    if pri == 'space' and hvac == 'mini_split' and struct == 'wood' and is_sfr and stories >= 2:
+    # Victorian: Space + Classic & Gabled + Mini Split + Wood + Single Family + 2-3 stories
+    if (pri == 'space'
+            and style == 'classic_gabled'
+            and hvac == 'mini_split'
+            and struct == 'wood'
+            and is_sfr
+            and stories >= 2):
         return 'victorian_narrow_lot'
 
     # Future archetypes added here — each is just another elif block
