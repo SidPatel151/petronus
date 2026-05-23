@@ -154,6 +154,27 @@ class MEPRouter:
         elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine))
         elements.extend(self._place_furniture(rooms_inside, levels, floor_h))
 
+        # Final containment pass — drop any element whose horizontal footprint
+        # (x, z) start or end lands outside the building interior.
+        # Vertical risers (same x,z for start and end) are exempt.
+        if fp_poly is not None:
+            fp_check = fp_poly.buffer(-0.10)
+            kept = []
+            for el in elements:
+                s = getattr(el, 'start', None)
+                e = getattr(el, 'end', None)
+                if s:
+                    if not fp_check.contains(_ShpPoint(s[0], s[2])):
+                        continue  # start outside — skip
+                if e:
+                    # Only reject if end is outside AND it's a horizontal move
+                    # (vertical risers have same x,z so they're always inside)
+                    same_xz = abs(e[0] - s[0]) < 0.01 and abs(e[2] - s[2]) < 0.01
+                    if not same_xz and not fp_check.contains(_ShpPoint(e[0], e[2])):
+                        continue  # end outside — skip
+                kept.append(el)
+            elements = kept
+
         return elements
 
     # ════════════════════════════════════════════════════════════════════════

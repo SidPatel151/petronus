@@ -105,7 +105,8 @@ const FLOOR_ROOM_TYPES = new Set([
   'bedroom','living','kitchen','bathroom','dining',
   'foyer','office','pantry','mudroom','walk_in_closet',
   'family_room','bonus_room','loft','media_room','library','gym',
-  'laundry','corridor',
+  'laundry','corridor','stair',
+  'garage','mechanical','utility','half_bath',
 ]);
 
 function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
@@ -142,7 +143,8 @@ function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
     foyer: '#2e4870', office: '#2e4230', pantry: '#2a4428', mudroom: '#48302a',
     walk_in_closet: '#2a2a58', family_room: '#2a4868', bonus_room: '#2a4458',
     loft: '#30487a', media_room: '#181830', library: '#2a2a18', gym: '#2a4228',
-    laundry: '#2a2a58',
+    laundry: '#2a2a58', half_bath: '#2a3a50',
+    garage: '#1e2a1e', mechanical: '#2a1e1e', utility: '#1e1e2a', stair: '#2a3040',
   };
   const color = room.type === 'unit' ? matColor : subRoomColors[room.type] || COLORS[room.type] || '#1a2030';
   // Floor slabs sit 2cm above the structural slab so they're not z-fighting
@@ -860,35 +862,6 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness }
   );
 }
 
-// ── Concrete floor slab at each level boundary ─────────────────────────
-function FloorSlab({ massing, levelIdx, floorH }: {
-  massing: any; levelIdx: number; floorH: number;
-}) {
-  const footprint: [number, number][] = massing?.footprint || [];
-  if (footprint.length < 3) return null;
-
-  const geometry = useMemo(() => {
-    try {
-      const pts = footprint[footprint.length - 1][0] === footprint[0][0] &&
-                  footprint[footprint.length - 1][1] === footprint[0][1]
-        ? footprint.slice(0, -1) : footprint;
-      const shape = new THREE.Shape();
-      shape.moveTo(pts[0][0], -pts[0][1]);
-      for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], -pts[i][1]);
-      shape.closePath();
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.22, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      return geo;
-    } catch { return null; }
-  }, [footprint]);
-
-  if (!geometry) return null;
-  return (
-    <mesh geometry={geometry} position={[0, levelIdx * floorH, 0]} receiveShadow castShadow>
-      <meshStandardMaterial color="#c8d0dc" roughness={0.55} metalness={0.1} />
-    </mesh>
-  );
-}
 
 // ── Parcel shape 3D preview (extruded to target height) ────────────────
 function ParcelPreview({ parcelPolygon, siteCenter, targetHeight }: {
@@ -1272,18 +1245,12 @@ function Scene() {
                 {/* Facade: windows + doors (architecture only) */}
 
                 {/* ── Floor slabs + room layout (floors layer) ── */}
-                {activeLayers['floors'] && (
-                  <>
-                    {buildingModel.levels.map((_: any, i: number) => (
-                      <FloorSlab key={`slab_${i}`} massing={massing} levelIdx={i} floorH={floorH} />
-                    ))}
-                    {buildingModel.rooms
-                      .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
-                      .map((r: any, i: number) => (
-                        <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
-                      ))}
-                  </>
-                )}
+                {activeLayers['floors'] && buildingModel.rooms
+                  .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
+                  .map((r: any, i: number) => (
+                    <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
+                  ))
+                }
               </>
             );
           })()}
