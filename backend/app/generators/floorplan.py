@@ -833,15 +833,36 @@ class FloorplanGenerator:
                 cell_cx = (rx0 + rx1) / 2
                 cell_cz = (row_y0 + row_y1) / 2
                 if fp_interior.contains(Point(cell_cx, cell_cz)):
-                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                    # Clip room polygon to fp_interior so it never extends
+                    # outside the exterior walls — critical for L/U shapes and
+                    # any room on the perimeter whose rectangle overshoots.
+                    cell_shape = Polygon([
+                        [rx0, row_y0], [rx1, row_y0],
+                        [rx1, row_y1], [rx0, row_y1],
+                    ])
+                    try:
+                        clipped = fp_interior.intersection(cell_shape)
+                        if hasattr(clipped, 'geoms'):
+                            clipped = max(clipped.geoms, key=lambda g: g.area)
+                        if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                            x_cursor += rw
+                            continue
+                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                        cb = clipped.bounds
+                        area = clipped.area * 10.764
+                    except Exception:
+                        poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                        cb = (rx0, row_y0, rx1, row_y1)
+                        area = rw * row_d * 10.764
+
                     rooms.append(Room(
                         id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
                         type=rdef["type"],
                         unit_id="house",
                         polygon=poly, level=lvl,
-                        area_sqft=rw * row_d * 10.764,
+                        area_sqft=area,
                     ))
-                    room_rects.append((rx0, row_y0, rx1, row_y1))
+                    room_rects.append((cb[0], cb[1], cb[2], cb[3]))
                 x_cursor += rw
             y_cursor += row_d
 
