@@ -380,6 +380,7 @@ class FloorplanGenerator:
         massing_option: Dict[str, Any],
         spec: ProjectSpec,
         levels: List[Level],
+        archetype: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Room], List[Wall]]:
 
         footprint_coords = massing_option["footprint"]
@@ -396,7 +397,9 @@ class FloorplanGenerator:
 
         for level in levels:
             if is_sfr:
-                rooms, walls = self._layout_sfr_floor(footprint, bounds, w, d, level, levels, bedrooms)
+                rooms, walls = self._layout_sfr_floor(
+                    footprint, bounds, w, d, level, levels, bedrooms, archetype=archetype
+                )
             else:
                 rooms, walls = self._layout_floor(footprint, bounds, w, d, level, spec)
             all_rooms.extend(rooms)
@@ -405,7 +408,7 @@ class FloorplanGenerator:
         return all_rooms, all_walls
 
     def _layout_floor(
-        self, footprint, bounds, w, d, level: Level, spec: ProjectSpec
+        self, footprint, bounds, w, d, level: Level, _spec: ProjectSpec
     ) -> Tuple[List[Room], List[Wall]]:
         rooms = []
         walls = []
@@ -623,6 +626,59 @@ class FloorplanGenerator:
             y_cursor += row_d
         return walls
 
+    def _layout_victorian_ground(
+        self, footprint, bounds, w, d, level: Level
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Ground floor of a Victorian narrow-lot: garage (front 60%) + utility rear (40%).
+        Wet wall anchor and panel location are placed in the rear utility zone per archetype spec."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny, maxx, maxy = bounds
+        fp_interior = footprint.buffer(-FP_INSET)
+
+        # Garage: front 60% of depth
+        garage_d = d * 0.60
+        garage_rect = (minx, miny, maxx, miny + garage_d)
+        rooms.append(Room(
+            id=f"victorian_garage_{lvl}",
+            type="garage",
+            unit_id="house",
+            polygon=[[minx, miny], [maxx, miny], [maxx, miny + garage_d], [minx, miny + garage_d]],
+            level=lvl,
+            area_sqft=w * garage_d * 10.764,
+        ))
+
+        # Utility / mechanical rear: back 40% — houses panel, water heater, laundry
+        util_y0 = miny + garage_d
+        util_rect = (minx, util_y0, maxx, maxy)
+        # Split rear into laundry (left 55%) and mechanical (right 45%)
+        split_x = minx + w * 0.55
+        rooms.append(Room(
+            id=f"victorian_laundry_{lvl}",
+            type="laundry",
+            unit_id="house",
+            polygon=[[minx, util_y0], [split_x, util_y0], [split_x, maxy], [minx, maxy]],
+            level=lvl,
+            area_sqft=(split_x - minx) * (maxy - util_y0) * 10.764,
+        ))
+        rooms.append(Room(
+            id=f"victorian_mechanical_{lvl}",
+            type="mechanical",
+            unit_id="house",
+            polygon=[[split_x, util_y0], [maxx, util_y0], [maxx, maxy], [split_x, maxy]],
+            level=lvl,
+            area_sqft=(maxx - split_x) * (maxy - util_y0) * 10.764,
+        ))
+
+        # Interior walls from room rects
+        room_rects = [garage_rect, util_rect]
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+
+        ext_walls = self._place_exterior_walls(footprint, level)
+        walls.extend(ext_walls)
+        return rooms, walls
+
     def _emit_interior_walls(
         self,
         room_rects: List[Tuple[float, float, float, float]],
@@ -717,6 +773,7 @@ class FloorplanGenerator:
     def _layout_sfr_floor(
         self, footprint, bounds, w, d, level: Level,
         all_levels: List[Level], bedrooms: int,
+        archetype: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Room], List[Wall]]:
         rooms: List[Room] = []
         walls: List[Wall] = []
@@ -724,6 +781,11 @@ class FloorplanGenerator:
         minx, miny = bounds[0], bounds[1]
         n_floors = len(all_levels)
         br = max(1, min(5, bedrooms))
+
+        # ── Archetype override: Victorian ground floor = garage + utility ─────
+        archetype_id = (archetype or {}).get('id', '')
+        if archetype_id == 'victorian_narrow_lot' and lvl == 0:
+            return self._layout_victorian_ground(footprint, bounds, w, d, level)
 
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2

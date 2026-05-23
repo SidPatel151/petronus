@@ -82,6 +82,7 @@ class HouseArchetype(str, Enum):
     # Regional / Material-driven
     craftsman        = "craftsman"
     mediterranean    = "mediterranean"
+    victorian        = "victorian"
     # Small / Special
     adu_compact      = "adu_compact"
 
@@ -94,7 +95,8 @@ PRIORITY_ARCHETYPES: dict[str, list[str]] = {
     "speed":   ["ranch", "saltbox", "foursquare"],   # alias
     "light":   ["contemporary", "mid_century_modern", "prairie"],
     "daylight":["contemporary", "mid_century_modern", "prairie"],  # alias
-    "space":   ["colonial", "farmhouse", "craftsman"],
+    "space":   ["colonial", "farmhouse", "victorian", "craftsman"],
+    "energy":  ["contemporary", "victorian", "craftsman"],
 }
 
 

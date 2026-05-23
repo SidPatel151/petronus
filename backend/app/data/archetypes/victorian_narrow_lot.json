@@ -1,0 +1,262 @@
+{
+  "id": "victorian_narrow_lot",
+  "display_name": "Historic Narrow-Lot Victorian / Edwardian",
+  "era_built": [1870, 1930],
+  "typical_regions": ["San Francisco", "Oakland", "Alameda", "Berkeley"],
+  "blueprint_sources": [
+    "1874 City House design (d14fbcc) — closest match to SF narrow-lot type",
+    "SF Painted Ladies exterior photos — confirms garage-at-grade, bay windows, party walls",
+    "London Berkeley Square townhouse (eea960) — service floor stacking and MEP chase reference"
+  ],
+
+  "petronus_classification": {
+    "house_archetype": "victorian",
+    "design_style": "classic_gabled",
+    "building_use": "single_family",
+    "priority_affinity": ["space", "energy"],
+    "dominant_arch_style": "victorian",
+    "facade_material": "wood_painted",
+    "facade_color_palette": {
+      "body": "#c8b97e",
+      "trim": "#f5f0e8",
+      "accent": "#6b8f71",
+      "window_frame": "#2c1f0e"
+    },
+    "note": "Victorian maps to classic_gabled (gabled pitched roof, traditional vertical form). Space is primary priority — narrow lot forces going tall to maximize sqft. Energy is secondary — Title 24 + full electrification make it highly energy-relevant."
+  },
+
+  "lot": {
+    "width_ft_min": 20,
+    "width_ft_max": 35,
+    "depth_ft_min": 60,
+    "depth_ft_max": 120,
+    "attached": true,
+    "party_walls": "both_sides",
+    "side_yard_access": false,
+    "front_setback_ft": 5,
+    "rear_setback_ft": 15
+  },
+
+  "structure": {
+    "framing_type": "balloon",
+    "foundation": "raised_perimeter_with_crawlspace",
+    "crawlspace_height_in": 36,
+    "floor_joist_depth_in": 8,
+    "floor_joist_spacing_in": 16,
+    "stud_spacing_in": 16,
+    "wall_assembly": "lath_and_plaster",
+    "wall_thickness_in": 5.5,
+    "floor_to_floor_height_ft": 10.5,
+    "ground_floor_to_floor_height_ft": 9.0,
+    "stories_above_grade": [2, 3],
+    "ground_floor_use": "garage_and_utility",
+    "main_entry_elevation_above_grade_ft": 5,
+    "seismic_design_category": "D",
+    "soft_story_risk": true,
+    "chimney_count_typical": [1, 2],
+    "chimney_location": "rear_or_party_wall_adjacent",
+    "bay_windows_on_facade": true,
+    "bay_window_projection_ft": 2,
+    "open_web_trusses": false,
+    "joist_penetration_rules": {
+      "max_hole_diameter_fraction_of_depth": 0.333,
+      "hole_zone": "middle_third_of_span",
+      "max_notch_depth_fraction_of_depth": 0.167,
+      "notch_zone": "outer_third_of_span",
+      "min_edge_distance_in": 1.5
+    }
+  },
+
+  "floor_program": {
+    "note": "Derived from 1874 City House blueprint and SF exterior photo analysis",
+    "ground_floor": {
+      "elevation": "at_grade_or_below",
+      "use": "service_and_utility",
+      "rooms": ["garage", "laundry", "utility", "mechanical"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Panel, water heater, EV charging all land here. DWV building drain exits rear or front at this level."
+    },
+    "floor_1": {
+      "elevation": "raised_above_grade",
+      "access": "exterior_stair_from_front",
+      "use": "main_living",
+      "rooms": ["entry_hall", "parlor", "living_room", "dining_room", "kitchen", "half_bath"],
+      "ceiling_height_ft": 10.5,
+      "mep_note": "Kitchen wet wall is rear-center. Half bath stacks below upper bath. DWV branch runs rear to stack."
+    },
+    "floor_2": {
+      "use": "private_sleeping",
+      "rooms": ["primary_bedroom", "bedroom", "bedroom", "full_bath", "hall", "closets"],
+      "ceiling_height_ft": 10.5,
+      "mep_note": "Full bath must stack directly above kitchen or half bath below. This locks the DWV stack position."
+    },
+    "floor_3_optional": {
+      "use": "bonus_or_attic_conversion",
+      "rooms": ["bedroom", "flex_room", "full_bath"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "If bath present, must continue stack from floor 2 directly upward."
+    }
+  },
+
+  "wet_wall": {
+    "location": "rear_right_quadrant",
+    "position_from_rear_wall_ft": [4, 8],
+    "position_from_right_party_wall_ft": [4, 10],
+    "fixed": true,
+    "note": "From blueprint analysis: kitchen at rear ground level, bath stacked above rear-right on upper floors. Stack runs vertically through this zone all the way to building drain at foundation."
+  },
+
+  "staircase": {
+    "location": "center_rear",
+    "width_ft": 3.5,
+    "run_direction": "front_to_back",
+    "mep_note": "Stair occupies the center spine. MEP chases and vertical runs must route around it, preferably along party walls or rear wall."
+  },
+
+  "mep_routing_priority": ["dwv_gravity", "hvac", "supply_plumbing", "electrical"],
+
+  "mep_chase": {
+    "primary_location": "rear_wall_or_repurposed_chimney",
+    "chimney_repurpose_for": ["mini_split_refrigerant_lines", "condensate_drain", "exhaust_venting"],
+    "vertical_runs_preferred_along": ["party_wall", "rear_wall"],
+    "note": "London townhouse reference: lift shaft = MEP chase equivalent. Route all vertical services in a dedicated rear-wall chase zone."
+  },
+
+  "hvac": {
+    "strategy": "mini_split",
+    "fallback_strategy": "high_velocity",
+    "ducted_central_allowed": false,
+    "units_per_living_floor": 1,
+    "heat_pump_required": true,
+    "gas_allowed": false,
+    "outdoor_unit_location": "rear_yard_or_roof",
+    "refrigerant_line_routing": "rear_wall_chase_or_chimney_flue",
+    "chimney_chase_repurpose": true,
+    "condensate_drain_required": true,
+    "service_clearance": {
+      "front_access_in": 18,
+      "side_clearance_in": 6
+    }
+  },
+
+  "plumbing": {
+    "dwv": {
+      "existing_material": "cast_iron_or_galvanized",
+      "replacement_material": "abs_or_pvc",
+      "stack_type": "single_stack",
+      "stack_location": "rear_right_quadrant",
+      "stack_diameter_in": 4,
+      "bathrooms_must_stack_vertically": true,
+      "slope_in_per_ft": 0.25,
+      "min_branch_slope_in_per_ft": 0.25,
+      "max_branch_length_before_cleanout_ft": 100,
+      "cleanout_at_every_direction_change": true,
+      "cleanout_at_base_of_stack": true,
+      "building_drain_exit_location": "through_foundation_front_or_rear",
+      "building_drain_depth_below_slab_in": 12,
+      "routing_constraint": "gravity_path_uninterrupted_no_rerouting_around_hvac",
+      "vent_through_roof": true,
+      "vent_stack_location": "same_as_dwv_stack"
+    },
+    "supply": {
+      "material": "pex_a",
+      "routing": "pressurized_routes_around_obstacles",
+      "hot_water_recirculation": true,
+      "insulation_required": true,
+      "effective_diameter_with_insulation_in": 3.5
+    },
+    "water_heater": {
+      "type": "heat_pump",
+      "location": "ground_floor_utility",
+      "min_surrounding_volume_ft3": 700,
+      "service_clearance_front_in": 24,
+      "condensate_drain_required": true
+    }
+  },
+
+  "electrical": {
+    "panel": {
+      "upgrade_required": true,
+      "min_amps": 200,
+      "location": "ground_floor_garage_wall",
+      "nec_clearance": {
+        "width_in": 30,
+        "depth_in": 36,
+        "height_in": 78
+      }
+    },
+    "wire_method": "fish_through_existing_walls",
+    "wall_drilling_difficulty": "high",
+    "lath_plaster_note": "Stud bays are narrow and drilling lath is slow. Plan all rough-in paths before walls are opened.",
+    "ev_charging": {
+      "required": true,
+      "voltage": 240,
+      "amps": 40,
+      "location": "garage_ground_floor",
+      "circuit_dedicated": true
+    },
+    "solar": {
+      "pv_layout_required": true,
+      "roof_coverage_target_pct": 70,
+      "panel_setback_from_ridge_in": 18,
+      "panel_setback_from_eave_in": 18,
+      "avoid_chimney_shadow_zone": true
+    },
+    "battery_storage": {
+      "pre_wired_required": true,
+      "installed_day_one": false,
+      "location": "ground_floor_utility"
+    },
+    "induction_cooktop": true
+  },
+
+  "clearances": {
+    "insulation_hot_water_pipe_extra_diameter_in": 1.5,
+    "insulation_hvac_duct_extra_each_side_in": 1.0,
+    "effective_pipe_diameter_2in_supply_in": 3.5,
+    "effective_duct_diameter_adds_each_side_in": 1.0,
+    "mep_conflict_tolerance_in": 0.5
+  },
+
+  "california_compliance": {
+    "cbc_edition": "2022",
+    "title_24": true,
+    "fully_electric": true,
+    "solar_ready": true,
+    "battery_ready": true,
+    "heat_pump_hvac": true,
+    "heat_pump_water_heater": true,
+    "induction_cooktop": true,
+    "ev_charging_required": true,
+    "seismic_retrofit_likely": true
+  },
+
+  "massing_hints": {
+    "facade_style": "victorian_edwardian_narrow",
+    "roof_type": "gabled",
+    "roof_pitch_12": 7,
+    "garage_at_grade": true,
+    "main_entry_elevated": true,
+    "exterior_stairs_to_entry": true,
+    "exterior_stair_width_ft": 4,
+    "bay_windows": true,
+    "bay_window_floors": [1, 2],
+    "decorative_trim": true,
+    "turrets_possible": true,
+    "plan_shape": "narrow_rectangle",
+    "width_to_depth_ratio_typical": 0.3
+  },
+
+  "known_constraints_summary": [
+    "No side yard — all MEP routes vertically through rear wall or repurposed chimney chase",
+    "DWV stack fixed rear-right quadrant — kitchen and all baths must align to this zone",
+    "Balloon framing — stud bays run full height, useful for vertical wire fishing",
+    "Lath and plaster — wire fishing is slow, plan every penetration before opening walls",
+    "Mini-split only — no room for duct trunks on a 20-35ft wide lot",
+    "Soft story at garage level — seismic retrofit required before MEP rough-in",
+    "Panel at 200A minimum on ground floor wall — 30x36x78in NEC void must be kept clear",
+    "Heat pump water heater needs 700 ft³ surrounding air — whole ground floor counts",
+    "All pipe/duct insulation adds to effective diameter — route with insulated size, not bare pipe size",
+    "Stack continues straight up from ground floor through roof — no horizontal offsets in stack"
+  ]
+}

@@ -15,6 +15,9 @@ from app.generators.mep import MEPRouter
 from app.generators.compliance import ComplianceEngine
 from app.generators.facade import FacadeGenerator, extract_neighbor_style
 from app.services.material_scorer import get_override_dict
+from app.services.archetype_loader import (
+    get_archetype, apply_archetype_to_neighbor_style, apply_archetype_to_design_brief
+)
 
 
 class GenerationOrchestrator:
@@ -218,6 +221,13 @@ class GenerationOrchestrator:
             design_brief = None
             log.append(f"Design brief failed ({str(e)[:60]}) — using neighbor dims directly")
 
+        # ── Archetype detection — runs after spec is finalised ────────────────
+        archetype = get_archetype(spec)
+        if archetype:
+            log.append(f"Archetype detected: {archetype['display_name']}")
+            neighbor_style = apply_archetype_to_neighbor_style(archetype, neighbor_style)
+            design_brief   = apply_archetype_to_design_brief(archetype, design_brief)
+
         # Step 3: Massing with neighbor awareness
         self.progress_cb(30, "Generating massing options…")
         log.append("Generating 3 massing options with neighbor context")
@@ -236,7 +246,7 @@ class GenerationOrchestrator:
         # Step 4: Floorplan
         self.progress_cb(45, "Generating floorplans…")
         log.append("Generating floorplan layouts")
-        rooms, walls = self.floorplan_gen.generate(chosen, spec, levels)
+        rooms, walls = self.floorplan_gen.generate(chosen, spec, levels, archetype=archetype)
         model.rooms = rooms
         model.walls = walls
         unit_count = len(set(r.unit_id for r in rooms if r.unit_id))
