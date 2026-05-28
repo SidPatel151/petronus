@@ -839,6 +839,15 @@ class FloorplanGenerator:
         # One canonical interior boundary — everything must have its center inside this.
         fp_interior = footprint.buffer(-FP_INSET)
 
+        # Minimum room widths (metres) — enforced per room type to avoid slivers.
+        _MIN_W: Dict[str, float] = {
+            "bedroom": 2.7, "bathroom": 1.5, "kitchen": 2.4,
+            "living": 3.0, "dining": 2.4, "family_room": 3.0,
+            "office": 2.4, "loft": 2.4, "media_room": 2.7,
+            "laundry": 1.5, "mudroom": 1.5, "foyer": 1.5,
+            "corridor": 1.1, "hall": 1.1, "walk_in_closet": 1.2,
+        }
+
         # Phase 1: place rooms, collect their rects for wall generation
         room_rects: List[Tuple[float, float, float, float]] = []
         y_cursor = miny
@@ -846,9 +855,27 @@ class FloorplanGenerator:
             row_d = d * row["row_frac_d"]
             row_y0 = y_cursor
             row_y1 = y_cursor + row_d
+
+            # Enforce minimum widths: clamp each room up to its minimum, then
+            # renormalise remaining rooms so the row still sums to full width.
+            raw_widths = [w * rdef["frac_w"] for rdef in row["rooms"]]
+            mins = [_MIN_W.get(rdef["type"], 1.2) for rdef in row["rooms"]]
+            clamped = [max(rw, mn) for rw, mn in zip(raw_widths, mins)]
+            clamped_total = sum(clamped)
+            if clamped_total > w:
+                # Scale all rooms proportionally to fit
+                scale = w / clamped_total
+                adj_widths = [rw * scale for rw in clamped]
+            else:
+                # Distribute leftover width proportionally to rooms at their minimum
+                leftover = w - clamped_total
+                over_min = [max(rw - mn, 0.0) for rw, mn in zip(raw_widths, mins)]
+                over_total = sum(over_min) or 1.0
+                adj_widths = [cl + leftover * (ov / over_total)
+                              for cl, ov in zip(clamped, over_min)]
+
             x_cursor = minx
-            for rdef in row["rooms"]:
-                rw = w * rdef["frac_w"]
+            for rdef, rw in zip(row["rooms"], adj_widths):
                 rx0, rx1 = x_cursor, x_cursor + rw
                 cell_cx = (rx0 + rx1) / 2
                 cell_cz = (row_y0 + row_y1) / 2

@@ -564,6 +564,11 @@ class GenerationOrchestrator:
                     continue
 
                 ux, uz = dx / wl, dz / wl
+                # Wall normal — used to offset door ±5mm so it's visible from both rooms
+                nx_d = -dz / wl
+                nz_d =  dx / wl
+                FOF  = 0.005  # 5 mm face offset
+
                 cx = (s[0] + e[0]) / 2
                 cz = (s[1] + e[1]) / 2
 
@@ -573,13 +578,25 @@ class GenerationOrchestrator:
                 door_h = 2.05
                 hw = door_w / 2
 
+                # Thin box: front face at +FOF, back face at -FOF — avoids z-fighting with wall
                 verts = [
-                    [cx - ux * hw, y_base,           cz - uz * hw],
-                    [cx + ux * hw, y_base,           cz + uz * hw],
-                    [cx + ux * hw, y_base + door_h,  cz + uz * hw],
-                    [cx - ux * hw, y_base + door_h,  cz - uz * hw],
+                    [cx - ux*hw + nx_d*FOF, y_base,           cz - uz*hw + nz_d*FOF],  # 0
+                    [cx + ux*hw + nx_d*FOF, y_base,           cz + uz*hw + nz_d*FOF],  # 1
+                    [cx + ux*hw + nx_d*FOF, y_base + door_h,  cz + uz*hw + nz_d*FOF],  # 2
+                    [cx - ux*hw + nx_d*FOF, y_base + door_h,  cz - uz*hw + nz_d*FOF],  # 3
+                    [cx - ux*hw - nx_d*FOF, y_base,           cz - uz*hw - nz_d*FOF],  # 4
+                    [cx + ux*hw - nx_d*FOF, y_base,           cz + uz*hw - nz_d*FOF],  # 5
+                    [cx + ux*hw - nx_d*FOF, y_base + door_h,  cz + uz*hw - nz_d*FOF],  # 6
+                    [cx - ux*hw - nx_d*FOF, y_base + door_h,  cz - uz*hw - nz_d*FOF],  # 7
                 ]
-                faces = [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]]
+                faces = [
+                    [0, 1, 2], [0, 2, 3],   # front face
+                    [7, 6, 5], [7, 5, 4],   # back face
+                    [0, 4, 5], [0, 5, 1],   # bottom edge
+                    [1, 5, 6], [1, 6, 2],   # right edge
+                    [2, 6, 7], [2, 7, 3],   # top edge
+                    [3, 7, 4], [3, 4, 0],   # left edge
+                ]
                 meshes.append({
                     "element_id": f"int_door_{_uuid.uuid4().hex[:6]}",
                     "element_type": "interior_door",

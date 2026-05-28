@@ -105,7 +105,7 @@ const FLOOR_ROOM_TYPES = new Set([
   'bedroom','living','kitchen','bathroom','dining',
   'foyer','office','pantry','mudroom','walk_in_closet',
   'family_room','bonus_room','loft','media_room','library','gym',
-  'laundry','corridor','stair',
+  'laundry','corridor',
   'garage','mechanical','utility','half_bath',
 ]);
 

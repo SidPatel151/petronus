@@ -129,7 +129,7 @@ class FacadeGenerator:
             face_offset = 0.15
             band_h_frac = 0.30
             add_bands = True
-        elif arch_style in ("modern", "minimalist", "contemporary"):
+        elif arch_style in ("modern", "minimalist", "contemporary", "contemporary_box"):
             # Clean flat facade, no spandrel bands, designed windows (not curtain wall)
             add_bands = False
             window_ratio = min(max(window_ratio, 0.40), 0.52)   # cap — not full glass wall
@@ -147,9 +147,9 @@ class FacadeGenerator:
         if window_style == "tall_narrow":
             win_h_frac = 0.65
             win_w_cap  = 0.85
-        elif window_style == "wide":
+        elif window_style in ("wide", "large_horizontal"):
             win_h_frac = 0.38
-            win_w_cap  = 2.2
+            win_w_cap  = 2.4
         else:  # standard
             win_h_frac = 0.50
             win_w_cap  = 1.8
