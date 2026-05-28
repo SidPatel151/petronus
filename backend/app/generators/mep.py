@@ -71,7 +71,7 @@ CFM_PER_100SQFT = {
     "bedroom": 25, "living": 30, ""
     ""
     "": 40, "bathroom": 50,
-    "dining": 20, "corridor": 15, "stair": 10,
+    "dining": 20, "corridor": 15,
 }
 
 # ASHRAE duct sizing: (max_cfm, width_in, height_in, diameter_in_round)
@@ -201,14 +201,8 @@ class MEPRouter:
         elements = []
         total_floors = len(levels)
 
-        # ── Riser location: prefer stair core ──
-        stair_rooms = [r for r in rooms if r.type == "stair"]
-        if stair_rooms:
-            rx, rz = self._centroid(stair_rooms[0])
-        elif rooms:
-            rx, rz = self._building_centroid(rooms)
-        else:
-            rx, rz = 0.0, 0.0
+        # ── Riser location: utility/mechanical chase, never through stairwell ──
+        rx, rz = self._mep_chase_position(rooms) if rooms else (0.0, 0.0)
 
         riser_top = total_floors * floor_h
 
@@ -1127,3 +1121,32 @@ class MEPRouter:
         cx = sum(self._centroid(r)[0] * r.area_sqft for r in rooms) / total
         cz = sum(self._centroid(r)[1] * r.area_sqft for r in rooms) / total
         return cx, cz
+
+    def _mep_chase_position(self, rooms: List[Room]) -> Tuple[float, float]:
+        """Best position for a vertical MEP riser/stack.
+
+        Priority:
+          1. Utility / mechanical / laundry room — dedicated service space.
+          2. Corridor — wide enough for a wall chase without blocking egress.
+          3. Kitchen or bathroom on the ground floor — wet-wall alignment.
+          4. Building centroid of all non-stair rooms.
+
+        Stairwells are explicitly excluded: they are open voids and often
+        fire-rated enclosures — MEP cannot pass through them.
+        """
+        CHASE_PREFERRED = ("utility", "mechanical", "laundry")
+        CHASE_OK        = ("corridor", "hall", "hallway")
+        CHASE_WET       = ("kitchen", "bathroom")
+
+        non_stair = [r for r in rooms if r.type != "stair"]
+        if not non_stair:
+            return 0.0, 0.0
+
+        for preferred in (CHASE_PREFERRED, CHASE_OK, CHASE_WET):
+            candidates = [r for r in non_stair if r.type in preferred and r.level == 0]
+            if not candidates:
+                candidates = [r for r in non_stair if r.type in preferred]
+            if candidates:
+                return self._centroid(candidates[0])
+
+        return self._building_centroid(non_stair)
