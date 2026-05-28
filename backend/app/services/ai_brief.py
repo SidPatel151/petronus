@@ -6,6 +6,8 @@ import json
 import asyncio
 from typing import Dict, Any, List
 
+from app.constants import CALIFORNIA_CODE_REFERENCES
+
 
 def _get_api_key() -> str:
     try:
@@ -55,7 +57,20 @@ async def get_design_brief(
         priority = spec_dict.get("priority", "cost")
         units = spec_dict.get("unit_count") or "unspecified"
 
-        prompt = f"""You are an expert California residential architect. Given this site and its neighbors, output a concise JSON design brief for a new multi-family building.
+        code_reference_list = "\n".join(f"- {c}" for c in CALIFORNIA_CODE_REFERENCES)
+        prompt = f"""You are an expert California residential architect and structural engineer. Given this site and its neighbors, output a concise JSON design brief for a new multi-family building.
+
+COMPLIANCE CODES TO FOLLOW STRICTLY:
+{code_reference_list}
+
+STRUCTURAL & SEISMIC REQUIREMENTS (CRITICAL):
+- Seismic Design Category (SDC): {site_ctx_dict.get('seismic_category', 'D')}
+- All buildings must resist lateral forces per ASCE 7-22 and IBC Section 1613
+- In SDC D+: Special ductile detailing required; soft stories forbidden
+- Foundation must accommodate liquefaction risk per IBC 1817
+- All MEP >2.5in diameter must have seismic bracing per ASCE 7 Chapter 13
+- Equipment >100 lbs must be anchored; piping requires support every 8-12 ft
+- Ductwork requires diagonal strut bracing; floor diaphragms must be continuous
 
 SITE:
 - Parcel: {parcel_sqft:.0f} sqft
