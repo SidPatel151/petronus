@@ -529,12 +529,15 @@ class ComplianceEngine:
             ))
         
         return issues
+        return issues
 
+    def _check_egress(self, model: BuildingModel) -> List[ComplianceIssue]:
+        """Check for required exits and occupant egress per floor."""
         issues = []
         for level_idx in set(r.level for r in model.rooms):
             stairs = [r for r in model.rooms if r.type == "stair" and r.level == level_idx]
             unit_rooms = [r for r in model.rooms if r.type == "unit" and r.level == level_idx]
-            total_area = sum(r.area_sqft for r in unit_rooms)
+            total_area = sum(getattr(r, 'area_sqft', 0) for r in unit_rooms)
             occupant_load = int(total_area / 200)  # IBC residential: 200 sqft/person
             if occupant_load > 10 and len(stairs) < 2:
                 issues.append(ComplianceIssue(
