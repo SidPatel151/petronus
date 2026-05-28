@@ -118,6 +118,17 @@ PRIORITY_SQFT_POSITION: dict[str, float] = {
     "light": 0.5, "daylight": 0.5, "space": 1.0,
 }
 
+CALIFORNIA_CODE_REFERENCES: list[str] = [
+    "Part 3: California Electrical Code (CEC)",
+    "Part 4: California Mechanical Code (CMC)",
+    "Part 5: California Plumbing Code (CPC)",
+    "Part 6: California Energy Code",
+    "International Building Code (IBC)",
+    "National Electrical Code (NEC)",
+    "International Mechanical Code (IMC)",
+    "ICC/MBI 1210 Standard",
+]
+
 
 def sfr_target_sqft(bedrooms: int, priority: str) -> int:
     """Return target sqft for SFR/ADU based on bedroom count and priority."""
