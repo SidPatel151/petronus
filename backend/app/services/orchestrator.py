@@ -10,7 +10,7 @@ from app.services.site_context import SiteContextService
 from app.services.ai_brief import get_design_brief
 from app.generators.massing import MassingGenerator
 from app.generators.floorplan import FloorplanGenerator
-from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS
+from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS, ADU_MAX_SQFT
 from app.generators.mep import MEPRouter
 from app.generators.compliance import ComplianceEngine
 from app.generators.facade import FacadeGenerator, extract_neighbor_style
@@ -48,9 +48,9 @@ class GenerationOrchestrator:
 
         # Clamp bedrooms
         if is_sfr:
-            br = getattr(spec, 'bedrooms', None) or 3
-            max_br = getattr(spec, 'max_bedrooms', None) or PLATFORM_MAX_BEDROOMS
-            br = min(br, max_br, PLATFORM_MAX_BEDROOMS)
+            br = getattr(spec, 'bedrooms', None) or (1 if is_adu else 3)
+            max_br = getattr(spec, 'max_bedrooms', None) or (2 if is_adu else PLATFORM_MAX_BEDROOMS)
+            br = min(br, max_br, 2 if is_adu else PLATFORM_MAX_BEDROOMS)
             updates['bedrooms'] = br
 
         # Clamp stories
@@ -61,6 +61,8 @@ class GenerationOrchestrator:
         if max_h:
             floor_h = spec.floor_to_floor_height_ft or 10.0
             max_floors = min(max_floors, max(1, int(max_h / floor_h)))
+        if is_adu:
+            max_floors = min(max_floors, 2)  # CA AB-68: ADU max 2 stories
         stories = min(stories, max_floors, PLATFORM_MAX_STORIES)
         updates['stories'] = stories
 
@@ -73,7 +75,8 @@ class GenerationOrchestrator:
         # Clamp target area: user max_sqft → then platform cap
         raw_area = updates.get('target_gross_area_sqft') or spec.target_gross_area_sqft or 0
         user_max = getattr(spec, 'max_sqft', None)
-        platform_cap = PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT
+        # ADU hard cap: CA law (AB-68/AB-881) limits to 1,200 sqft
+        platform_cap = ADU_MAX_SQFT if is_adu else (PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT)
         if raw_area > 0:
             capped = raw_area
             if user_max:
@@ -257,8 +260,10 @@ class GenerationOrchestrator:
         facade_meshes = self.facade_gen.generate(chosen, walls, levels, neighbor_style, design_brief)
         model.neighbor_style = neighbor_style
         model.design_brief = design_brief
-        model.meshes = facade_meshes  # type: ignore
-        log.append(f"Facade: {len(facade_meshes)} detail meshes (windows, balconies, parapet)")
+        stair_meshes = self._generate_stair_meshes(rooms, levels, spec)
+        door_meshes  = self._generate_interior_door_meshes(rooms, walls, levels, spec)
+        model.meshes = facade_meshes + stair_meshes + door_meshes  # type: ignore
+        log.append(f"Facade: {len(facade_meshes)} detail meshes + {len(door_meshes)} interior doors")
 
         # Step 6: MEP routing
         self.progress_cb(72, "Routing MEP systems…")
@@ -330,6 +335,261 @@ class GenerationOrchestrator:
         self.progress_cb(100, "Done!")
         log.append("Generation complete")
         return model
+
+    def _generate_stair_meshes(self, rooms, levels, spec) -> list:
+        """
+        Build 3D stair step meshes for every stair room that has a level above it.
+        Each stair room polygon (x, z in metres) becomes a set of step boxes rising
+        from the floor elevation of its level up to the next level's elevation.
+        """
+        import uuid as _uuid
+        meshes = []
+        floor_h_m = spec.floor_to_floor_height_ft * 0.3048
+        level_elevations = {lvl.index: lvl.elevation_ft * 0.3048 for lvl in levels}
+        max_level = max(level_elevations.keys()) if level_elevations else 0
+
+        # One staircase per level — take the first stair room found on each level
+        # (the ground-floor ADU program places two stair fragments; only one set of steps needed).
+        seen_levels: set = set()
+        stair_rooms = []
+        for r in rooms:
+            if r.type == "stair" and r.level not in seen_levels:
+                seen_levels.add(r.level)
+                stair_rooms.append(r)
+
+        for room in stair_rooms:
+            lvl = room.level
+            if lvl >= max_level:
+                continue  # top floor stair landing — no steps needed
+            y_bot = level_elevations.get(lvl, lvl * floor_h_m)
+            y_top = level_elevations.get(lvl + 1, y_bot + floor_h_m)
+            rise_total = y_top - y_bot
+            if rise_total <= 0:
+                continue
+
+            poly = room.polygon  # [[x, z], ...]
+            if len(poly) < 3:
+                continue
+            xs = [p[0] for p in poly]
+            zs = [p[1] for p in poly]
+            rx0, rx1 = min(xs), max(xs)
+            rz0, rz1 = min(zs), max(zs)
+            stair_w = rx1 - rx0
+            stair_d = rz1 - rz0
+            if stair_w < 0.3 or stair_d < 0.3:
+                continue
+
+            # Run steps along the longer axis; use 60% of the cross-dimension,
+            # centred, so the stair is visually narrow and stays inside the room.
+            run_along_z = stair_d >= stair_w
+            span = stair_d if run_along_z else stair_w
+            cross = stair_w if run_along_z else stair_d
+            tread_w = cross * 0.60        # 60% of room cross-width
+            tread_inset = cross * 0.20    # centred gap on each side
+
+            n_steps = max(4, round(rise_total / 0.18))
+            step_rise = rise_total / n_steps
+            step_run = span / n_steps
+
+            for s in range(n_steps):
+                s_y_bot = y_bot
+                s_y_top = y_bot + step_rise * (s + 1)
+                if run_along_z:
+                    sz0 = rz0 + step_run * s
+                    sz1 = sz0 + step_run
+                    sx0 = rx0 + tread_inset
+                    sx1 = rx0 + tread_inset + tread_w
+                else:
+                    sx0 = rx0 + step_run * s
+                    sx1 = sx0 + step_run
+                    sz0 = rz0 + tread_inset
+                    sz1 = rz0 + tread_inset + tread_w
+
+                sv = [
+                    [sx0, s_y_bot, sz0], [sx1, s_y_bot, sz0],
+                    [sx1, s_y_bot, sz1], [sx0, s_y_bot, sz1],
+                    [sx0, s_y_top, sz0], [sx1, s_y_top, sz0],
+                    [sx1, s_y_top, sz1], [sx0, s_y_top, sz1],
+                ]
+                sf = [
+                    [4, 5, 6], [4, 6, 7],  # top tread
+                    [0, 1, 5], [0, 5, 4],  # front riser
+                    [0, 4, 7], [0, 7, 3],  # left side
+                    [1, 2, 6], [1, 6, 5],  # right side
+                ]
+                meshes.append({
+                    "element_id": f"stair_{room.id}_step_{s}_{_uuid.uuid4().hex[:4]}",
+                    "element_type": "stair",
+                    "vertices": sv, "faces": sf,
+                    "level": lvl, "color": "#b8996a",
+                })
+        return meshes
+
+    def _generate_interior_door_meshes(self, rooms, walls, levels, spec) -> list:
+        """
+        BFS-based interior door placement.
+
+        'Open' room types (corridor, living, stair, foyer…) are passthrough — no door
+        is needed to enter them.  'Closed' rooms (bedroom, bathroom, kitchen…) receive
+        exactly ONE door placed on the wall that first connects them to the reachable
+        frontier, producing minimum necessary doors while keeping all rooms accessible.
+
+        Algorithm:
+          1. For each interior wall, offset its midpoint ±15 cm along the normal and
+             ray-cast into room polygons to find the two adjacent rooms.
+          2. Build a room adjacency graph from those pairs.
+          3. BFS from all open rooms; when we first reach a closed room, record its
+             incoming wall for door placement.  Open→open transitions get no door.
+        """
+        import math as _math
+        import uuid as _uuid
+
+        OPEN_TYPES = {
+            'corridor', 'hallway', 'stair', 'living', 'foyer',
+            'entry', 'dining', 'unit', 'garage', 'utility', 'laundry',
+        }
+        NO_DOOR_TYPES = {'stair', 'attic', 'roof'}  # never need a door
+
+        floor_h_m = spec.floor_to_floor_height_ft * 0.3048
+        level_elevations = {lvl.index: lvl.elevation_ft * 0.3048 for lvl in levels}
+
+        # ── Inline ray-cast point-in-polygon (avoids shapely import) ─────────
+        def _pip(px: float, pz: float, poly) -> bool:
+            inside = False
+            n = len(poly)
+            j = n - 1
+            for i in range(n):
+                xi, zi = poly[i][0], poly[i][1]
+                xj, zj = poly[j][0], poly[j][1]
+                if ((zi > pz) != (zj > pz)):
+                    denom = zj - zi
+                    if abs(denom) > 1e-12:
+                        if px < (xj - xi) * (pz - zi) / denom + xi:
+                            inside = not inside
+                j = i
+            return inside
+
+        meshes: list = []
+        int_walls = [w for w in walls if not w.is_exterior]
+        level_indices = sorted(set(r.level for r in rooms))
+
+        for lvl_idx in level_indices:
+            lvl_rooms = [r for r in rooms if r.level == lvl_idx]
+            y_base = level_elevations.get(lvl_idx, lvl_idx * floor_h_m)
+
+            if len(lvl_rooms) < 2:
+                continue
+
+            lvl_int_walls = [w for w in int_walls if w.level == lvl_idx]
+
+            # ── Step 1: map each interior wall to its two adjacent rooms ──────
+            # Offset midpoint ±15 cm along wall normal, PIP-test into every room.
+            wall_to_rooms: dict = {}   # wall.id → (room_id_a, room_id_b, wall)
+            for wall in lvl_int_walls:
+                s, e = wall.start, wall.end
+                dx = e[0] - s[0]
+                dz = e[1] - s[1]
+                wl = _math.sqrt(dx * dx + dz * dz)
+                if wl < 0.1:
+                    continue
+                nx, nz = -dz / wl, dx / wl
+                mx = (s[0] + e[0]) / 2
+                mz = (s[1] + e[1]) / 2
+                OFFSET = 0.15
+
+                sides: list = []
+                for sign in (-1, 1):
+                    tx, tz = mx + nx * OFFSET * sign, mz + nz * OFFSET * sign
+                    hit = None
+                    for room in lvl_rooms:
+                        if room.polygon and _pip(tx, tz, room.polygon):
+                            hit = room.id
+                            break
+                    sides.append(hit)
+
+                if sides[0] and sides[1] and sides[0] != sides[1]:
+                    wall_to_rooms[wall.id] = (sides[0], sides[1], wall)
+
+            # ── Step 2: build room adjacency graph ────────────────────────────
+            room_nbrs: dict = {r.id: [] for r in lvl_rooms}
+            for wid, (ra, rb, wall) in wall_to_rooms.items():
+                room_nbrs[ra].append((rb, wall))
+                room_nbrs[rb].append((ra, wall))
+
+            room_by_id = {r.id: r for r in lvl_rooms}
+
+            # ── Step 3: BFS from open rooms ───────────────────────────────────
+            open_ids = [r.id for r in lvl_rooms if r.type in OPEN_TYPES]
+            if not open_ids:
+                # Fallback: start from the largest room on this level
+                open_ids = [max(lvl_rooms, key=lambda r: r.area_sqft).id]
+
+            reachable: set = set(open_ids)
+            queue: list = list(open_ids)
+            door_walls: list = []
+
+            while queue:
+                cur_id = queue.pop(0)
+                cur_type = room_by_id[cur_id].type if cur_id in room_by_id else ''
+                cur_open = cur_type in OPEN_TYPES
+
+                for nbr_id, wall in room_nbrs.get(cur_id, []):
+                    if nbr_id in reachable:
+                        continue
+                    reachable.add(nbr_id)
+                    queue.append(nbr_id)
+
+                    nbr_room = room_by_id.get(nbr_id)
+                    if nbr_room is None:
+                        continue
+
+                    # No door for stairs/attic (always open passages)
+                    if nbr_room.type in NO_DOOR_TYPES:
+                        continue
+
+                    nbr_open = nbr_room.type in OPEN_TYPES
+
+                    # Door only if destination is a closed room.
+                    # Open → open (living→corridor) = no door.
+                    if not (cur_open and nbr_open):
+                        door_walls.append(wall)
+
+            # ── Step 4: generate door mesh for each recorded wall ──────────────
+            for wall in door_walls:
+                s, e = wall.start, wall.end
+                dx = e[0] - s[0]
+                dz = e[1] - s[1]
+                wl = _math.sqrt(dx * dx + dz * dz)
+                if wl < 1.0:
+                    continue
+
+                ux, uz = dx / wl, dz / wl
+                cx = (s[0] + e[0]) / 2
+                cz = (s[1] + e[1]) / 2
+
+                door_w = min(0.92, wl - 0.25)
+                if door_w < 0.7:
+                    continue
+                door_h = 2.05
+                hw = door_w / 2
+
+                verts = [
+                    [cx - ux * hw, y_base,           cz - uz * hw],
+                    [cx + ux * hw, y_base,           cz + uz * hw],
+                    [cx + ux * hw, y_base + door_h,  cz + uz * hw],
+                    [cx - ux * hw, y_base + door_h,  cz - uz * hw],
+                ]
+                faces = [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]]
+                meshes.append({
+                    "element_id": f"int_door_{_uuid.uuid4().hex[:6]}",
+                    "element_type": "interior_door",
+                    "vertices": verts,
+                    "faces": faces,
+                    "level": lvl_idx,
+                    "color": "#8b6f47",
+                })
+
+        return meshes
 
     async def _safe_infra(self, spec: ProjectSpec) -> dict:
         """Fetch nearby infrastructure, return empty dict on failure."""

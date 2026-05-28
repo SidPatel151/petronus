@@ -649,17 +649,21 @@ export default function ProjectWizard() {
 
         {/* Bedrooms + Bathrooms — only shown for single-family / ADU */}
         {['single_family', 'adu'].includes((spec as any).building_use || 'multi_family') && (() => {
-          const br = (spec as any).bedrooms || 3;
-          const ba = (spec as any).bathrooms ?? 2;
+          const isAdu = (spec as any).building_use === 'adu';
+          const br = (spec as any).bedrooms ?? (isAdu ? 1 : 3);
+          const ba = (spec as any).bathrooms ?? (isAdu ? 1 : 2);
           const pri = (spec.priority || 'cost') as string;
-          const [lo, hi] = SFR_SQFT_RANGES[br] ?? [1200, 1900];
-          const suggested = sfrTargetSqft(br, pri);
-          const baOptions = [1, 1.5, 2, 2.5, 3, 3.5];
+          // ADU sqft ranges capped at CA legal limit of 1,200 sqft
+          const ADU_SQFT: Record<number, [number, number]> = { 0: [300, 500], 1: [500, 800], 2: [700, 1200] };
+          const [lo, hi] = isAdu ? (ADU_SQFT[br] ?? [500, 800]) : (SFR_SQFT_RANGES[br] ?? [1200, 1900]);
+          const suggested = Math.min(isAdu ? 1200 : 99999, sfrTargetSqft(Math.max(1, br), pri));
+          const baOptions = isAdu ? [1, 1.5, 2] : [1, 1.5, 2, 2.5, 3, 3.5];
+          const brOptions = isAdu ? [0, 1, 2] : [1, 2, 3, 4, 5];
           return (
             <>
-              <Field label="Bedrooms (1–5)">
+              <Field label={isAdu ? 'Bedrooms (Studio–2BR)' : 'Bedrooms (1–5)'}>
                 <div className="flex gap-1.5">
-                  {[1,2,3,4,5].map((n) => {
+                  {brOptions.map((n) => {
                     const active = br === n;
                     return (
                       <button key={n} onClick={() => updateSpec({ bedrooms: n } as any)}
@@ -669,16 +673,15 @@ export default function ProjectWizard() {
                           borderColor: active ? 'var(--accent-gold)' : 'var(--border)',
                           color: active ? 'var(--accent-gold)' : 'var(--text-secondary)',
                         }}>
-                        {n}
+                        {n === 0 ? 'S' : n}
                       </button>
                     );
                   })}
                 </div>
                 <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
-                  {br}BR range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
-                  <span className="ml-2 text-[var(--accent-gold)]">
-                    ({pri} target: ~{suggested.toLocaleString()} sqft)
-                  </span>
+                  {br === 0 ? 'Studio' : `${br}BR`} range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
+                  {isAdu && <span className="ml-2 text-[var(--accent-amber)]">CA max 1,200 sqft</span>}
+                  {!isAdu && <span className="ml-2 text-[var(--accent-gold)]">({pri} target: ~{suggested.toLocaleString()} sqft)</span>}
                 </div>
               </Field>
               <Field label="Bathrooms">
@@ -724,23 +727,37 @@ export default function ProjectWizard() {
                   : 'Set a target or select a site for auto-calc'}
               </div>
             )}
-            {spec.target_gross_area_sqft && parcelAreaSqft && (() => {
-              const singleFloorMax = parcelAreaSqft * 0.85;
-              const multiFloorMax = singleFloorMax * stories;
-              if (spec.target_gross_area_sqft > multiFloorMax) {
+            {(() => {
+              const buildingUseVal = (spec as any).building_use || 'multi_family';
+              const isAduVal = buildingUseVal === 'adu';
+              const isSfrVal = buildingUseVal === 'single_family';
+              const platformCap = isAduVal ? 1200 : isSfrVal ? 5500 : null;
+              const enteredArea = spec.target_gross_area_sqft;
+              if (platformCap && enteredArea && enteredArea > platformCap) {
                 return (
-                  <div className="text-[10px] font-mono text-[var(--accent-red)]">
-                    ✗ {spec.target_gross_area_sqft.toLocaleString()} sqft exceeds {stories}-floor max (~{Math.round(multiFloorMax).toLocaleString()} sqft) — add more floors or reduce target
+                  <div className="text-[10px] font-mono text-[var(--accent-amber)]">
+                    ⚠ Will be capped at {platformCap.toLocaleString()} sqft at generation — {isAduVal ? 'CA ADU law (AB-68)' : 'platform SFR limit'}
                   </div>
                 );
               }
-              if (spec.target_gross_area_sqft > singleFloorMax) {
-                const floorsNeeded = Math.ceil(spec.target_gross_area_sqft / singleFloorMax);
-                return (
-                  <div className="text-[10px] font-mono text-[var(--accent-amber)]">
-                    ⚠ Target needs ~{floorsNeeded} floors to fit on this parcel ({parcelAreaSqft.toLocaleString()} sqft land)
-                  </div>
-                );
+              if (enteredArea && parcelAreaSqft) {
+                const singleFloorMax = parcelAreaSqft * 0.85;
+                const multiFloorMax = singleFloorMax * stories;
+                if (enteredArea > multiFloorMax) {
+                  return (
+                    <div className="text-[10px] font-mono text-[var(--accent-red)]">
+                      ✗ {enteredArea.toLocaleString()} sqft exceeds {stories}-floor max (~{Math.round(multiFloorMax).toLocaleString()} sqft) — add more floors or reduce target
+                    </div>
+                  );
+                }
+                if (enteredArea > singleFloorMax) {
+                  const floorsNeeded = Math.ceil(enteredArea / singleFloorMax);
+                  return (
+                    <div className="text-[10px] font-mono text-[var(--accent-amber)]">
+                      ⚠ Target needs ~{floorsNeeded} floors to fit on this parcel ({parcelAreaSqft.toLocaleString()} sqft land)
+                    </div>
+                  );
+                }
               }
               return null;
             })()}

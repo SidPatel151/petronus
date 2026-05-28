@@ -147,12 +147,21 @@ class MEPRouter:
         else:
             rooms_inside = rooms
 
+        is_adu = getattr(spec, 'building_use', None) in ('adu',)
+        try:
+            from app.constants import BuildingUse as _BU
+            is_adu = is_adu or getattr(spec, 'building_use', None) == _BU.adu
+        except Exception:
+            pass
+
         elements = []
         elements.extend(self._route_fire_protection(rooms_inside, levels, floor_h, fine))
-        elements.extend(self._route_plumbing(rooms_inside, walls, levels, floor_h, bath_count))
+        elements.extend(self._route_plumbing(rooms_inside, walls, levels, floor_h, bath_count, is_adu=is_adu))
         elements.extend(self._route_hvac(rooms_inside, levels, spec.hvac_preference, floor_h))
-        elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine))
+        elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine, is_adu=is_adu))
         elements.extend(self._place_furniture(rooms_inside, levels, floor_h))
+        if is_adu:
+            elements.extend(self._adu_sewer_lateral(rooms_inside, walls))
 
         # Final containment pass — drop any element whose horizontal footprint
         # (x, z) start or end lands outside the building interior.
@@ -286,7 +295,7 @@ class MEPRouter:
 
     def _route_plumbing(
         self, rooms: List[Room], walls: List[Wall], levels: List[Level], floor_h: float,
-        bath_count: Optional[float] = None,
+        bath_count: Optional[float] = None, is_adu: bool = False,
     ) -> List[MEPElement]:
         """
         Route domestic water supply (hot + cold) and waste/vent.
@@ -364,10 +373,12 @@ class MEPRouter:
         else:
             hwh_cx, hwh_cz = stack_positions[0] if stack_positions else (0.0, 0.0)
 
+        # ADU: prefer heat pump water heater (CA Title 24 / energy compliance)
+        hwh_type = "heat_pump_water_heater" if is_adu else "water_heater"
         elements.append(MEPElement(
             id="hot_water_heater",
             system="plumbing",
-            type="water_heater",
+            type=hwh_type,
             start=[hwh_cx, 0.0, hwh_cz],
             level=0,
         ))
@@ -617,7 +628,7 @@ class MEPRouter:
 
     def _route_electrical(
         self, rooms: List[Room], walls: List[Wall], levels: List[Level],
-        floor_h: float, power_connection: dict, fine: dict
+        floor_h: float, power_connection: dict, fine: dict, is_adu: bool = False,
     ) -> List[MEPElement]:
         """
         NEC-compliant residential electrical:
@@ -644,12 +655,21 @@ class MEPRouter:
         panel_z = min_z + 0.5
         panel_y = 0.0   # ground floor
 
+        # ADU electrical service decision (NEC 230.2, CA Title 24):
+        # ≤600 sqft → sub-panel fed from main house (60–100A feeder)
+        # >600 sqft → new utility service drop (100A minimum)
+        adu_area_sqft = sum(r.area_sqft for r in rooms)
+        adu_needs_new_service = is_adu and adu_area_sqft > 600
+        panel_type = "main_panel" if (not is_adu or adu_needs_new_service) else "sub_panel"
+        panel_amps = 100 if adu_needs_new_service else (60 if is_adu else 200)
+
         elements.append(MEPElement(
             id="main_panel",
             system="electrical",
-            type="main_panel",
+            type=panel_type,
             start=[panel_x, panel_y + 1.2, panel_z],
             level=0,
+            metadata={"amps": panel_amps, "adu_service": "new_drop" if adu_needs_new_service else ("sub_panel_from_house" if is_adu else "standard")},
         ))
 
         # Service conduit: from front wall to panel — stays inside building
@@ -1044,6 +1064,47 @@ class MEPRouter:
                     level=room.level, width_in=84, height_in=28,
                 ))
 
+        return elements
+
+    # ── ADU-specific routing ──────────────────────────────────────────────
+
+    def _adu_sewer_lateral(self, rooms: List[Room], walls: List[Wall]) -> List[MEPElement]:
+        """
+        ADU sewer lateral: exits the ADU and connects to the primary home's existing sewer.
+        IPC/CPC require minimum 1/4" per foot (2%) slope on 4" ABS/PVC lateral.
+        Typical ADU-to-main-sewer run: 20–40 ft.
+        """
+        elements = []
+        all_pts = [p for r in rooms for p in r.polygon]
+        if not all_pts:
+            return elements
+
+        # Exit from rear of ADU (max Z = away from street) — typical CA backyard ADU routing
+        min_x = min(p[0] for p in all_pts)
+        max_x = max(p[0] for p in all_pts)
+        max_z = max(p[1] for p in all_pts)
+        cx = (min_x + max_x) / 2
+
+        # Lateral exits building at sub-slab level (-0.30m) and runs toward primary house
+        # Assume primary home sewer is ~25ft (7.6m) behind the ADU rear wall
+        lateral_run_m = 7.6
+        slope = 0.021     # 1/4" per foot = 2.1% — just above IPC minimum
+        drop = lateral_run_m * slope
+
+        elements.append(MEPElement(
+            id="adu_sewer_lateral",
+            system="plumbing",
+            type="sewer_lateral",
+            start=[cx, -0.30, max_z],
+            end=[cx, -0.30 - drop, max_z + lateral_run_m],
+            level=0,
+            diameter_in=4.0,
+            metadata={
+                "slope_pct": round(slope * 100, 1),
+                "run_ft": round(lateral_run_m * 3.281, 1),
+                "note": "Ties into primary home sewer — verify invert elevation before permit",
+            },
+        ))
         return elements
 
     # ── Geometry helpers ──────────────────────────────────────────────────

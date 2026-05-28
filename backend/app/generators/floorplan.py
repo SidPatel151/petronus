@@ -392,8 +392,10 @@ class FloorplanGenerator:
         all_rooms: List[Room] = []
         all_walls: List[Wall] = []
 
-        is_sfr = getattr(spec, 'building_use', None) in ('single_family', BuildingUse.single_family)
-        bedrooms = getattr(spec, 'bedrooms', None) or 3
+        is_sfr = getattr(spec, 'building_use', None) in (
+            'single_family', 'adu', BuildingUse.single_family, BuildingUse.adu
+        )
+        bedrooms = getattr(spec, 'bedrooms', None) or 1
 
         for level in levels:
             if is_sfr:
@@ -637,14 +639,28 @@ class FloorplanGenerator:
         minx, miny, maxx, maxy = bounds
         fp_interior = footprint.buffer(-FP_INSET)
 
+        def _clip_polygon(raw_shape) -> List[List[float]]:
+            """Clip a raw rectangular polygon to fp_interior so it never extends outside walls."""
+            try:
+                clipped = fp_interior.intersection(raw_shape)
+                if hasattr(clipped, 'geoms'):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                if clipped.is_empty or not hasattr(clipped, 'exterior'):
+                    return list(raw_shape.exterior.coords[:-1])
+                return [[x, y] for x, y in clipped.exterior.coords[:-1]]
+            except Exception:
+                return list(raw_shape.exterior.coords[:-1])
+
         # Garage: front 60% of depth
         garage_d = d * 0.60
         garage_rect = (minx, miny, maxx, miny + garage_d)
+        garage_shape = Polygon([[minx, miny], [maxx, miny], [maxx, miny + garage_d], [minx, miny + garage_d]])
+        garage_poly = _clip_polygon(garage_shape)
         rooms.append(Room(
             id=f"victorian_garage_{lvl}",
             type="garage",
             unit_id="house",
-            polygon=[[minx, miny], [maxx, miny], [maxx, miny + garage_d], [minx, miny + garage_d]],
+            polygon=garage_poly,
             level=lvl,
             area_sqft=w * garage_d * 10.764,
         ))
@@ -654,11 +670,13 @@ class FloorplanGenerator:
         util_rect = (minx, util_y0, maxx, maxy)
         # Split rear into laundry (left 55%) and mechanical (right 45%)
         split_x = minx + w * 0.55
+        laundry_shape = Polygon([[minx, util_y0], [split_x, util_y0], [split_x, maxy], [minx, maxy]])
+        mech_shape = Polygon([[split_x, util_y0], [maxx, util_y0], [maxx, maxy], [split_x, maxy]])
         rooms.append(Room(
             id=f"victorian_laundry_{lvl}",
             type="laundry",
             unit_id="house",
-            polygon=[[minx, util_y0], [split_x, util_y0], [split_x, maxy], [minx, maxy]],
+            polygon=_clip_polygon(laundry_shape),
             level=lvl,
             area_sqft=(split_x - minx) * (maxy - util_y0) * 10.764,
         ))
@@ -666,7 +684,7 @@ class FloorplanGenerator:
             id=f"victorian_mechanical_{lvl}",
             type="mechanical",
             unit_id="house",
-            polygon=[[split_x, util_y0], [maxx, util_y0], [maxx, maxy], [split_x, maxy]],
+            polygon=_clip_polygon(mech_shape),
             level=lvl,
             area_sqft=(maxx - split_x) * (maxy - util_y0) * 10.764,
         ))
@@ -782,10 +800,12 @@ class FloorplanGenerator:
         n_floors = len(all_levels)
         br = max(1, min(5, bedrooms))
 
-        # ── Archetype override: Victorian ground floor = garage + utility ─────
+        # ── Archetype overrides ───────────────────────────────────────────────
         archetype_id = (archetype or {}).get('id', '')
         if archetype_id == 'victorian_narrow_lot' and lvl == 0:
             return self._layout_victorian_ground(footprint, bounds, w, d, level)
+        if archetype_id == 'adu_compact':
+            return self._layout_adu_floor(footprint, bounds, w, d, level, all_levels, bedrooms, archetype)
 
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
@@ -866,9 +886,188 @@ class FloorplanGenerator:
                 x_cursor += rw
             y_cursor += row_d
 
-        # Phase 2: emit one interior wall per unique shared edge, skip exterior edges
+        # Phase 2: stair void — multi-story SFR needs an opening on every floor so the
+        # upper level doesn't visually cover the stairwell. Place a stair room at the
+        # right edge of the floor plate, centred in depth, on every floor.
+        if n_floors > 1:
+            maxx_sfr = minx + w
+            stair_w_sfr = min(w * 0.15, 1.5)
+            stair_d_sfr = min(d * 0.28, 3.5)
+            sr_x0 = maxx_sfr - stair_w_sfr
+            sr_y0 = miny + (d - stair_d_sfr) / 2
+            raw_sfr_stair = Polygon([
+                [sr_x0, sr_y0], [maxx_sfr, sr_y0],
+                [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+            ])
+            try:
+                cs = fp_interior.intersection(raw_sfr_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior'):
+                    sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                else:
+                    sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
+            except Exception:
+                sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
+            rooms.append(Room(
+                id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                type="stair",
+                unit_id="house",
+                polygon=sfr_stair_poly,
+                level=lvl,
+                area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+            ))
+
+        # Phase 3: emit one interior wall per unique shared edge, skip exterior edges
         self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
+        return rooms, walls
+
+    # ── ADU programs derived from adu_compact.json blueprint analysis ─────────
+    # Row-based program tuples: (type, frac_w, frac_d) — same encoding as SFR.
+    # Bedrooms key: 0=studio, 1=1BR (standard narrow), 2=2BR.
+    # Single-story 1BR variant (>800 sqft) falls through to 1BR since ADU
+    # generator will choose the right proportions from actual footprint size.
+    _ADU_GROUND: Dict[int, List[Dict]] = {
+        0: [  # Studio — single level, 380 sqft ~20x20
+            {"row_frac_d": 0.45, "rooms": [
+                {"type": "living",   "frac_w": 0.75},
+                {"type": "foyer",    "frac_w": 0.25},
+            ]},
+            {"row_frac_d": 0.35, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.55},
+                {"type": "bathroom", "frac_w": 0.45},
+            ]},
+            {"row_frac_d": 0.20, "rooms": [
+                {"type": "living",   "frac_w": 1.0},   # sleeping zone open to living
+            ]},
+        ],
+        1: [  # 1BR/1BA — 2-story 658 sqft, 25x14. Ground: living + kitchen + stair.
+            {"row_frac_d": 0.50, "rooms": [
+                {"type": "living",   "frac_w": 0.75},
+                {"type": "stair",    "frac_w": 0.25},
+            ]},
+            {"row_frac_d": 0.50, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.75},
+                {"type": "stair",    "frac_w": 0.25},
+            ]},
+        ],
+        2: [  # 2BR/2BA — 2-story 1155 sqft, 30x20. Ground: living + kitchen/island + entry + half-bath.
+            {"row_frac_d": 0.55, "rooms": [
+                {"type": "living",   "frac_w": 0.55},
+                {"type": "foyer",    "frac_w": 0.20},
+                {"type": "stair",    "frac_w": 0.25},
+            ]},
+            {"row_frac_d": 0.45, "rooms": [
+                {"type": "kitchen",  "frac_w": 0.60},
+                {"type": "bathroom", "frac_w": 0.20},
+                {"type": "stair",    "frac_w": 0.20},
+            ]},
+        ],
+    }
+
+    _ADU_UPPER: Dict[int, List[Dict]] = {
+        1: [  # 1BR upper: bedroom + bath + closet + stair landing (left spine matches L0)
+            {"row_frac_d": 0.60, "rooms": [
+                {"type": "bedroom",  "frac_w": 0.75},
+                {"type": "stair",    "frac_w": 0.25},
+            ]},
+            {"row_frac_d": 0.40, "rooms": [
+                {"type": "bathroom", "frac_w": 0.50},
+                {"type": "closet",   "frac_w": 0.25},
+                {"type": "hall",     "frac_w": 0.25},
+            ]},
+        ],
+        2: [  # 2BR upper: primary bed + bath, bedroom 2 + bath, hall + stair landing
+            {"row_frac_d": 0.25, "rooms": [
+                {"type": "hall",      "frac_w": 0.75},
+                {"type": "stair",     "frac_w": 0.25},
+            ]},
+            {"row_frac_d": 0.40, "rooms": [
+                {"type": "bedroom",   "frac_w": 0.50},
+                {"type": "bedroom",   "frac_w": 0.50},
+            ]},
+            {"row_frac_d": 0.35, "rooms": [
+                {"type": "bathroom",  "frac_w": 0.40},
+                {"type": "closet",    "frac_w": 0.20},
+                {"type": "bathroom",  "frac_w": 0.40},
+            ]},
+        ],
+    }
+
+    def _layout_adu_floor(
+        self, footprint, bounds, w, d, level: Level,
+        all_levels: List[Level], bedrooms: int,
+        archetype: Optional[Dict[str, Any]] = None,  # noqa: ARG002
+    ) -> Tuple[List[Room], List[Wall]]:
+        """ADU room layout: compact rectangle programs from adu_compact.json blueprints."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny = bounds[0], bounds[1]
+        n_floors = len(all_levels)
+
+        # Clamp bedrooms to what the ADU programs support (0=studio, 1=1BR, 2=2BR)
+        br = max(0, min(2, bedrooms))
+
+        if n_floors == 1 or br == 0:
+            # Single-story studio OR single-floor 1BR/2BR: use ground program only
+            row_program = self._ADU_GROUND.get(br, self._ADU_GROUND[1])
+        elif lvl == 0:
+            row_program = self._ADU_GROUND.get(br, self._ADU_GROUND[1])
+        else:
+            row_program = self._ADU_UPPER.get(br, self._ADU_UPPER[1])
+
+        # Normalize fractions so they always sum to 1.0
+        total_d = sum(r["row_frac_d"] for r in row_program)
+        row_program = [{**r, "row_frac_d": r["row_frac_d"] / total_d} for r in row_program]
+
+        fp_interior = footprint.buffer(-FP_INSET)
+        room_rects: List[Tuple[float, float, float, float]] = []
+        y_cursor = miny
+
+        for row in row_program:
+            row_d = d * row["row_frac_d"]
+            row_y0 = y_cursor
+            row_y1 = y_cursor + row_d
+            x_cursor = minx
+            for rdef in row["rooms"]:
+                rw = w * rdef["frac_w"]
+                rx0, rx1 = x_cursor, x_cursor + rw
+                cell_cx = (rx0 + rx1) / 2
+                cell_cy = (row_y0 + row_y1) / 2
+                if fp_interior.contains(Point(cell_cx, cell_cy)):
+                    cell_shape = Polygon([
+                        [rx0, row_y0], [rx1, row_y0],
+                        [rx1, row_y1], [rx0, row_y1],
+                    ])
+                    try:
+                        clipped = fp_interior.intersection(cell_shape)
+                        if hasattr(clipped, 'geoms'):
+                            clipped = max(clipped.geoms, key=lambda g: g.area)
+                        if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                            x_cursor += rw
+                            continue
+                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                        cb = clipped.bounds
+                        area = clipped.area * 10.764
+                    except Exception:
+                        poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                        cb = (rx0, row_y0, rx1, row_y1)
+                        area = rw * row_d * 10.764
+                    rooms.append(Room(
+                        id=f"adu_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type=rdef["type"],
+                        unit_id="adu",
+                        polygon=poly, level=lvl,
+                        area_sqft=area,
+                    ))
+                    room_rects.append((cb[0], cb[1], cb[2], cb[3]))
+                x_cursor += rw
+            y_cursor += row_d
+
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
         return rooms, walls

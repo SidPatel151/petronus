@@ -162,6 +162,22 @@ class FacadeGenerator:
         poly_cx = sum(p[0] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
         poly_cz = sum(p[1] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
 
+        # ── Entry door rules ─────────────────────────────────────────────────
+        # Front face = wall(s) with minimum average Z (street-facing in local coords).
+        # Only ONE exterior door per building, placed on the front face.
+        is_gabled_style = 'classic' in arch_style or 'gabled' in arch_style
+        front_face_z = (min((w.start[1] + w.end[1]) / 2 for w in ext_walls)
+                        if ext_walls else 0.0)
+        # For gabled (Victorian/SFR porch), door sill matches porch deck height.
+        if is_gabled_style and stories >= 1:
+            _porch_h = min(1.52, stories * floor_h * 0.35)
+            _step_rise = 0.19
+            _n_steps = max(2, round(_porch_h / _step_rise))
+            entry_sill_y = _n_steps * _step_rise
+        else:
+            entry_sill_y = 0.0
+        door_placed = False   # one door total per building
+
         for wall in ext_walls:
             s, e = wall.start, wall.end
             dx, dz = e[0] - s[0], e[1] - s[1]
@@ -229,8 +245,21 @@ class FacadeGenerator:
                 win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)
                 win_sill    = base_y + floor_h * (0.28 - window_ratio * 0.05)
 
+                # Pre-compute front-face status so we can skip windows over the door.
+                _wall_mid_z = (s[1] + e[1]) / 2
+                _is_front = _wall_mid_z <= front_face_z + 0.5
+
                 for i in range(num_windows):
                     t = (i + 0.5) / num_windows
+
+                    # Skip any window whose centre would land on the entry door zone.
+                    if lvl == 0 and _is_front and not door_placed:
+                        _t_door = 0.25
+                        _door_w = 1.05
+                        _clearance = (_door_w / 2 + win_w / 2 + 0.10) / wall_len
+                        if abs(t - _t_door) < _clearance:
+                            continue
+
                     wcx = s[0] + t * dx
                     wcz = s[1] + t * dz
                     hw = win_w / 2
@@ -261,15 +290,18 @@ class FacadeGenerator:
                             "color": "#1e293b" if arch_style in ("modern", "minimalist") else "#f5f0e8",
                         })
 
-                # ── Door on ground floor only ─────────────────────────────
-                if lvl == 0 and wall_len >= 2.0:
+                # ── Entry door: ONE door, front face only ─────────────────
+                wall_mid_z = (s[1] + e[1]) / 2
+                is_front = wall_mid_z <= front_face_z + 0.5
+                if lvl == 0 and wall_len >= 2.0 and is_front and not door_placed:
+                    door_placed = True
                     door_w = 1.05
                     door_h = 2.15
                     t_door = 0.25
                     dcx = s[0] + t_door * dx
                     dcz = s[1] + t_door * dz
                     hdw = door_w / 2
-                    door_sill = base_y
+                    door_sill = entry_sill_y
                     door_fo = face_offset + 0.01
                     meshes.append({
                         "element_id": f"door_{uuid.uuid4().hex[:6]}",

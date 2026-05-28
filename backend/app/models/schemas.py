@@ -52,8 +52,8 @@ class ProjectSpec(BaseModel):
 
     # Building type
     building_use: BuildingUse = BuildingUse.multi_family
-    # Residential: number of bedrooms (1–5). Drives SFR room program & sqft cap.
-    bedrooms: Optional[int] = Field(default=None, ge=1, le=5)
+    # Residential: number of bedrooms (0=studio for ADU, 1–5 for SFR/MF).
+    bedrooms: Optional[int] = Field(default=None, ge=0, le=5)
     # Bathrooms: whole number = full bath (toilet+sink+shower/tub), .5 = half bath (toilet+sink only).
     # e.g. 2.5 means two full baths + one half bath.
     bathrooms: Optional[float] = Field(default=None, ge=0.5)
@@ -161,6 +161,7 @@ class MEPElement(BaseModel):
     diameter_in: Optional[float] = None
     width_in: Optional[float] = None
     height_in: Optional[float] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class ComplianceIssue(BaseModel):
     id: str

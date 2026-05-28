@@ -20,9 +20,18 @@ function circleToPolygon(center: [number, number], radiusM: number, n = 64): any
   return { type: 'Polygon', coordinates: [pts] };
 }
 
+// Sort vertices counterclockwise by angle from centroid so any click order produces a simple polygon.
+function sortByAngle(verts: [number, number][]): [number, number][] {
+  if (verts.length <= 2) return verts;
+  const cx = verts.reduce((s, v) => s + v[0], 0) / verts.length;
+  const cy = verts.reduce((s, v) => s + v[1], 0) / verts.length;
+  return [...verts].sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+}
+
 function closedPolygon(vertices: [number, number][]): any {
   if (vertices.length < 3) return null;
-  return { type: 'Polygon', coordinates: [[...vertices.map(([lon, lat]) => [lon, lat]), [vertices[0][0], vertices[0][1]]]] };
+  const sorted = sortByAngle(vertices);
+  return { type: 'Polygon', coordinates: [[...sorted.map(([lon, lat]) => [lon, lat]), [sorted[0][0], sorted[0][1]]]] };
 }
 
 function polygonCentroid(coords: number[][]): [number, number] {
@@ -653,13 +662,14 @@ export default function SiteMap() {
       if (verts.length === 1 && map.getZoom() < 14) {
         map.flyTo({ center: verts[0], zoom: 17, duration: 700 });
       }
-      // Draw connecting line/polygon
-      const ring = verts.length >= 3 ? [...verts, verts[0]] : verts;
+      // Sort by angle when ≥3 vertices so the typed-coord preview never shows a bowtie
+      const displayVerts = verts.length >= 3 ? sortByAngle(verts) : verts;
+      const ring = displayVerts.length >= 3 ? [...displayVerts, displayVerts[0]] : displayVerts;
       src.setData({
         type: 'Feature',
-        geometry: verts.length >= 3
+        geometry: displayVerts.length >= 3
           ? { type: 'Polygon', coordinates: [ring] }
-          : { type: 'LineString', coordinates: verts },
+          : { type: 'LineString', coordinates: displayVerts },
         properties: {},
       });
     };
@@ -677,13 +687,14 @@ export default function SiteMap() {
       const src = map.getSource('draw-preview') as maplibregl.GeoJSONSource;
       if (!src) return;
       if (verts.length < 2) { src.setData({ type: 'FeatureCollection', features: [] }); return; }
-      // Always close the ring visually when ≥3 vertices
-      const ring = verts.length >= 3 ? [...verts, verts[0]] : verts;
+      // Sort by angle when ≥3 vertices so the preview never shows a bowtie
+      const displayVerts = verts.length >= 3 ? sortByAngle(verts) : verts;
+      const ring = displayVerts.length >= 3 ? [...displayVerts, displayVerts[0]] : displayVerts;
       src.setData({
         type: 'Feature',
-        geometry: verts.length >= 3
+        geometry: displayVerts.length >= 3
           ? { type: 'Polygon', coordinates: [ring] }
-          : { type: 'LineString', coordinates: verts },
+          : { type: 'LineString', coordinates: displayVerts },
         properties: {},
       });
     };
@@ -757,7 +768,13 @@ export default function SiteMap() {
     });
 
     mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
+
+    // Keep map aware of its true container size so scroll-zoom targets the cursor correctly.
+    // Without this, resizing the panel (sidebar open/close) leaves stale internal dimensions.
+    const resizeObs = new ResizeObserver(() => map.resize());
+    if (containerRef.current) resizeObs.observe(containerRef.current);
+
+    return () => { resizeObs.disconnect(); map.remove(); mapRef.current = null; };
   }, []);
 
   // Live map preview as user types polygon corner coordinates

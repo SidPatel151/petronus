@@ -566,7 +566,7 @@ function DoorMesh({ mesh }: { mesh: any }) {
     } catch { return null; }
   }, [mesh.vertices, mesh.faces]);
   if (!geometry) return null;
-  const isDoor = mesh.element_type === 'door';
+  const isDoor = mesh.element_type === 'door' || mesh.element_type === 'interior_door';
   return (
     <mesh geometry={geometry} castShadow>
       <meshStandardMaterial
@@ -777,6 +777,17 @@ function useBufferGeo(vertices: number[][], faces: number[][]) {
       return geo;
     } catch { return null; }
   }, [vertices, faces]);
+}
+
+// ── Porch deck + stair steps (classic_gabled / Victorian) ─────────────
+function PorchMesh({ mesh }: { mesh: any }) {
+  const geometry = useBufferGeo(mesh.vertices, mesh.faces);
+  if (!geometry) return null;
+  return (
+    <mesh geometry={geometry} castShadow receiveShadow>
+      <meshStandardMaterial color={mesh.color || '#c8a87a'} roughness={0.75} metalness={0.0} side={THREE.DoubleSide} />
+    </mesh>
+  );
 }
 
 // ── Terrain mesh (sloped ground plane from massing) ────────────────────
@@ -1291,15 +1302,22 @@ function Scene() {
                 if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
                 if (m.element_type === 'roof')         return activeLayers['roof'] ? <RoofMesh key={`r_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'parapet')      return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
+                if (m.element_type === 'porch')        return activeLayers['architecture'] ? <PorchMesh key={`porch_${i}`} mesh={m} /> : null;
                 return null;
               })}
             </>;
           })()}
 
-          {/* Facade details: windows, doors, parapet */}
+          {/* Facade details: windows, doors, parapet, interior stairs */}
           {(buildingModel.meshes || []).map((mesh: any, i: number) => {
             if (mesh.element_type === 'door' || mesh.element_type === 'door_frame') {
               return activeLayers['architecture'] ? <DoorMesh key={`d_${i}`} mesh={mesh} /> : null;
+            }
+            if (mesh.element_type === 'interior_door') {
+              return activeLayers['architecture'] ? <DoorMesh key={`id_${i}`} mesh={mesh} /> : null;
+            }
+            if (mesh.element_type === 'stair') {
+              return activeLayers['structure'] ? <PorchMesh key={`stair_${i}`} mesh={mesh} /> : null;
             }
             if (!activeLayers['architecture']) return null;
             return <FacadeMesh key={`facade_${i}`} mesh={mesh} floorH={FLOOR_H} />;

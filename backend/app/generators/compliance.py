@@ -1,10 +1,11 @@
 """
 ComplianceEngine
-Deterministic rule checks for CA multifamily low-rise.
+Deterministic rule checks for CA multifamily low-rise and ADU.
 """
 import uuid
 from typing import List
 from app.models.schemas import BuildingModel, ComplianceIssue, Room, Wall
+from app.constants import ADU_MAX_SQFT, BuildingUse
 
 RULES = {
     "CA_EGRESS_TRAVEL_DIST": {
@@ -44,6 +45,9 @@ class ComplianceEngine:
         issues.extend(self._check_flood(model))
         issues.extend(self._check_seismic_mep(model))
         issues.extend(self._check_egress(model))
+        is_adu = getattr(model.spec, 'building_use', None) in ('adu', BuildingUse.adu)
+        if is_adu:
+            issues.extend(self._check_adu(model))
         return issues
 
     def _check_stories(self, model: BuildingModel) -> List[ComplianceIssue]:
@@ -106,6 +110,40 @@ class ComplianceEngine:
                     fix_suggestion="Add seismic sway bracing to all suspended MEP per ASCE 7 Chapter 13",
                     citation=RULES["CA_SEISMIC_MEP"]["citation"],
                 ))
+        return issues
+
+    def _check_adu(self, model: BuildingModel) -> List[ComplianceIssue]:
+        issues = []
+        total_sqft = sum(r.area_sqft for r in model.rooms if r.area_sqft)
+        if total_sqft > ADU_MAX_SQFT:
+            issues.append(ComplianceIssue(
+                id=f"issue_{uuid.uuid4().hex[:6]}",
+                type="compliance",
+                severity="error",
+                message=f"ADU total area {total_sqft:,.0f} sqft exceeds CA AB-68/AB-881 limit of {ADU_MAX_SQFT:,} sqft",
+                fix_suggestion=f"Reduce ADU floor area to {ADU_MAX_SQFT:,} sqft or below",
+                citation="CA Health & Safety Code §65852.2 — ADU max 1,200 sqft",
+            ))
+        if model.spec.stories > 2:
+            issues.append(ComplianceIssue(
+                id=f"issue_{uuid.uuid4().hex[:6]}",
+                type="compliance",
+                severity="error",
+                message=f"ADU has {model.spec.stories} stories — CA law limits ADUs to 2 stories",
+                fix_suggestion="Reduce to 2 stories maximum",
+                citation="CA Health & Safety Code §65852.2(c)(2)(D)",
+            ))
+        # ADU must have independent access — warn if no exterior door room found
+        has_entry = any(r.type in ("foyer", "mudroom", "living", "kitchen") and r.level == 0 for r in model.rooms)
+        if not has_entry:
+            issues.append(ComplianceIssue(
+                id=f"issue_{uuid.uuid4().hex[:6]}",
+                type="compliance",
+                severity="warning",
+                message="ADU must have a separate exterior entrance independent of the primary dwelling",
+                fix_suggestion="Ensure entry door is accessible from a public way without passing through the primary unit",
+                citation="CA Health & Safety Code §65852.2(c)(1)",
+            ))
         return issues
 
     def _check_egress(self, model: BuildingModel) -> List[ComplianceIssue]:

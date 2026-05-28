@@ -43,7 +43,11 @@ def detect_archetype(spec) -> Optional[str]:
             and stories >= 2):
         return 'victorian_narrow_lot'
 
-    # Future archetypes added here — each is just another elif block
+    # ADU: always load the compact ADU archetype regardless of style preferences
+    is_adu = use in ('adu',) or getattr(use, 'value', '') == 'adu'
+    if is_adu:
+        return 'adu_compact'
+
     return None
 
 
@@ -69,6 +73,7 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
     """
     pc = archetype.get('petronus_classification', {})
     palette = pc.get('facade_color_palette', {})
+    arch_id = archetype.get('id', '')
 
     neighbor_style['dominant_arch_style'] = pc.get('dominant_arch_style', 'modern')
     neighbor_style['dominant_material']   = 'wood'
@@ -77,10 +82,17 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
     if palette.get('window_frame'):
         neighbor_style['window_color']    = palette['window_frame']
 
-    # Victorian: tall narrow windows, no horizontal bands, no balconies
-    neighbor_style['window_style']            = 'tall_narrow'
-    neighbor_style['horizontal_bands']        = False
-    neighbor_style['has_balconies']           = False
+    if arch_id == 'adu_compact':
+        # Modern box ADU: large windows, flat/shed roof, no balconies
+        neighbor_style['window_style']     = 'large_horizontal'
+        neighbor_style['horizontal_bands'] = False
+        neighbor_style['has_balconies']    = False
+        neighbor_style['dominant_material'] = 'fiber_cement'
+    else:
+        # Victorian: tall narrow windows, no horizontal bands, no balconies
+        neighbor_style['window_style']     = 'tall_narrow'
+        neighbor_style['horizontal_bands'] = False
+        neighbor_style['has_balconies']    = False
 
     return neighbor_style
 
@@ -100,7 +112,19 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
     if 'width_m' in brief:
         brief['width_m'] = min(brief['width_m'], max_w_m)
 
-    # Victorian is always a narrow rectangle — override shape
-    brief['shape'] = 'rectangle'
+    arch_id = archetype.get('id', '')
+
+    if arch_id == 'adu_compact':
+        # ADU is always a compact rectangle; clamp to CA max footprint
+        brief['shape'] = 'rectangle'
+        massing = archetype.get('massing_hints', {})
+        # Cap width if the brief exceeds typical ADU footprint (32ft wide max)
+        max_w_ft = 32
+        max_w_m  = max_w_ft * 0.3048
+        if 'width_m' in brief:
+            brief['width_m'] = min(brief['width_m'], max_w_m)
+    else:
+        # Victorian is always a narrow rectangle — override shape
+        brief['shape'] = 'rectangle'
 
     return brief
