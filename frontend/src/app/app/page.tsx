@@ -19,7 +19,28 @@ export default function HomePage() {
   const router = useRouter();
   const [mainTab, setMainTab] = useState<Tab>('map');
   const [rightTab, setRightTab] = useState<RightTab>('setup');
-  const { buildingModel, selectedSite } = useAppStore();
+  const {
+    buildingModel, selectedSite,
+    setBuildingModel, setSelectedSite, setSiteContext,
+    setInfrastructure, setNeighborConstraints, setFeasibilityData, setDrawnParcel,
+  } = useAppStore();
+
+  const handleNewSite = () => {
+    setBuildingModel(null);
+    setSelectedSite(null);
+    setSiteContext(null);
+    setInfrastructure(null);
+    setNeighborConstraints(null);
+    setFeasibilityData(null);
+    setDrawnParcel(null);
+    setMainTab('map');
+    setRightTab('setup');
+  };
+
+  const handleRedesign = () => {
+    setBuildingModel(null);
+    setRightTab('setup');
+  };
 
   useEffect(() => {
     document.documentElement.classList.add('app-page');
@@ -65,20 +86,48 @@ export default function HomePage() {
           ))}
         </div>
 
-        {/* Status */}
+        {/* Status + reset actions */}
         <div className="flex items-center gap-2">
           {buildingModel ? (
-            <div className="flex items-center gap-2 text-xs font-mono">
-              <div className="w-2 h-2 rounded-full bg-[var(--accent-green)] animate-pulse" />
-              <span className="text-[var(--accent-green)]">
-                {buildingModel.rooms.length} rooms · {buildingModel.mep_elements.length} MEP elements
-              </span>
-            </div>
+            <>
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <div className="w-2 h-2 rounded-full bg-[var(--accent-green)] animate-pulse" />
+                <span className="text-[var(--accent-green)]">
+                  {buildingModel.rooms.length} rooms · {buildingModel.mep_elements.length} MEP
+                </span>
+              </div>
+              <button
+                onClick={handleRedesign}
+                title="Keep this site, clear the model and tweak settings"
+                className="text-xs font-mono px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', background: 'var(--surface-2)' }}
+              >
+                ↺ Redesign
+              </button>
+              <button
+                onClick={handleNewSite}
+                title="Pick a new parcel and start fresh"
+                className="text-xs font-mono px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--accent-cyan)', color: 'var(--accent-cyan)', background: 'var(--surface-2)' }}
+              >
+                + New Site
+              </button>
+            </>
           ) : selectedSite ? (
-            <div className="flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
-              <div className="w-2 h-2 rounded-full bg-[var(--accent-cyan)]" />
-              Site selected
-            </div>
+            <>
+              <div className="flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
+                <div className="w-2 h-2 rounded-full bg-[var(--accent-cyan)]" />
+                Site selected
+              </div>
+              <button
+                onClick={handleNewSite}
+                title="Pick a different parcel"
+                className="text-xs font-mono px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', background: 'var(--surface-2)' }}
+              >
+                Change Parcel
+              </button>
+            </>
           ) : (
             <div className="text-xs font-mono text-[var(--text-secondary)]">No site selected</div>
           )}
