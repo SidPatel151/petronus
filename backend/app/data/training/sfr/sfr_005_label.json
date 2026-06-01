@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "fiber_cement",
+  "rooms": [],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "Single-story contemporary manufactured or modular home with mixed white fiber cement and wood accent siding, dark gray center connector section, multiple rooflines, and a small deck entry, photographed at dusk.",
+  "source_file": "High-End-Custom/Screenshot 2026-05-21 153005.png"
+}

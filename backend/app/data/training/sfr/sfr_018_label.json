@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "craftsman",
+  "facade_material": "fiber_cement",
+  "rooms": [],
+  "stair": {
+    "present": true,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.75,
+  "notes": "Row of three two-story craftsman-style single-family homes with fiber cement lap siding in green, gray, and white tones, gabled rooflines, front stoops, and small landscaped yards in a new suburban subdivision.",
+  "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152924.png"
+}

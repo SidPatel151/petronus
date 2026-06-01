@@ -1,0 +1,142 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "victorian",
+  "bedrooms": 6,
+  "bathrooms": 2,
+  "half_baths": 1,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "victorian",
+  "facade_material": "wood_painted",
+  "rooms": [
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "hall",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "other",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_center"
+    },
+    {
+      "type": "closet",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_left",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.82,
+  "notes": "Late 19th-century Victorian two-story residence designed by F.D. Orff (Minneapolis) and built by R.A. Lang Construction (Eau Claire, WI), featuring a wrap-around porch, 6 second-floor chambers, formal parlor/library/living rooms on the first floor, and multiple closets throughout.",
+  "source_file": "victorian-house/c4599e545890206b44e86b2e7a23f9a3.jpg"
+}

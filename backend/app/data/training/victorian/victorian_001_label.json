@@ -1,0 +1,46 @@
+{
+  "image_type": "3d_render",
+  "building_type": "victorian",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 3,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "victorian",
+  "facade_material": "wood_painted",
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "other",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "other",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "front_center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "front",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": null,
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "3D render showing three adjacent Victorian-style multi-story rowhouses with bay windows, front porches with white railings, exterior staircases, and ground-level garages; left unit is yellow, center is olive green, right is dark blue-gray with red roofs.",
+  "source_file": "victorian-house/Screenshot 2026-05-21 152152.png"
+}

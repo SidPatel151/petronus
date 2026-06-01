@@ -1,0 +1,118 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "townhouse",
+  "bedrooms": 3,
+  "bathrooms": 3,
+  "half_baths": 1,
+  "floors": 3,
+  "total_sqft": 2283,
+  "footprint_ft": {
+    "width": 25.92,
+    "depth": 32.83
+  },
+  "style": "contemporary_box",
+  "facade_material": "fiber_cement",
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 352,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 209,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": 85,
+      "position": "rear_left"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": 306,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 1,
+      "approx_sqft": 172,
+      "position": "center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 1,
+      "approx_sqft": 160,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 2,
+      "approx_sqft": 253,
+      "position": "front_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 2,
+      "approx_sqft": 124,
+      "position": "rear_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "closet",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "other",
+      "floor": 3,
+      "approx_sqft": 216,
+      "position": "rear_center"
+    },
+    {
+      "type": "utility",
+      "floor": 3,
+      "approx_sqft": null,
+      "position": "front_left"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "left_spine",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_right",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.91,
+  "notes": "Three-story contemporary townhouse (Job E1042 A2) by Preston Wood & Associates with 2,283 sq ft total living, a 2-car garage and bedroom 2 on level 1, living/dining/kitchen on level 2, master suite and bedroom 3 on level 3, plus a stair tower with roof deck.",
+  "source_file": "High-Density-Townhomes/97e25c4a6289c7ee8764d876d2666425.jpg"
+}

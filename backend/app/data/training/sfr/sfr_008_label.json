@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "modern",
+  "facade_material": "stucco",
+  "rooms": [],
+  "stair": {
+    "present": null,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "A contemporary hillside residential structure featuring expansive floor-to-ceiling glazing, dramatic cantilevered roof overhangs with wood soffits, steel framing accents, and a multi-level design integrated into a sloped landscape.",
+  "source_file": "Hillside-homes/Screenshot 2026-05-21 152635.png"
+}

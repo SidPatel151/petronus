@@ -1,0 +1,160 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 4,
+  "bathrooms": 4,
+  "half_baths": 1,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": 151.0,
+    "depth": 120.0
+  },
+  "style": "colonial",
+  "facade_material": "stucco",
+  "rooms": [
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 814,
+      "position": "rear_left"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 1147,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 1184,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 486,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "closet",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 408,
+      "position": "left_spine"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 320,
+      "position": "center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 168,
+      "position": "center"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 400,
+      "position": "center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 320,
+      "position": "center"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "right_spine"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 195,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 224,
+      "position": "front_left"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 598,
+      "position": "front_left"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 858,
+      "position": "front_right"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "front_right"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "right_spine",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.85,
+  "notes": "Expansive single-story luxury estate plan measuring 151x120 ft featuring a grand foyer, courtyard, pool, motor court with fountain, 5-car garage split between two wings, master suite, game room, family room, multiple bedrooms, and numerous specialty rooms.",
+  "source_file": "High-End-Custom/69e6c92803c6c5c5c1e4590dc2a1e281.jpg"
+}

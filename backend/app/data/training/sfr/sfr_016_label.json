@@ -1,0 +1,118 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 4,
+  "bathrooms": 2,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": 2724,
+  "footprint_ft": {
+    "width": 70.67,
+    "depth": 40.0
+  },
+  "style": "craftsman",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 238,
+      "position": "front_left"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 180,
+      "position": "left_spine"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 80,
+      "position": "rear_left"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 220,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 280,
+      "position": "center"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 60,
+      "position": "front_center"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 132,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 138,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 300,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 60,
+      "position": "center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 90,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 40,
+      "position": "rear_left"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "right_spine",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.92,
+  "notes": "Single-story 2,724 sq ft Craftsman-style manufactured home (Grand Manor Model 6013) with 4 bedrooms, 2 baths, open great room, separate living and dining areas, master suite with optional master bath, and recessed front entry.",
+  "source_file": "Production-Tract_homes/6013-2-floor-plans.jpg"
+}

@@ -1,0 +1,100 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 4,
+  "bathrooms": 2,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": 1975,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "modern",
+  "facade_material": "unknown",
+  "rooms": [
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 312,
+      "position": "front_center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 456,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "right_spine"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "right_spine"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "right_spine",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.82,
+  "notes": "Single-story mid-century modern Eichler-style home, Plan OC-584 by architect Claude Oakland, featuring 4 bedrooms, 2 baths, a central atrium, multi-purpose room, carport, and garage with an estimated 1975 sq ft total.",
+  "source_file": "Mid-Century/OIP.webp"
+}

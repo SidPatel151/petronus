@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "classic_gabled",
+  "facade_material": "stucco",
+  "rooms": [],
+  "stair": {
+    "present": true,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.75,
+  "notes": "A row of two-story attached townhomes with classic gabled rooflines, stucco and stone facade accents, front-entry attached garages, and small landscaped yards along a suburban street with mountain backdrop.",
+  "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152928.png"
+}

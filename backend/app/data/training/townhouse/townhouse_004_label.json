@@ -1,0 +1,136 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": 2,
+  "half_baths": 1,
+  "floors": 3,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": 35.0,
+    "depth": 24.0
+  },
+  "style": "victorian",
+  "facade_material": "unknown",
+  "rooms": [
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 309,
+      "position": "front_center"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 840,
+      "position": "rear_right"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 576,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 345,
+      "position": "front_left"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": 195,
+      "position": "front_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": 840,
+      "position": "rear_right"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": 576,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 1,
+      "approx_sqft": 288,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "kitchen",
+      "floor": -1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "utility",
+      "floor": -1,
+      "approx_sqft": 180,
+      "position": "front_left"
+    },
+    {
+      "type": "utility",
+      "floor": -1,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "other",
+      "floor": -1,
+      "approx_sqft": 324,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": -1,
+      "approx_sqft": 520,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": -1,
+      "approx_sqft": 300,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": -1,
+      "approx_sqft": 360,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "left_spine",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.82,
+  "notes": "Victorian-era London townhouse at Charles Street, Berkeley Square, drawn by Ernest George & Yeates Architects, showing three-level floor plans including a basement service floor with kitchen and staff rooms, a ground floor with dining room, library, and morning room, and a first floor with drawing rooms and boudoir.",
+  "source_file": "victorian-house/eea960476afe8282001d00f8be5d7015.jpg"
+}

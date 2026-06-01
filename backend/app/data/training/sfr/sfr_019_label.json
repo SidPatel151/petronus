@@ -1,0 +1,94 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "half_baths": 0,
+  "floors": 1,
+  "total_sqft": 1920,
+  "footprint_ft": {
+    "width": 64.0,
+    "depth": 30.0
+  },
+  "style": "unknown",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 210,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 80,
+      "position": "rear_left"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 60,
+      "position": "front_center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 200,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "rear_center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 280,
+      "position": "front_center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 70,
+      "position": "rear_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 130,
+      "position": "front_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 130,
+      "position": "rear_right"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": 60,
+      "position": "right_spine"
+    },
+    {
+      "type": "laundry",
+      "floor": 0,
+      "approx_sqft": 30,
+      "position": "right_spine"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "rear_right",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.93,
+  "notes": "Single-story 1920 SF manufactured home floor plan called 'Brantley' (Essential 621-68-3-32) with 3 bedrooms, 2 bathrooms, open kitchen/dining area, master suite with private bath, foyer entry, utility room, and optional barn door and beams noted.",
+  "source_file": "Production-Tract_homes/floor-plans-SMALL.jpg"
+}

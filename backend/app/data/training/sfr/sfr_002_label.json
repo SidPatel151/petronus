@@ -1,0 +1,178 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 4,
+  "bathrooms": 4,
+  "half_baths": 1,
+  "floors": 1,
+  "total_sqft": 5377,
+  "footprint_ft": {
+    "width": 101.5,
+    "depth": 129.75
+  },
+  "style": "modern",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 374,
+      "position": "center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 580,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 144,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 288,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "laundry",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "closet",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "closet",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_center"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "center",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.88,
+  "notes": "Single-story luxury estate floor plan of 5,377 sq ft with 4 bedrooms, 4 full baths, 1 powder room, open great room layout, reflective pool courtyard, covered lanai, outdoor kitchen, spa, and dual garages (3-car left, 2-car right).",
+  "source_file": "High-End-Custom/OIP.webp"
+}

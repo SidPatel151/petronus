@@ -1,0 +1,112 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 4,
+  "bathrooms": 2,
+  "half_baths": 0,
+  "floors": 1,
+  "total_sqft": 2696,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "modern",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 340,
+      "position": "front_left"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 340,
+      "position": "front_center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "left_spine"
+    },
+    {
+      "type": "laundry",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "front_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 240,
+      "position": "center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 296,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 168,
+      "position": "front_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 220,
+      "position": "right_spine"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 143,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 80,
+      "position": "right_spine"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 80,
+      "position": "rear_right"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 400,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 200,
+      "position": "rear_center"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "right_spine",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.88,
+  "notes": "Plan CC-174 by architect Claude Oakland is a single-story mid-century modern home with 4 bedrooms, 2 baths, a multi-purpose room, central atrium, loggia, parlour/dining, hobby/laundry room, and an attached 2-car garage totaling 2,696 sq ft.",
+  "source_file": "Mid-Century/36ef47400f6ece010fbca07b9a4da709.jpg"
+}

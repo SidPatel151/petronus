@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "adu",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "fiber_cement",
+  "rooms": [],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "Single-story contemporary modular or prefab structure featuring dark charcoal vertical corrugated metal cladding contrasted with warm cedar/timber accent panels framing the glazed entry corridor, photographed at dusk with interior lighting visible.",
+  "source_file": "Prefab-Modern/Screenshot 2026-05-21 153027.png"
+}

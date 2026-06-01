@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "craftsman",
+  "facade_material": "fiber_cement",
+  "rooms": [],
+  "stair": {
+    "present": true,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.6,
+  "notes": "Two attached or semi-detached two-story craftsman-style units with board-and-batten fiber cement siding in green and red, cream trim, bay windows, and covered front porches.",
+  "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152835.png"
+}

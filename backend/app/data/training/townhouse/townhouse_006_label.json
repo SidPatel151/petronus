@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 3,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "fiber_cement",
+  "rooms": [],
+  "stair": {
+    "present": true,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "Row of modern 3-story townhouses with contemporary flat/shed rooflines, mixed fiber cement and stucco facades in varied earth tones and grey-blue, front stoops with iron railings, and illuminated interiors suggesting dusk photography of a new urban infill development.",
+  "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152825.png"
+}

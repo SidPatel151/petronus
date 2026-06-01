@@ -1,0 +1,46 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "fiber_cement",
+  "rooms": [
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.55,
+  "notes": "Single-story contemporary home photographed at dusk featuring white vertical board-and-batten fiber cement siding, dark steel-framed floor-to-ceiling sliding glass doors, red cedar soffit pergola overhangs, and an outdoor covered patio with seating on the right wing.",
+  "source_file": "Prefab-Modern/Screenshot 2026-05-21 153022.png"
+}

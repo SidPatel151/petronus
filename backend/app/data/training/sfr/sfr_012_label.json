@@ -1,0 +1,46 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "modern",
+  "facade_material": "brick",
+  "rooms": [
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "rear_center",
+  "has_garage": false,
+  "entry_side": "rear",
+  "confidence": 0.62,
+  "notes": "Single-story mid-century modern Eichler-style home with a flat/butterfly roof, floor-to-ceiling glass sliding doors, white steel post-and-beam framing, brick end wall, and open-plan interior visible from the rear yard.",
+  "source_file": "Mid-Century/Screenshot 2026-05-21 152329.png"
+}

@@ -1,0 +1,94 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "half_baths": 0,
+  "floors": 1,
+  "total_sqft": 1512,
+  "footprint_ft": {
+    "width": 56.0,
+    "depth": 28.0
+  },
+  "style": "unknown",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 191,
+      "position": "rear_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 120,
+      "position": "rear_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 118,
+      "position": "front_left"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": 95,
+      "position": "front_center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 161,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": 165,
+      "position": "rear_right"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 221,
+      "position": "front_right"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 40,
+      "position": "front_center"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": 30,
+      "position": "center"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 60,
+      "position": "rear_right"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "rear_center",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.92,
+  "notes": "Single-story 1512 sqft manufactured home (28x56) with master suite, 2 additional bedrooms (one optional den/bed 3), open kitchen-dining area, living room, covered porch, and garage by others.",
+  "source_file": "Prefab-Modern/2af07f99d8e537ae7e53f252a2fbb092.jpg"
+}

@@ -1,0 +1,58 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "adu",
+  "bedrooms": 1,
+  "bathrooms": 1,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": 935,
+  "footprint_ft": {
+    "width": 32.5,
+    "depth": 30.0
+  },
+  "style": "contemporary_box",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 182,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 187,
+      "position": "front_right"
+    },
+    {
+      "type": "closet",
+      "floor": 0,
+      "approx_sqft": 80,
+      "position": "center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 200,
+      "position": "rear_left"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 130,
+      "position": "rear_right"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": "right_spine",
+  "has_garage": false,
+  "entry_side": "rear",
+  "confidence": 0.85,
+  "notes": "Single-story 935 sq ft ADU with one bedroom and one full bathroom (with tub), a closet, open living area, and kitchen arranged in a compact rectangular footprint.",
+  "source_file": "ADUs/il_fullxfull.6407395665_dpgk.webp"
+}

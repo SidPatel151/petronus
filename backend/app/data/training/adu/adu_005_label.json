@@ -1,0 +1,34 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "adu",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "wood_painted",
+  "rooms": [
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    }
+  ],
+  "stair": {
+    "present": false,
+    "location": null,
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "Single-story modern ADU with shed/mono-pitched roof, natural cedar wood siding, black corrugated metal lower panels, large glass storefront windows, and warm-toned French doors, situated in a backyard setting.",
+  "source_file": "ADUs/Screenshot 2026-05-21 152723.png"
+}

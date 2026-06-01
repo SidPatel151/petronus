@@ -1,0 +1,40 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "colonial",
+  "facade_material": "stucco",
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": null
+  },
+  "wet_wall_location": null,
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.55,
+  "notes": "A large two-story luxury colonial-style home with stucco and stone facade, arched dormers, large steel-framed windows, a double garage, and a grand front entry photographed at dusk with interior lighting visible.",
+  "source_file": "High-End-Custom/Screenshot 2026-05-21 153001.png"
+}

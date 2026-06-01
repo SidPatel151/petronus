@@ -1,0 +1,40 @@
+{
+  "image_type": "3d_render",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "craftsman",
+  "facade_material": "fiber_cement",
+  "rooms": [
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_center",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.62,
+  "notes": "A 3D render of a modern craftsman-style two-story townhouse row with board-and-batten and lap siding in blue-gray and white, front-entry units with small fenced yards and no garages visible.",
+  "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152839.png"
+}

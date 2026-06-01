@@ -1,0 +1,142 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "townhouse",
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "half_baths": 1,
+  "floors": 3,
+  "total_sqft": 2416,
+  "footprint_ft": {
+    "width": 24.17,
+    "depth": 43.33
+  },
+  "style": "contemporary_box",
+  "facade_material": "stucco",
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 380,
+      "position": "rear_center"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 40,
+      "position": "front_center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 115,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 159,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": 50,
+      "position": "center"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": 40,
+      "position": "right_spine"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": 299,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 1,
+      "approx_sqft": 169,
+      "position": "center"
+    },
+    {
+      "type": "kitchen",
+      "floor": 1,
+      "approx_sqft": 156,
+      "position": "front_center"
+    },
+    {
+      "type": "other",
+      "floor": 1,
+      "approx_sqft": 50,
+      "position": "front_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": 25,
+      "position": "center"
+    },
+    {
+      "type": "utility",
+      "floor": 1,
+      "approx_sqft": 30,
+      "position": "left_spine"
+    },
+    {
+      "type": "stair",
+      "floor": 1,
+      "approx_sqft": 40,
+      "position": "right_spine"
+    },
+    {
+      "type": "bedroom",
+      "floor": 2,
+      "approx_sqft": 846,
+      "position": "rear_center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 2,
+      "approx_sqft": 60,
+      "position": "rear_left"
+    },
+    {
+      "type": "office",
+      "floor": 2,
+      "approx_sqft": 120,
+      "position": "front_right"
+    },
+    {
+      "type": "other",
+      "floor": 2,
+      "approx_sqft": 188,
+      "position": "front_center"
+    },
+    {
+      "type": "closet",
+      "floor": 2,
+      "approx_sqft": 30,
+      "position": "left_spine"
+    },
+    {
+      "type": "stair",
+      "floor": 2,
+      "approx_sqft": 40,
+      "position": "right_spine"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "right_spine",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "left_spine",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.88,
+  "notes": "Three-story contemporary townhouse with 2-car garage and entry on first floor, open living/dining/kitchen on second floor, and master suite with study and loft on third floor totaling 2,416 sq ft on a 24'-2\" x 43'-4\" footprint.",
+  "source_file": "High-Density-Townhomes/R.jpg"
+}

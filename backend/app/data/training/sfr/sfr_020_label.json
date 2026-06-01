@@ -1,0 +1,94 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 3,
+  "bathrooms": 2,
+  "half_baths": 1,
+  "floors": 2,
+  "total_sqft": 1733,
+  "footprint_ft": {
+    "width": 19.0,
+    "depth": 24.0
+  },
+  "style": "contemporary_box",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 456,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 173,
+      "position": "rear_right"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 132,
+      "position": "rear_left"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": 132,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": 103,
+      "position": "rear_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 1,
+      "approx_sqft": 214,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "stair",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "left_spine",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.82,
+  "notes": "Two-story narrow-lot house plan with a ground-floor garage (19x24 ft) and porch, open living/kitchen on main floor totaling 696 sq ft, and three bedrooms with two bathrooms on the second floor totaling 1037 sq ft, with an optional deck noted.",
+  "source_file": "UrbanInfill-Zero-Lot/OIP.webp"
+}

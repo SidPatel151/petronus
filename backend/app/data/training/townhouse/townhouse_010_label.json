@@ -1,0 +1,82 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "townhouse",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": 1,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": 222,
+      "position": "rear_left"
+    },
+    {
+      "type": "dining",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "kitchen",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "laundry",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "stair",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_right",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.72,
+  "notes": "Comparative floor plan showing two unit types side-by-side \u2014 a Traditional Lot with 4-foot side setbacks and a Zero Lot Line Lot with 5-foot setbacks \u2014 each depicting a multi-story townhouse with an attached front garage, open-plan great room/nook/kitchen on the main level, half bath, and staircase, with upper floors not shown.",
+  "source_file": "UrbanInfill-Zero-Lot/Traditional-Lot-2-scaled.jpg"
+}

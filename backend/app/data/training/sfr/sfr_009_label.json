@@ -1,0 +1,46 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "contemporary_box",
+  "facade_material": "wood_painted",
+  "rooms": [
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "other",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_right"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "right_spine",
+    "direction": "side_to_side"
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.62,
+  "notes": "A contemporary two-story hillside luxury residence featuring extensive wood cladding, floor-to-ceiling glazing, flat overhanging rooflines, glass railings, and terraced concrete retaining walls integrated into the sloped site.",
+  "source_file": "Hillside-homes/Screenshot 2026-05-21 152652.png"
+}

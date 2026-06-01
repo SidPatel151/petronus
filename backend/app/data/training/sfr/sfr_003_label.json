@@ -1,0 +1,184 @@
+{
+  "image_type": "floor_plan",
+  "building_type": "sfr",
+  "bedrooms": 2,
+  "bathrooms": 3,
+  "half_baths": 1,
+  "floors": 1,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "unknown",
+  "facade_material": null,
+  "rooms": [
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 638,
+      "position": "front_left"
+    },
+    {
+      "type": "garage",
+      "floor": 0,
+      "approx_sqft": 638,
+      "position": "rear_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 0,
+      "approx_sqft": 357,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "foyer",
+      "floor": 0,
+      "approx_sqft": 90,
+      "position": "center"
+    },
+    {
+      "type": "living",
+      "floor": 0,
+      "approx_sqft": 460,
+      "position": "right_spine"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": 391,
+      "position": "rear_center"
+    },
+    {
+      "type": "office",
+      "floor": 0,
+      "approx_sqft": 192,
+      "position": "front_left"
+    },
+    {
+      "type": "laundry",
+      "floor": 0,
+      "approx_sqft": 150,
+      "position": "rear_left"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": 175,
+      "position": "rear_left"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 42,
+      "position": "center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 42,
+      "position": "center"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": 98,
+      "position": "front_center"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": 110,
+      "position": "rear_left"
+    },
+    {
+      "type": "stair",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "left_spine"
+    },
+    {
+      "type": "closet",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 416,
+      "position": "right_spine"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "other",
+      "floor": 0,
+      "approx_sqft": 126,
+      "position": "rear_right"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    },
+    {
+      "type": "utility",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_right"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "left_spine",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_center",
+  "has_garage": true,
+  "entry_side": "front",
+  "confidence": 0.78,
+  "notes": "Large single-story luxury estate floor plan featuring a master suite with his/her closets and outdoor garden bath, dual 2-car garages, loggia, outdoor kitchen, pool, wine cellar, gym, sauna, and grand curved staircase in the central foyer.",
+  "source_file": "High-End-Custom/R.jpg"
+}

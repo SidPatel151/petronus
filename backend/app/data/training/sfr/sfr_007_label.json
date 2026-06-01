@@ -1,0 +1,27 @@
+{
+  "image_type": "exterior_photo",
+  "building_type": "sfr",
+  "bedrooms": null,
+  "bathrooms": null,
+  "half_baths": null,
+  "floors": 2,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "modern",
+  "facade_material": "concrete",
+  "rooms": [],
+  "stair": {
+    "present": true,
+    "location": "right_spine",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": null,
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.6,
+  "notes": "A two-story contemporary modern hillside residence with green roofs, extensive floor-to-ceiling glazing, stone and concrete cladding, set against a mountainous landscape with terraced landscaping and an exterior staircase on the right side.",
+  "source_file": "Hillside-homes/Screenshot 2026-05-21 152550.png"
+}

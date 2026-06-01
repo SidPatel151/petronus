@@ -1,0 +1,100 @@
+{
+  "image_type": "sketch",
+  "building_type": "victorian",
+  "bedrooms": 2,
+  "bathrooms": 1,
+  "half_baths": null,
+  "floors": 3,
+  "total_sqft": null,
+  "footprint_ft": {
+    "width": null,
+    "depth": null
+  },
+  "style": "victorian",
+  "facade_material": "unknown",
+  "rooms": [
+    {
+      "type": "laundry",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_left"
+    },
+    {
+      "type": "kitchen",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "rear_center"
+    },
+    {
+      "type": "dining",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "hall",
+      "floor": 0,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "office",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "rear_center"
+    },
+    {
+      "type": "living",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "hall",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "foyer",
+      "floor": 1,
+      "approx_sqft": null,
+      "position": "front_center"
+    },
+    {
+      "type": "bathroom",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "front_left"
+    },
+    {
+      "type": "bedroom",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "front_right"
+    },
+    {
+      "type": "bedroom",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "rear_center"
+    },
+    {
+      "type": "stair",
+      "floor": 2,
+      "approx_sqft": null,
+      "position": "center"
+    }
+  ],
+  "stair": {
+    "present": true,
+    "location": "center",
+    "direction": "front_to_rear"
+  },
+  "wet_wall_location": "rear_left",
+  "has_garage": false,
+  "entry_side": "front",
+  "confidence": 0.78,
+  "notes": "1874 Victorian city house design from 'The Manufacturer and Builder' costing $4,000, showing front elevation with Gothic Revival detailing, turrets and spires, plus basement, first floor, and second floor plans with library, parlor, kitchen, dining, chambers, and bath.",
+  "source_file": "victorian-house/d14fbcc748534c0450d96400d4b26bc5.jpg"
+}
