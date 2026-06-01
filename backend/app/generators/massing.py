@@ -354,17 +354,25 @@ class MassingGenerator:
 
             # Ridge runs along the LONG axis — same logic as the old frontend GableRoofMesh
             # but done here in the backend so it uses the real footprint coordinates.
+            # Ridge endpoints are extended by EAVE_OH so gable ends flush with eave overhang.
+            EAVE_OH = 0.45
             if bw >= bd:
-                r0 = [b[0], self._ground_y(b[0], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
-                r1 = [b[2], self._ground_y(b[2], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
+                r0 = [b[0] - EAVE_OH, self._ground_y(b[0], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
+                r1 = [b[2] + EAVE_OH, self._ground_y(b[2], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
             else:
-                r0 = [cx_b, self._ground_y(cx_b, b[1], grad_x, grad_z) + roof_height_rel + peak_height, b[1]]
-                r1 = [cx_b, self._ground_y(cx_b, b[3], grad_x, grad_z) + roof_height_rel + peak_height, b[3]]
+                r0 = [cx_b, self._ground_y(cx_b, b[1], grad_x, grad_z) + roof_height_rel + peak_height, b[1] - EAVE_OH]
+                r1 = [cx_b, self._ground_y(cx_b, b[3], grad_x, grad_z) + roof_height_rel + peak_height, b[3] + EAVE_OH]
 
+            # Overhang: push each eave vertex outward from building centre ~45 cm.
             eave_verts = []
             for x, z in coords:
-                gy = self._ground_y(x, z, grad_x, grad_z)
-                eave_verts.append([x, gy + roof_height_rel, z])
+                dir_x = x - cx_b
+                dir_z = z - cz_b
+                dist = math.sqrt(dir_x ** 2 + dir_z ** 2) or 1.0
+                ox = x + (dir_x / dist) * EAVE_OH
+                oz = z + (dir_z / dist) * EAVE_OH
+                gy = self._ground_y(ox, oz, grad_x, grad_z)
+                eave_verts.append([ox, gy + roof_height_rel, oz])
 
             n_eave = len(eave_verts)
             R0, R1 = n_eave, n_eave + 1

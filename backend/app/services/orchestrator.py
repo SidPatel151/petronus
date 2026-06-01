@@ -445,10 +445,10 @@ class GenerationOrchestrator:
         import uuid as _uuid
 
         OPEN_TYPES = {
-            'corridor', 'hallway', 'stair', 'living', 'foyer',
+            'corridor', 'hallway', 'living', 'foyer',
             'entry', 'dining', 'unit', 'garage', 'utility', 'laundry',
         }
-        NO_DOOR_TYPES = {'stair', 'attic', 'roof'}  # never need a door
+        NO_DOOR_TYPES = {'attic', 'roof'}  # never need a door (stair removed — gets entry door)
 
         floor_h_m = spec.floor_to_floor_height_ft * 0.3048
         level_elevations = {lvl.index: lvl.elevation_ft * 0.3048 for lvl in levels}

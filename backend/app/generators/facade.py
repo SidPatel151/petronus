@@ -254,7 +254,7 @@ class FacadeGenerator:
 
                     # Skip any window whose centre would land on the entry door zone.
                     if lvl == 0 and _is_front and not door_placed:
-                        _t_door = 0.25
+                        _t_door = 0.5
                         _door_w = 1.05
                         _clearance = (_door_w / 2 + win_w / 2 + 0.10) / wall_len
                         if abs(t - _t_door) < _clearance:
@@ -297,7 +297,7 @@ class FacadeGenerator:
                     door_placed = True
                     door_w = 1.05
                     door_h = 2.15
-                    t_door = 0.25
+                    t_door = 0.5
                     dcx = s[0] + t_door * dx
                     dcz = s[1] + t_door * dz
                     hdw = door_w / 2
