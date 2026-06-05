@@ -225,7 +225,7 @@ class GenerationOrchestrator:
             log.append(f"Design brief failed ({str(e)[:60]}) — using neighbor dims directly")
 
         # ── Archetype detection — runs after spec is finalised ────────────────
-        archetype = get_archetype(spec)
+        archetype = get_archetype(spec, site_context=site_ctx)
         if archetype:
             log.append(f"Archetype detected: {archetype['display_name']}")
             neighbor_style = apply_archetype_to_neighbor_style(archetype, neighbor_style)

@@ -12,17 +12,10 @@ from typing import Optional, Dict, Any
 _ARCHETYPE_DIR = os.path.join(os.path.dirname(__file__), "../data/archetypes")
 
 
-def detect_archetype(spec) -> Optional[str]:
+def detect_archetype(spec, site_context=None) -> Optional[str]:
     """
-    Infer archetype ID from spec parameters.
+    Infer archetype ID from spec parameters and (optionally) real site terrain data.
     Returns the JSON filename stem (without .json), or None for generic generation.
-
-    Victorian narrow-lot triggers when the user picks:
-      - Priority   → space
-      - HVAC       → mini_split
-      - Structural → wood
-      - Use        → single_family
-      - Stories    → 2 or 3
     """
     pri      = getattr(spec.priority, 'value', str(spec.priority))
     hvac     = getattr(getattr(spec, 'hvac_preference', None), 'value',
@@ -33,6 +26,12 @@ def detect_archetype(spec) -> Optional[str]:
     stories  = spec.stories or 2
     style    = getattr(getattr(spec, 'style', None), 'value',
                        str(getattr(spec, 'style', '') or ''))
+
+    # Terrain slope from real USGS data (if site context available)
+    slope_pct = 0.0
+    if site_context:
+        terrain = getattr(site_context, 'terrain', None) or {}
+        slope_pct = terrain.get('slope_pct', 0.0) if isinstance(terrain, dict) else 0.0
 
     # ADU: always takes priority over style-based detection
     is_adu = use in ('adu',) or getattr(use, 'value', '') == 'adu'
@@ -54,8 +53,8 @@ def detect_archetype(spec) -> Optional[str]:
             and stories == 1):
         return 'mid_century_modern'
 
-    # Hillside: sculpted massing style (implies hillside/stepped site)
-    if style == 'sculpted_stepped' or style == 'hillside':
+    # Hillside: real slope ≥15% from USGS terrain data, or explicit style choice
+    if is_sfr and (slope_pct >= 15.0 or style in ('sculpted_stepped', 'hillside')):
         return 'hillside_stepped'
 
     # High-Density Townhome: multi-family + 3-4 stories + wood or concrete
@@ -92,9 +91,9 @@ def load_archetype(archetype_id: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
-def get_archetype(spec) -> Optional[Dict[str, Any]]:
+def get_archetype(spec, site_context=None) -> Optional[Dict[str, Any]]:
     """Detect and load archetype for a spec. Returns None → generic generation."""
-    aid = detect_archetype(spec)
+    aid = detect_archetype(spec, site_context=site_context)
     return load_archetype(aid) if aid else None
 
 
