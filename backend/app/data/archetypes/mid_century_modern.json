@@ -1,0 +1,271 @@
+{
+  "id": "mid_century_modern",
+  "display_name": "Mid-Century Modern / Eichler / Case Study Home",
+  "era_built": [1945, 1975],
+  "typical_regions": ["South Bay", "Peninsula", "Marin County", "Orange County"],
+  "blueprint_sources": [
+    "Eichler Homes X-100 series — South Bay slab-on-grade atrium plan",
+    "Case Study House #22 (Stahl House) — post-and-beam, glass-to-ceiling, open plan",
+    "Joseph Eichler 3BR/2BA radiant slab plan — confirms wet wall fixed in slab, radiant floor tubing",
+    "Palm Springs Krisel tract home — confirms low-slope butterfly roof, clerestory windows"
+  ],
+
+  "petronus_classification": {
+    "house_archetype": "mid_century_modern",
+    "design_style": "modern_linear",
+    "building_use": "single_family",
+    "priority_affinity": ["space", "energy"],
+    "dominant_arch_style": "modern_linear",
+    "facade_material": "wood_and_glass",
+    "facade_color_palette": {
+      "body": "#c4a882",
+      "trim": "#2c2c2c",
+      "accent": "#8b4513",
+      "window_frame": "#1a1a1a"
+    },
+    "note": "Post-and-beam, no attic cavity, slab-on-grade. The defining constraint is the absence of any duct plenum — no attic, no crawlspace. All MEP must be designed around this. Radiant slab heating is original; plumbing changes require concrete saw-cutting."
+  },
+
+  "lot": {
+    "width_ft_min": 60,
+    "width_ft_max": 100,
+    "depth_ft_min": 80,
+    "depth_ft_max": 140,
+    "attached": false,
+    "party_walls": "none",
+    "side_yard_access": true,
+    "side_yard_width_ft_min": 5,
+    "front_setback_ft": 20,
+    "rear_setback_ft": 20,
+    "max_lot_coverage_pct": 40,
+    "note": "Typical suburban tract lot. Detached single-family. Side yard access is available but narrow equipment placement still requires care given wide glass facade walls."
+  },
+
+  "structure": {
+    "framing_type": "post_and_beam",
+    "foundation": "slab_on_grade",
+    "slab_thickness_in": 4,
+    "radiant_tubing_in_slab": true,
+    "radiant_tubing_note": "Original hydronic tubing cast into concrete. Penetrating slab risks cutting tubing — always locate existing tubing before any core drilling.",
+    "stud_spacing_in": null,
+    "wall_assembly": "post_and_beam_with_glass_infill",
+    "wall_thickness_in": 4.5,
+    "floor_to_floor_height_ft": 9.0,
+    "stories_above_grade": [1, 2],
+    "no_attic": true,
+    "no_crawlspace": true,
+    "roof_type": "flat_or_very_low_slope",
+    "roof_pitch_12_max": 2,
+    "seismic_design_category": "D",
+    "soft_story_risk": false,
+    "open_web_trusses": false,
+    "glass_wall_panels": true,
+    "floor_to_ceiling_glazing": true,
+    "structural_note": "Post-and-beam framing means large glass infill panels are non-structural. Interior partitions are typically non-bearing lightweight walls. No stud cavities in living areas for concealed MEP.",
+    "joist_penetration_rules": {
+      "max_hole_diameter_fraction_of_depth": 0.25,
+      "hole_zone": "middle_third_of_span",
+      "max_notch_depth_fraction_of_depth": 0.125,
+      "notch_zone": "outer_third_of_span",
+      "min_edge_distance_in": 1.5
+    }
+  },
+
+  "floor_program": {
+    "note": "Typical single-story open plan. Primary axis runs front-to-back with public zones at front, private bedrooms at rear. Atrium variant places courtyard at center.",
+    "floor_0": {
+      "elevation": "at_grade",
+      "use": "full_program_single_level",
+      "rooms": ["entry_atrium_or_foyer", "living_room", "dining_room", "kitchen", "primary_bedroom", "bedroom", "bedroom", "primary_bath", "hall_bath", "laundry_utility"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "All MEP is single-level. DWV exits slab at rear. Wet wall position is cast in concrete — no changes without saw-cutting. HVAC routes via roof insulation layer or wall-mounted mini-splits only."
+    },
+    "floor_1_optional": {
+      "use": "bonus_loft_or_second_story_addition",
+      "rooms": ["bedroom", "bath", "study"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "If two-story addition, all new MEP must avoid penetrating original slab. Route supply and drain via exterior wall chases or interior partition walls only."
+    }
+  },
+
+  "wet_wall": {
+    "location": "rear_center_or_rear_right",
+    "fixed": true,
+    "wet_wall_fixed": true,
+    "slab_penetration_required_to_change": true,
+    "note": "CRITICAL: In slab-on-grade construction, DWV pipes are cast into or run beneath the concrete. Moving wet wall location requires saw-cutting and re-pouring the slab — a major structural and cost event. The generator MUST honor existing wet wall locations. All kitchen and bath wet fixtures must align to the established slab penetration points."
+  },
+
+  "staircase": {
+    "location": "not_applicable_single_story",
+    "width_ft": null,
+    "run_direction": null,
+    "mep_note": "Single-story plans have no stair. If a second story is added, stair opening requires structural header at beam intersections — coordinate with post-and-beam grid before placing stair."
+  },
+
+  "mep_routing_priority": ["dwv_gravity", "radiant_floor", "supply_plumbing", "hvac", "electrical"],
+
+  "mep_chase": {
+    "primary_location": "exterior_wall_or_interior_partition",
+    "vertical_runs_preferred_along": ["interior_partition_walls", "exterior_rear_wall"],
+    "no_above_ceiling_routing": true,
+    "no_attic_routing": true,
+    "roof_insulation_routing_allowed": true,
+    "note": "No attic or crawlspace cavity. All horizontal MEP must route through the roof insulation layer (above the ceiling deck but below roofing), or through interior partition wall cavities. Vertical drops must use interior partition walls or surface-mount conduit — never through post-and-beam glass panels."
+  },
+
+  "hvac": {
+    "strategy": "mini_split",
+    "fallback_strategy": "rooftop_package_unit",
+    "ducted_central_allowed": false,
+    "ducted_through_attic": false,
+    "no_attic": true,
+    "units_per_living_zone": 1,
+    "heat_pump_required": true,
+    "gas_allowed": false,
+    "outdoor_unit_location": "rooftop_or_side_yard",
+    "rooftop_package_unit_note": "If rooftop package unit is selected, structural engineer must verify roof framing can carry unit weight (typically 300-600 lbs). Coordinate curb flashing with roofing waterproofing.",
+    "refrigerant_line_routing": "through_exterior_wall_chase_or_roof_layer",
+    "condensate_drain_required": true,
+    "mini_split_preferred": true,
+    "mini_split_head_locations": ["wall_mount_high", "ceiling_cassette_in_partition"],
+    "no_ceiling_diffusers_in_glass_zones": true,
+    "service_clearance": {
+      "front_access_in": 24,
+      "side_clearance_in": 12
+    }
+  },
+
+  "plumbing": {
+    "dwv": {
+      "existing_material": "cast_iron_or_galvanized_in_slab",
+      "replacement_material": "abs_or_pvc",
+      "stack_type": "single_stack_in_slab",
+      "stack_location": "rear_center_or_rear_right",
+      "stack_diameter_in": 4,
+      "bathrooms_must_align_to_slab_penetrations": true,
+      "slope_in_per_ft": 0.25,
+      "min_branch_slope_in_per_ft": 0.25,
+      "max_branch_length_before_cleanout_ft": 100,
+      "cleanout_at_every_direction_change": true,
+      "cleanout_at_base_of_stack": true,
+      "building_drain_exit_location": "through_slab_rear",
+      "building_drain_depth_below_slab_in": 12,
+      "slab_core_drill_note": "Any new slab penetration requires: 1) locate existing radiant tubing with thermal imaging or GPR before drilling, 2) structural engineer review if penetration is within 12in of post base.",
+      "routing_constraint": "gravity_path_must_follow_original_slab_penetration_locations",
+      "vent_through_roof": true,
+      "vent_stack_location": "routed_through_exterior_wall_to_roof_penetration"
+    },
+    "supply": {
+      "material": "pex_a",
+      "routing": "above_slab_in_wall_chases_or_below_slab_if_original",
+      "hot_water_recirculation": true,
+      "insulation_required": true,
+      "effective_diameter_with_insulation_in": 3.5,
+      "slab_routing_warning": "New supply runs should be above-slab through wall chases where possible to avoid radiant tubing conflicts."
+    },
+    "water_heater": {
+      "type": "heat_pump",
+      "location": "utility_room_or_garage",
+      "min_surrounding_volume_ft3": 700,
+      "service_clearance_front_in": 24,
+      "condensate_drain_required": true
+    }
+  },
+
+  "electrical": {
+    "panel": {
+      "upgrade_required": true,
+      "min_amps": 200,
+      "location": "garage_wall_or_exterior_utility_alcove",
+      "nec_clearance": {
+        "width_in": 30,
+        "depth_in": 36,
+        "height_in": 78
+      }
+    },
+    "wire_method": "through_interior_partition_walls_or_surface_conduit",
+    "no_above_ceiling_routing": true,
+    "ceiling_routing_note": "No ceiling cavity exists for conduit above finished ceiling in glass-to-ceiling zones. Route through interior partition walls, use wall sconces, or run exposed conduit in utility/garage zones.",
+    "wall_sconce_preferred": true,
+    "floor_outlet_allowed": true,
+    "ev_charging": {
+      "required": true,
+      "voltage": 240,
+      "amps": 40,
+      "location": "garage_or_carport",
+      "circuit_dedicated": true
+    },
+    "solar": {
+      "pv_layout_required": true,
+      "roof_coverage_target_pct": 60,
+      "roof_mount_type": "flat_ballasted_or_low_tilt",
+      "panel_setback_from_roof_edge_in": 24,
+      "structural_check_required": true,
+      "note": "Flat/low-slope roof — use ballasted racking or mechanically attached standoffs. Verify roof membrane can accept penetrations."
+    },
+    "battery_storage": {
+      "pre_wired_required": true,
+      "installed_day_one": false,
+      "location": "garage_or_utility_room"
+    },
+    "induction_cooktop": true
+  },
+
+  "clearances": {
+    "insulation_hot_water_pipe_extra_diameter_in": 1.5,
+    "insulation_hvac_duct_extra_each_side_in": 1.0,
+    "effective_pipe_diameter_2in_supply_in": 3.5,
+    "effective_duct_diameter_adds_each_side_in": 1.0,
+    "mep_conflict_tolerance_in": 0.5,
+    "slab_core_drill_exclusion_zone_from_post_base_in": 12,
+    "radiant_tubing_clearance_in": 3
+  },
+
+  "california_compliance": {
+    "cbc_edition": "2022",
+    "title_24": true,
+    "fully_electric": true,
+    "solar_ready": true,
+    "battery_ready": true,
+    "heat_pump_hvac": true,
+    "heat_pump_water_heater": true,
+    "induction_cooktop": true,
+    "ev_charging_required": true,
+    "seismic_retrofit_likely": false,
+    "historic_slab_exception": "Existing radiant slab systems may be retained if functional — verify tubing integrity with pressure test before energizing new hydronic system or capping off."
+  },
+
+  "massing_hints": {
+    "facade_style": "modern_linear",
+    "roof_type": "flat_or_very_low_slope",
+    "roof_pitch_12": 1,
+    "garage_at_grade": false,
+    "main_entry_elevated": false,
+    "exterior_stairs_to_entry": false,
+    "plan_shape": "wide_rectangle_or_l_shape",
+    "width_to_depth_ratio_typical": 1.2,
+    "large_horizontal_windows": true,
+    "floor_to_ceiling_glass": true,
+    "clerestory_windows": true,
+    "natural_wood_accents": true,
+    "brick_accent_walls": true,
+    "open_floor_plan": true,
+    "atrium_variant_possible": true,
+    "carport_not_garage": true,
+    "note": "Wide horizontal massing with flat or butterfly roof. Post-and-beam grid visible on facade. Large glass walls replace traditional punched windows. Natural materials — wood, brick, stone — accent the facade."
+  },
+
+  "known_constraints_summary": [
+    "NO ATTIC — all HVAC must use mini-splits or rooftop package units only. Zero tolerance for attic duct routing.",
+    "Slab-on-grade with original radiant hydronic tubing cast in concrete — locate tubing before ANY slab penetration",
+    "Wet wall position is FIXED in slab — moving it requires saw-cutting and re-pouring concrete, a major structural event",
+    "Post-and-beam framing: no stud cavities in glass-wall zones — route electrical through interior partitions or use wall sconces",
+    "Rooftop package units require structural engineer sign-off for roof load capacity before specifying",
+    "No above-ceiling routing allowed — ceiling plane is exposed post-and-beam or flat drywall with no plenum",
+    "New slab penetrations must clear existing radiant tubing (use GPR/thermal imaging) and post bases (12in min)",
+    "Solar on flat roof: ballasted or mechanically attached racking — verify membrane waterproofing compatibility",
+    "Floor outlets and wall sconces are the primary electrical distribution strategy in open living zones",
+    "Supply plumbing new runs should stay above slab through wall chases — avoids radiant tubing conflicts"
+  ]
+}

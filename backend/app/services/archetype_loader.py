@@ -34,6 +34,11 @@ def detect_archetype(spec) -> Optional[str]:
     style    = getattr(getattr(spec, 'style', None), 'value',
                        str(getattr(spec, 'style', '') or ''))
 
+    # ADU: always takes priority over style-based detection
+    is_adu = use in ('adu',) or getattr(use, 'value', '') == 'adu'
+    if is_adu:
+        return 'adu_compact'
+
     # Victorian: Space + Classic & Gabled + Mini Split + Wood + Single Family + 2-3 stories
     if (pri == 'space'
             and style == 'classic_gabled'
@@ -43,10 +48,38 @@ def detect_archetype(spec) -> Optional[str]:
             and stories >= 2):
         return 'victorian_narrow_lot'
 
-    # ADU: always load the compact ADU archetype regardless of style preferences
-    is_adu = use in ('adu',) or getattr(use, 'value', '') == 'adu'
-    if is_adu:
-        return 'adu_compact'
+    # Mid-Century Modern: modern style + slab + single family
+    if (style in ('modern_linear', 'contemporary_box', 'mid_century')
+            and is_sfr
+            and stories == 1):
+        return 'mid_century_modern'
+
+    # Hillside: sculpted massing style (implies hillside/stepped site)
+    if style == 'sculpted_stepped' or style == 'hillside':
+        return 'hillside_stepped'
+
+    # High-Density Townhome: multi-family + 3-4 stories + wood or concrete
+    if (use == 'multi_family'
+            and stories >= 3
+            and pri in ('space', 'cost')):
+        return 'high_density_townhome'
+
+    # Urban Infill / Zero-Lot: single family + high priority on space + small footprint
+    if (is_sfr and pri == 'space' and stories >= 2
+            and style in ('modern_linear', 'contemporary_box')):
+        return 'urban_infill_zero_lot'
+
+    # Production / Tract: cost-priority SFR, wood frame, 1-2 stories
+    if (is_sfr and pri == 'cost' and struct == 'wood' and stories <= 2):
+        return 'production_tract'
+
+    # High-End Custom: quality priority + single family
+    if (is_sfr and pri == 'quality'):
+        return 'high_end_custom'
+
+    # Prefab Modern: prefab structural system
+    if struct in ('prefab', 'modular'):
+        return 'prefab_modern'
 
     return None
 
@@ -83,16 +116,53 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
         neighbor_style['window_color']    = palette['window_frame']
 
     if arch_id == 'adu_compact':
-        # Modern box ADU: large windows, flat/shed roof, no balconies
-        neighbor_style['window_style']     = 'large_horizontal'
-        neighbor_style['horizontal_bands'] = False
-        neighbor_style['has_balconies']    = False
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = False
+        neighbor_style['has_balconies']     = False
         neighbor_style['dominant_material'] = 'fiber_cement'
-    else:
-        # Victorian: tall narrow windows, no horizontal bands, no balconies
+    elif arch_id == 'victorian_narrow_lot':
         neighbor_style['window_style']     = 'tall_narrow'
         neighbor_style['horizontal_bands'] = False
         neighbor_style['has_balconies']    = False
+    elif arch_id == 'mid_century_modern':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = False
+        neighbor_style['has_balconies']     = False
+        neighbor_style['dominant_material'] = 'wood'
+        neighbor_style['dominant_arch_style'] = 'modern_linear'
+    elif arch_id == 'hillside_stepped':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = True
+        neighbor_style['has_balconies']     = True
+        neighbor_style['dominant_arch_style'] = 'sculpted_stepped'
+    elif arch_id == 'high_density_townhome':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = True
+        neighbor_style['has_balconies']     = True
+        neighbor_style['dominant_material'] = 'fiber_cement'
+        neighbor_style['dominant_arch_style'] = 'modern_linear'
+    elif arch_id == 'urban_infill_zero_lot':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = False
+        neighbor_style['has_balconies']     = False
+        neighbor_style['dominant_arch_style'] = 'contemporary_box'
+    elif arch_id == 'production_tract':
+        neighbor_style['window_style']      = 'double_hung'
+        neighbor_style['horizontal_bands']  = False
+        neighbor_style['has_balconies']     = False
+        neighbor_style['dominant_arch_style'] = 'classic_gabled'
+    elif arch_id == 'high_end_custom':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = False
+        neighbor_style['has_balconies']     = True
+        neighbor_style['dominant_material'] = 'stucco'
+        neighbor_style['dominant_arch_style'] = 'modern_linear'
+    elif arch_id == 'prefab_modern':
+        neighbor_style['window_style']      = 'large_horizontal'
+        neighbor_style['horizontal_bands']  = True
+        neighbor_style['has_balconies']     = False
+        neighbor_style['dominant_material'] = 'fiber_cement'
+        neighbor_style['dominant_arch_style'] = 'contemporary_box'
 
     return neighbor_style
 
@@ -114,17 +184,42 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
 
     arch_id = archetype.get('id', '')
 
+    massing = archetype.get('massing_hints', {})
+    brief_shape = massing.get('brief_shape', '')
+
     if arch_id == 'adu_compact':
-        # ADU is always a compact rectangle; clamp to CA max footprint
         brief['shape'] = 'rectangle'
-        massing = archetype.get('massing_hints', {})
-        # Cap width if the brief exceeds typical ADU footprint (32ft wide max)
-        max_w_ft = 32
-        max_w_m  = max_w_ft * 0.3048
+        max_w_m = 32 * 0.3048
         if 'width_m' in brief:
             brief['width_m'] = min(brief['width_m'], max_w_m)
-    else:
-        # Victorian is always a narrow rectangle — override shape
+    elif arch_id == 'victorian_narrow_lot':
         brief['shape'] = 'rectangle'
+    elif arch_id == 'mid_century_modern':
+        brief['shape'] = 'rectangle'   # wide, shallow single-story plate
+        brief['arch_style'] = 'modern_linear'
+    elif arch_id == 'hillside_stepped':
+        brief['shape'] = 'sculpted'    # stepped/irregular massing
+        brief['arch_style'] = 'sculpted_stepped'
+    elif arch_id == 'high_density_townhome':
+        brief['shape'] = 'rectangle'
+        brief['arch_style'] = 'modern_linear'
+    elif arch_id == 'urban_infill_zero_lot':
+        brief['shape'] = 'rectangle'
+        brief['arch_style'] = 'contemporary_box'
+        max_w_m = 25 * 0.3048   # zero-lot is narrow
+        if 'width_m' in brief:
+            brief['width_m'] = min(brief['width_m'], max_w_m)
+    elif arch_id == 'production_tract':
+        brief['shape'] = 'rectangle'
+        brief['arch_style'] = 'classic_gabled'
+    elif arch_id == 'high_end_custom':
+        brief['shape'] = 'rectangle'
+        brief['arch_style'] = 'modern_linear'
+    elif arch_id == 'prefab_modern':
+        brief['shape'] = 'rectangle'
+        brief['arch_style'] = 'contemporary_box'
+        max_w_m = 14 * 0.3048   # single module highway width
+        if 'width_m' in brief:
+            brief['width_m'] = min(brief['width_m'], max_w_m * 2)  # up to 2 modules wide
 
     return brief

@@ -1,0 +1,287 @@
+{
+  "id": "hillside_stepped",
+  "display_name": "Hillside Stepped Home (Berkeley/Oakland Hills / Marin)",
+  "era_built": [1950, 2010],
+  "typical_regions": ["Berkeley Hills", "Oakland Hills", "Marin County", "Sausalito", "Mill Valley", "Tiburon"],
+  "blueprint_sources": [
+    "Berkeley Hills split-level on steep grade — pier-and-grade-beam foundation, stepped living levels",
+    "Oakland Hills fire-rebuild reference (post-1991) — WUI construction, stepped massing on 25% slope",
+    "Marin County hillside contemporary — multiple rooflines, integrated decks at each level"
+  ],
+
+  "petronus_classification": {
+    "house_archetype": "hillside_stepped",
+    "design_style": "contemporary_stepped",
+    "building_use": "single_family",
+    "priority_affinity": ["space", "energy"],
+    "dominant_arch_style": "contemporary_stepped",
+    "facade_material": "fiber_cement_or_hardie_with_fire_rated_glazing",
+    "facade_color_palette": {
+      "body": "#5a6b5a",
+      "trim": "#2c2c2c",
+      "accent": "#8b7355",
+      "window_frame": "#1a1a1a"
+    },
+    "note": "Hillside stepped homes are defined by their split-level relationship to steep terrain. WUI fire zone requirements drive facade and vent material choices. Multi-zone HVAC is mandatory given large vertical separations between levels."
+  },
+
+  "lot": {
+    "width_ft_min": 40,
+    "width_ft_max": 80,
+    "depth_ft_min": 80,
+    "depth_ft_max": 200,
+    "attached": false,
+    "party_walls": "none",
+    "side_yard_access": true,
+    "side_yard_width_ft_min": 5,
+    "front_setback_ft": 20,
+    "rear_setback_ft": 20,
+    "slope_pct_typical": [20, 45],
+    "street_level": "top_or_bottom_of_lot",
+    "note": "Steeply sloped lot — grade relationship between street, main entry, and rear yard varies. Confirm street level vs. sewer main elevation before placing bathrooms."
+  },
+
+  "structure": {
+    "framing_type": "platform",
+    "foundation": "pier_and_grade_beam_or_caissons",
+    "caisson_depth_ft_typical": [20, 40],
+    "pier_diameter_in_typical": 18,
+    "grade_beam_depth_in": 24,
+    "stud_spacing_in": 16,
+    "wall_assembly": "2x6_wood_frame_with_fire_rated_exterior",
+    "wall_thickness_in": 7.0,
+    "floor_to_floor_height_ft": 9.0,
+    "stories_above_grade": [2, 4],
+    "split_level_half_floors": true,
+    "level_offset_ft_typical": 4.5,
+    "seismic_design_category": "D",
+    "soft_story_risk": true,
+    "soft_story_note": "Hillside homes with open lower-level parking or unbraced cripple walls under stepped lower floors are high soft-story risk. Mandatory shear wall design at all levels.",
+    "lateral_bracing_critical": true,
+    "wui_construction_required": true,
+    "joist_penetration_rules": {
+      "max_hole_diameter_fraction_of_depth": 0.333,
+      "hole_zone": "middle_third_of_span",
+      "max_notch_depth_fraction_of_depth": 0.167,
+      "notch_zone": "outer_third_of_span",
+      "min_edge_distance_in": 1.5
+    }
+  },
+
+  "floor_program": {
+    "note": "Program is distributed across multiple half-levels stepping down the slope. Street-entry level is typically mid-house. Living areas and bedrooms cascade up or down from entry.",
+    "street_level": {
+      "elevation": "at_street_grade",
+      "use": "entry_and_garage",
+      "rooms": ["garage", "entry", "mudroom", "utility"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Panel typically lands here closest to utility pole/vault. EV charging in garage. Establish reference grade for sewer main relationship check."
+    },
+    "level_up_half": {
+      "elevation": "half_story_above_street",
+      "use": "main_living",
+      "rooms": ["living_room", "dining_room", "kitchen", "deck"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Kitchen wet wall and main DWV stack at this level. Check if kitchen floor elevation is above or below street sewer main."
+    },
+    "level_down_half": {
+      "elevation": "half_story_below_street",
+      "use": "sleeping_or_family_room",
+      "rooms": ["primary_bedroom", "bedroom", "full_bath", "family_room", "laundry"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "CRITICAL: If any bathroom floor elevation is below the street sewer main invert, a sewage ejector pump is MANDATORY. Calculate relative elevations before specifying DWV system."
+    },
+    "lower_level": {
+      "elevation": "full_story_below_street",
+      "use": "lower_bedroom_or_flex",
+      "rooms": ["bedroom", "bath", "storage", "mechanical_room"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Ejector pump almost certainly required at this level. Route ejector discharge up to gravity drain at street-level sewer main or higher."
+    }
+  },
+
+  "wet_wall": {
+    "location": "rear_center_of_each_wet_level",
+    "fixed": false,
+    "ejector_pump_required_if_below_sewer": true,
+    "ejector_pump_note": "The generator MUST compare the finished floor elevation of each bathroom to the street sewer main invert elevation. Any bathroom FFE more than 8in below sewer main invert requires a sewage ejector pump and pit — this is non-negotiable per CBC plumbing code.",
+    "vertical_stack_across_levels": true,
+    "note": "Route DWV stack vertically from lowest level up through roof. Each level connects to stack via sloped branch. Ejector pump at below-grade bathrooms discharges upward to stack above sewer main elevation."
+  },
+
+  "staircase": {
+    "location": "central_spine_at_each_half_level_change",
+    "width_ft": 3.5,
+    "run_direction": "perpendicular_to_slope",
+    "riser_in": 7.5,
+    "tread_in": 10.0,
+    "headroom_min_in": 80,
+    "mep_note": "Stairs at each half-level transition create opportunities for vertical MEP chases alongside stair stringers. Route supply, return, and vent lines in the stair wall cavity."
+  },
+
+  "mep_routing_priority": ["dwv_gravity", "ejector_pump_check", "multi_zone_hvac", "supply_plumbing", "electrical"],
+
+  "mep_chase": {
+    "primary_location": "stair_wall_chase_or_interior_spine_wall",
+    "vertical_runs_preferred_along": ["stair_wall", "interior_spine_wall", "rear_wall"],
+    "multi_zone_hvac_air_handlers": "one_per_level_in_mechanical_room_or_closet",
+    "note": "Stepped massing means there is no single vertical shaft from basement to roof. Each level needs its own MEP connection points. Stair wall chases are the primary vertical routing spine."
+  },
+
+  "hvac": {
+    "strategy": "multi_zone_ducted_or_mini_split",
+    "multi_zone_required": true,
+    "zones_per_level": 1,
+    "reason": "Large vertical separation between levels and different sun/wind exposure at each level creates distinct thermal zones. A single air handler cannot properly condition all levels.",
+    "ducted_central_allowed": false,
+    "heat_pump_required": true,
+    "gas_allowed": false,
+    "outdoor_unit_location": "street_level_pad_or_roof",
+    "outdoor_unit_wui_note": "Outdoor units must be ember-resistant if in WUI zone — specify non-combustible surrounds and clear vegetation 10ft from unit.",
+    "refrigerant_line_routing": "through_stair_wall_chase_to_each_level",
+    "condensate_drain_required": true,
+    "service_clearance": {
+      "front_access_in": 24,
+      "side_clearance_in": 12
+    }
+  },
+
+  "plumbing": {
+    "dwv": {
+      "existing_material": "cast_iron_or_abs_depending_on_era",
+      "replacement_material": "abs_or_pvc",
+      "stack_type": "single_gravity_stack_with_ejector_at_below_grade_bathrooms",
+      "stack_location": "interior_spine_wall_or_rear_wall",
+      "stack_diameter_in": 4,
+      "bathrooms_must_stack_vertically": true,
+      "slope_in_per_ft": 0.25,
+      "min_branch_slope_in_per_ft": 0.25,
+      "max_branch_length_before_cleanout_ft": 100,
+      "cleanout_at_every_direction_change": true,
+      "cleanout_at_base_of_stack": true,
+      "building_drain_exit_location": "through_foundation_at_street_level_or_pumped_to_street",
+      "ejector_pump": {
+        "required_if_below_sewer": true,
+        "ejector_pump_required_if_below_sewer": true,
+        "pit_size_min_gallons": 30,
+        "discharge_pipe_diameter_in": 2,
+        "discharge_pipe_material": "schedule_80_pvc",
+        "check_valve_required": true,
+        "vent_required": true,
+        "alarm_required": true,
+        "calculation_note": "Compare FFE of each bathroom to sewer main invert at property line. If FFE is <8in above sewer invert, specify ejector pump."
+      },
+      "voltage_drop_calculation_required": true,
+      "vent_through_roof": true
+    },
+    "supply": {
+      "material": "pex_a",
+      "routing": "pressurized_routes_through_stair_wall_chases",
+      "hot_water_recirculation": true,
+      "insulation_required": true,
+      "effective_diameter_with_insulation_in": 3.5,
+      "long_run_note": "Long supply runs on steep lots may require pressure-boosting — calculate static pressure loss for runs >60ft vertical."
+    },
+    "water_heater": {
+      "type": "heat_pump",
+      "location": "mechanical_room_or_utility_closet_at_street_level",
+      "min_surrounding_volume_ft3": 700,
+      "service_clearance_front_in": 24,
+      "condensate_drain_required": true
+    }
+  },
+
+  "electrical": {
+    "panel": {
+      "upgrade_required": true,
+      "min_amps": 200,
+      "location": "street_level_utility_room_or_garage_wall",
+      "voltage_drop_calculation_required": true,
+      "service_run_distance_ft": [50, 150],
+      "service_run_note": "Utility pole or underground vault may be significantly above or below the main panel location. Calculate voltage drop for service feeder: use wire size one gauge larger than minimum if run exceeds 100ft.",
+      "nec_clearance": {
+        "width_in": 30,
+        "depth_in": 36,
+        "height_in": 78
+      }
+    },
+    "wire_method": "fish_through_framing_with_chase_at_stair_walls",
+    "ev_charging": {
+      "required": true,
+      "voltage": 240,
+      "amps": 40,
+      "location": "garage_street_level",
+      "circuit_dedicated": true
+    },
+    "solar": {
+      "pv_layout_required": true,
+      "roof_coverage_target_pct": 60,
+      "panel_setback_from_ridge_in": 18,
+      "panel_setback_from_eave_in": 18,
+      "multiple_roof_planes_note": "Stepped massing produces multiple roof levels at different elevations and orientations — optimize panel placement on south-facing planes."
+    },
+    "battery_storage": {
+      "pre_wired_required": true,
+      "installed_day_one": false,
+      "location": "mechanical_room_street_level"
+    },
+    "induction_cooktop": true
+  },
+
+  "clearances": {
+    "insulation_hot_water_pipe_extra_diameter_in": 1.5,
+    "insulation_hvac_duct_extra_each_side_in": 1.0,
+    "effective_pipe_diameter_2in_supply_in": 3.5,
+    "effective_duct_diameter_adds_each_side_in": 1.0,
+    "mep_conflict_tolerance_in": 0.5,
+    "ejector_pump_pit_clearance_around_ft": 2
+  },
+
+  "california_compliance": {
+    "cbc_edition": "2022",
+    "title_24": true,
+    "fully_electric": true,
+    "solar_ready": true,
+    "battery_ready": true,
+    "heat_pump_hvac": true,
+    "heat_pump_water_heater": true,
+    "induction_cooktop": true,
+    "ev_charging_required": true,
+    "seismic_retrofit_likely": true,
+    "wui_compliance": true,
+    "nfpa_wui": true,
+    "fire_rated_vents_required": true,
+    "ember_resistant_vents_required": true,
+    "fire_rated_glazing_required": true,
+    "class_a_roofing_required": true,
+    "defensible_space_clearance_ft": 100
+  },
+
+  "massing_hints": {
+    "facade_style": "contemporary_stepped",
+    "roof_type": "varied_shed_or_gabled_per_level",
+    "roof_pitch_12": 4,
+    "garage_at_grade": true,
+    "main_entry_elevated": false,
+    "exterior_stairs_to_entry": false,
+    "plan_shape": "stepped_rectangle_following_grade",
+    "width_to_depth_ratio_typical": 0.6,
+    "decks_at_each_level": true,
+    "multiple_rooflines": true,
+    "retaining_walls": true,
+    "note": "Massing follows terrain contours. Each stepped level reads as a distinct volume with its own roofline. Decks cantilever from each level to capture views. Retaining walls anchor each step to the hillside."
+  },
+
+  "known_constraints_summary": [
+    "EJECTOR PUMP CHECK: Compare every bathroom FFE to sewer main invert — any bathroom below sewer elevation requires ejector pump. This is a mandatory pre-design calculation.",
+    "Multi-zone HVAC required — one zone per level minimum. Single air handler cannot serve all split levels.",
+    "Voltage drop calculation required for service feeder — pole or vault may be 50-150ft from main panel, often at different elevation.",
+    "WUI zone: all exterior vents must be ember-resistant (Class A), glazing must be fire-rated, roofing must be Class A. No wood siding without fire-resistant coating.",
+    "Pier-and-grade-beam or caisson foundation on steep slopes — coordinate HVAC outdoor unit and utility service entry with foundation layout.",
+    "Soft story risk at open lower-level parking or cripple walls — seismic shear wall design required at all levels.",
+    "Seismic design category D — lateral bracing at each level is non-optional.",
+    "DWV stack must be continuous from lowest level to roof — route through stair wall chases at each half-level transition.",
+    "Multi-level supply runs may need pressure boosting for runs exceeding 60ft vertical — calculate static pressure loss.",
+    "Multiple roof planes at different elevations — optimize solar on south-facing planes only, coordinate with multi-zone HVAC condensers."
+  ]
+}

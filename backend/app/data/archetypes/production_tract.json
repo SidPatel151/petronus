@@ -1,0 +1,259 @@
+{
+  "id": "production_tract",
+  "display_name": "Production / Tract Home (Suburban California)",
+  "era_built": [1980, 2030],
+  "typical_regions": ["Dublin", "Tracy", "Irvine", "Elk Grove", "Folsom", "Temecula", "Rancho Cucamonga"],
+  "blueprint_sources": [
+    "Toll Brothers Tri-Valley 4BR/3BA Plan 3 — 2,400 sqft, 2-car attached garage, central HVAC in attic",
+    "Lennar NextGen 3BR/2.5BA — PEX manifold, central wet wall cluster, repeatable wiring template",
+    "KB Home Irvine 5BR/3BA — central attic air handler, short duct runs, single wet wall cluster"
+  ],
+
+  "petronus_classification": {
+    "house_archetype": "production_tract",
+    "design_style": "classic_gabled",
+    "building_use": "single_family",
+    "priority_affinity": ["cost", "space"],
+    "dominant_arch_style": "suburban_traditional",
+    "facade_material": "stucco_or_hardboard_siding",
+    "facade_color_palette": {
+      "body": "#d4c9b5",
+      "trim": "#f5f0e8",
+      "accent": "#8b6b4a",
+      "window_frame": "#3c3028"
+    },
+    "note": "Developer-built for maximum cost efficiency and repeatability. Toll Brothers, Lennar, KB Home floor plans share the same engineering DNA: centralized MEP, PEX manifold plumbing, central attic HVAC. Template-based generation is appropriate — same floor plan orientation produces near-identical wiring diagrams. Only variation is solar PV layout based on roof orientation."
+  },
+
+  "lot": {
+    "width_ft_min": 50,
+    "width_ft_max": 80,
+    "depth_ft_min": 80,
+    "depth_ft_max": 140,
+    "attached": false,
+    "party_walls": "none",
+    "side_yard_access": true,
+    "side_yard_width_ft_min": 5,
+    "front_setback_ft": 20,
+    "rear_setback_ft": 20,
+    "max_lot_coverage_pct": 45,
+    "note": "Standard suburban tract lot. Detached with side yards for HVAC equipment and access. Attached 2-car garage is standard. Front yard required."
+  },
+
+  "structure": {
+    "framing_type": "platform",
+    "foundation": "slab_on_grade_or_raised_wood_floor",
+    "slab_thickness_in": 4,
+    "stud_spacing_in": 16,
+    "wall_assembly": "2x4_or_2x6_wood_frame",
+    "wall_thickness_in": 5.5,
+    "floor_to_floor_height_ft": 9.0,
+    "stories_above_grade": [1, 2],
+    "attic_present": true,
+    "attic_height_in_typical": 36,
+    "roof_type": "hip_or_gabled",
+    "roof_pitch_12_typical": 5,
+    "seismic_design_category": "D",
+    "soft_story_risk": false,
+    "truss_roof": true,
+    "truss_note": "Engineered roof trusses are standard in production homes. Do not cut truss members for HVAC penetrations — all duct work must route between trusses or through pre-engineered web openings.",
+    "joist_penetration_rules": {
+      "max_hole_diameter_fraction_of_depth": 0.333,
+      "hole_zone": "middle_third_of_span",
+      "max_notch_depth_fraction_of_depth": 0.167,
+      "notch_zone": "outer_third_of_span",
+      "min_edge_distance_in": 1.5
+    }
+  },
+
+  "floor_program": {
+    "note": "Highly repeatable program. Public/social zones at front and main floor; bedrooms on upper floor or private wing. Attached 2-car garage adjacent to kitchen for delivery efficiency.",
+    "floor_0": {
+      "elevation": "at_grade",
+      "use": "main_living",
+      "rooms": ["entry", "living_room", "dining_room", "kitchen", "family_room", "half_bath", "laundry", "2_car_garage"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Kitchen and all wet rooms cluster at rear-center wet wall. Panel in garage. EV charging in garage. Short duct runs to central attic air handler — keep air handler within 20ft of all supply registers."
+    },
+    "floor_1": {
+      "use": "sleeping",
+      "rooms": ["primary_bedroom", "primary_bath", "bedroom", "bedroom", "bedroom", "hall_bath", "loft_optional"],
+      "ceiling_height_ft": 9.0,
+      "mep_note": "Wet walls stack above L0 kitchen/half bath. Baths at rear-center. Central hall bath stacks above kitchen. All duct runs terminate within 20ft of central attic air handler."
+    }
+  },
+
+  "wet_wall": {
+    "location": "rear_center",
+    "fixed": true,
+    "single_wet_wall_cluster": true,
+    "pex_manifold_homerun": true,
+    "clustering_note": "COST PRIORITY: All wet fixtures — kitchen, laundry, all bathrooms — must cluster around a single central wet wall. This minimizes DWV stack count, reduces pipe run lengths, and concentrates the PEX manifold supply runs. The generator must resist placing bathrooms in opposite corners of the house.",
+    "note": "Single centrally-located wet wall serves kitchen, laundry, and all baths via shared DWV stack and PEX manifold home-run supply system."
+  },
+
+  "staircase": {
+    "location": "entry_foyer_or_center_hall",
+    "width_ft": 4.0,
+    "run_direction": "front_to_back_or_landing_return",
+    "riser_in": 7.5,
+    "tread_in": 10.0,
+    "headroom_min_in": 80,
+    "mep_note": "Stair at entry foyer is the standard production home configuration. MEP chases route through center-hall partition walls — stair is separate from wet wall zone."
+  },
+
+  "mep_routing_priority": ["dwv_gravity", "hvac_duct_efficiency", "supply_plumbing", "electrical"],
+
+  "mep_chase": {
+    "primary_location": "central_attic_over_wet_wall_cluster",
+    "vertical_runs_preferred_along": ["wet_wall_partition", "center_hall_wall"],
+    "air_handler_location": "attic_above_center_of_plan",
+    "shortest_duct_runs": true,
+    "duct_efficiency_note": "Minimize total duct run length. Air handler in center of attic, short branch ducts to all registers. Target maximum duct run of 20ft from air handler to furthest register.",
+    "note": "Central attic air handler is the cost-efficient solution for production homes. All branch ducts fan out radially from center. Engineer attic location before placing non-wet rooms."
+  },
+
+  "hvac": {
+    "strategy": "central_ducted_heat_pump",
+    "shortest_duct_runs": true,
+    "central_equipment_location": true,
+    "ducted_central_allowed": true,
+    "heat_pump_required": true,
+    "gas_allowed": false,
+    "outdoor_unit_location": "side_yard",
+    "air_handler_location": "central_attic",
+    "single_air_handler_location": "central_hallway_above_or_attic_above_center",
+    "target_max_duct_run_ft": 20,
+    "standardized_filter_returns": true,
+    "filter_return_location": "central_hall_ceiling_or_wall",
+    "refrigerant_line_routing": "through_attic_to_side_yard",
+    "condensate_drain_required": true,
+    "service_clearance": {
+      "front_access_in": 24,
+      "side_clearance_in": 12
+    }
+  },
+
+  "plumbing": {
+    "dwv": {
+      "material": "abs_or_pvc",
+      "stack_type": "single_central_stack",
+      "stack_location": "rear_center_wet_wall",
+      "stack_diameter_in": 4,
+      "bathrooms_must_stack_vertically": true,
+      "slope_in_per_ft": 0.25,
+      "min_branch_slope_in_per_ft": 0.25,
+      "max_branch_length_before_cleanout_ft": 100,
+      "cleanout_at_base_of_stack": true,
+      "cleanout_at_exterior_cleanout_tee": true,
+      "building_drain_exit_location": "through_slab_to_street_lateral",
+      "vent_through_roof": true
+    },
+    "supply": {
+      "material": "pex_a",
+      "routing": "pex_manifold_homerun",
+      "pex_manifold_homerun": true,
+      "manifold_location": "utility_closet_or_garage_wall_near_water_heater",
+      "manifold_note": "PEX home-run manifold: each fixture gets a dedicated PEX run from manifold to fixture — no trunk-and-branch copper. Reduces joints, enables individual shutoff per fixture, simplifies leak detection. Manifold in utility closet next to water heater.",
+      "hot_water_recirculation": false,
+      "hot_water_recirculation_note": "PEX home-run does not traditionally use recirc loops — dedicated branch to each fixture ensures reasonable wait times for hot water. Optional recirc on hot supply manifold for larger homes.",
+      "insulation_required": true,
+      "effective_diameter_with_insulation_in": 3.0
+    },
+    "water_heater": {
+      "type": "heat_pump",
+      "location": "garage_or_utility_closet",
+      "min_surrounding_volume_ft3": 700,
+      "service_clearance_front_in": 24,
+      "condensate_drain_required": true
+    }
+  },
+
+  "electrical": {
+    "panel": {
+      "upgrade_required": false,
+      "min_amps": 200,
+      "location": "garage_interior_wall",
+      "template_wiring": true,
+      "template_note": "Production homes use repeatable wiring templates. Same floor plan with same orientation generates near-identical circuit layout. Only variation is solar PV string layout based on whether roof faces south, east/west, or north.",
+      "nec_clearance": {
+        "width_in": 30,
+        "depth_in": 36,
+        "height_in": 78
+      }
+    },
+    "wire_method": "romex_in_platform_frame",
+    "ev_charging": {
+      "required": true,
+      "voltage": 240,
+      "amps": 40,
+      "location": "garage_wall_per_ca_requirement",
+      "circuit_dedicated": true
+    },
+    "solar": {
+      "pv_layout_required": true,
+      "roof_coverage_target_pct": 70,
+      "panel_setback_from_ridge_in": 18,
+      "panel_setback_from_eave_in": 18,
+      "orientation_dependency": true,
+      "orientation_note": "Solar PV layout is the PRIMARY variation between otherwise identical floor plans in a tract development. If south-facing roof area is large, maximize south array. East/west split roofs require split arrays. North-facing roofs may have compliance challenges — flag for engineer review.",
+      "inverter_location": "garage_exterior_wall"
+    },
+    "battery_storage": {
+      "pre_wired_required": true,
+      "installed_day_one": false,
+      "location": "garage_wall"
+    },
+    "induction_cooktop": true
+  },
+
+  "clearances": {
+    "insulation_hot_water_pipe_extra_diameter_in": 1.5,
+    "insulation_hvac_duct_extra_each_side_in": 1.0,
+    "effective_pipe_diameter_2in_supply_in": 3.0,
+    "effective_duct_diameter_adds_each_side_in": 1.0,
+    "mep_conflict_tolerance_in": 0.5,
+    "attic_truss_do_not_cut_clearance": true
+  },
+
+  "california_compliance": {
+    "cbc_edition": "2022",
+    "title_24": true,
+    "fully_electric": true,
+    "solar_required": true,
+    "battery_ready": true,
+    "heat_pump_hvac": true,
+    "heat_pump_water_heater": true,
+    "induction_cooktop": true,
+    "ev_charging_required": true,
+    "seismic_design_category": "D",
+    "fire_sprinklers": "required_if_over_local_threshold"
+  },
+
+  "massing_hints": {
+    "facade_style": "suburban_traditional",
+    "roof_type": "hip_or_gabled",
+    "roof_pitch_12": 5,
+    "garage_at_grade": true,
+    "main_entry_elevated": false,
+    "exterior_stairs_to_entry": false,
+    "plan_shape": "wide_rectangle_or_l_shape",
+    "width_to_depth_ratio_typical": 0.85,
+    "attached_garage_prominent": true,
+    "covered_entry_porch": true,
+    "note": "Standard suburban California massing. Stucco or hardboard siding, hip or gabled roof with medium pitch, attached 2-car garage at grade. Entry porch with small stoop. Repeatable across a tract development with minor exterior color and detail variations."
+  },
+
+  "known_constraints_summary": [
+    "Cost is the primary driver — minimize pipe run lengths, duct run lengths, and wire run lengths above all else.",
+    "PEX manifold home-run system required (not trunk-and-branch copper) — manifold next to water heater in utility closet or garage.",
+    "Single wet wall cluster at rear-center — all kitchen, laundry, and bathroom DWV must connect to this single stack.",
+    "Central attic air handler: place over center of floor plan, target max 20ft duct run to any register.",
+    "Truss roof: never cut truss members for duct penetrations — route between trusses or through pre-engineered web openings.",
+    "Template wiring: same floor plan orientation generates near-identical circuits — only solar PV layout changes based on roof orientation.",
+    "Solar PV orientation is the critical variable: south-facing maximizes generation; east/west split; north-facing may not meet Title 24 compliance.",
+    "Panel in garage at 200A minimum — EV charging circuit (240V/40A) in garage is California-mandated.",
+    "Heat pump water heater in garage needs 700 ft³ surrounding air — full garage volume qualifies.",
+    "No soft-story risk in standard tract home — but verify if floor plan has 3-car garage or large opening that reduces ground-floor shear wall area."
+  ]
+}

@@ -1,0 +1,302 @@
+{
+  "id": "prefab_modern",
+  "display_name": "Prefab / Modular Modern Home",
+  "era_built": [2010, 2030],
+  "typical_regions": ["California statewide (factory-built, site-agnostic)"],
+  "blueprint_sources": [
+    "Clayton Homes ModSystem 2BR/1BA 28x40 — 14ft wide highway-legal modules, seam connectors at 28ft midpoint",
+    "Dvele 3BR/2BA 1,500 sqft two-module stacked layout — module seam at exterior wall with SharkBite connections",
+    "Mighty Buildings 3BR/2BA — 3D-printed modules, seam at exterior wall, stub-out connectors at seam face"
+  ],
+
+  "petronus_classification": {
+    "house_archetype": "prefab_modern",
+    "design_style": "modern_linear",
+    "building_use": "single_family",
+    "priority_affinity": ["cost", "energy", "space"],
+    "dominant_arch_style": "contemporary_box",
+    "facade_material": "metal_panel_or_fiber_cement_horizontal_siding",
+    "facade_color_palette": {
+      "body": "#4a4a4a",
+      "trim": "#f0ece4",
+      "accent": "#b0c4b1",
+      "window_frame": "#1a1a1a"
+    },
+    "note": "Prefab modular construction is fundamentally different from site-built — every MEP system must be designed to respect module boundaries. The MODULE SEAM RULE is the governing constraint: no continuous pipe, duct, or wire may cross a module seam except at explicitly designed stub-out connection points. Violating this rule makes on-site assembly impossible."
+  },
+
+  "lot": {
+    "width_ft_min": 40,
+    "width_ft_max": 200,
+    "depth_ft_min": 60,
+    "depth_ft_max": 200,
+    "attached": false,
+    "party_walls": "none",
+    "side_yard_access": true,
+    "side_yard_width_ft_min": 5,
+    "front_setback_ft": 20,
+    "rear_setback_ft": 20,
+    "site_prep_critical": true,
+    "site_prep_note": "Foundation must be engineered specifically for module loads and dimensions. Site must be leveled and compacted before module delivery. Access road must accommodate semi-truck + crane (14ft wide minimum clearance, 100ft turning radius).",
+    "note": "Site-agnostic from a code perspective (factory-built under state or HUD certification), but site prep and access are critical for modular delivery and craning."
+  },
+
+  "module_geometry": {
+    "max_width_ft": 14,
+    "max_width_note": "14ft is the highway transport limit without special wide-load permits. Module width is the hardest constraint in prefab design — never exceed 14ft per module.",
+    "max_length_ft": 60,
+    "height_ft_typical": 10.0,
+    "multi_story": "modules_stacked_vertically",
+    "seam_types": ["end_to_end_longitudinal", "side_by_side_transverse", "floor_ceiling_vertical_stack"],
+    "connection_points_at_seam_only": true,
+    "mep_stays_within_module": true,
+    "module_seam_constraint": true,
+    "module_seam_rule": "CRITICAL MODULE SEAM RULE: ALL MEP systems must be designed to stay entirely within a single 3D module. No pipe, duct, or wire may run continuously across a module seam. The ONLY exception is a designated connection stub-out at the exact seam face. This stub-out must use approved coupling types (Fernco flex coupling for DWV, SharkBite or ProPress for supply, listed junction box for electrical)."
+  },
+
+  "structure": {
+    "framing_type": "platform_factory_built",
+    "foundation": "engineered_piers_or_continuous_perimeter",
+    "pier_design_note": "Foundation designed to exact module grid dimensions. Pier locations must align with module rim joist bearing points — coordinate with module manufacturer before foundation design.",
+    "slab_thickness_in": 4,
+    "stud_spacing_in": 16,
+    "wall_assembly": "2x6_wood_frame_factory_built_or_3d_printed",
+    "wall_thickness_in": 7.0,
+    "floor_to_floor_height_ft": 10.0,
+    "stories_above_grade": [1, 2],
+    "seismic_design_category": "D",
+    "soft_story_risk": false,
+    "factory_quality_note": "Factory construction offers tighter tolerances than site-built — typically ±1/8in vs ±1/4in. Structural shear is designed into the module box — the module itself acts as a stressed-skin panel. Verify shear design for California SDC D.",
+    "code_compliance": "hud_code_or_irc_factory_built",
+    "joist_penetration_rules": {
+      "max_hole_diameter_fraction_of_depth": 0.333,
+      "hole_zone": "middle_third_of_span",
+      "max_notch_depth_fraction_of_depth": 0.167,
+      "notch_zone": "outer_third_of_span",
+      "min_edge_distance_in": 1.5
+    }
+  },
+
+  "floor_program": {
+    "note": "Program is organized by module. Each module contains a complete functional zone. Wet fixtures are clustered per module to keep DWV within the module boundary.",
+    "module_1": {
+      "use": "main_living",
+      "rooms": ["living_room", "dining_room", "kitchen", "half_bath", "laundry"],
+      "module_width_ft": 14,
+      "module_length_ft": 44,
+      "ceiling_height_ft": 10.0,
+      "mep_note": "All DWV for this module must drain to stub-out at module seam or sill. Kitchen and half bath wet wall centralized within this module — no DWV runs to adjacent module. PEX supply terminates at module junction box at seam face."
+    },
+    "module_2": {
+      "use": "sleeping",
+      "rooms": ["primary_bedroom", "primary_bath", "bedroom", "bedroom", "hall_bath", "hall"],
+      "module_width_ft": 14,
+      "module_length_ft": 44,
+      "ceiling_height_ft": 10.0,
+      "mep_note": "All DWV for this module is self-contained. Connects to Module 1 DWV via Fernco flex coupling at seam face. All circuits home-run to junction box at seam — only seam connector cables cross module boundary."
+    },
+    "module_3_optional_second_story": {
+      "use": "bonus_room_or_additional_bedrooms",
+      "module_width_ft": 14,
+      "module_length_ft": 40,
+      "ceiling_height_ft": 10.0,
+      "mep_note": "Stacked module above Modules 1 or 2. Vertical seam (floor/ceiling) is the seam boundary. All MEP from below passes through designated chase penetrations at exact seam locations — no unsupported runs span the floor/ceiling seam."
+    }
+  },
+
+  "wet_wall": {
+    "location": "central_within_each_module",
+    "fixed": true,
+    "mep_stays_within_module": true,
+    "stub_out_at_seam": true,
+    "stub_out_coupling_type_dwv": "fernco_flex_coupling",
+    "stub_out_coupling_type_supply": "sharkbite_or_propress",
+    "stub_out_no_solder_within_6in_of_seam": true,
+    "note": "Each module contains its own wet wall. DWV from each module exits at the seam face via stub-out with Fernco flex coupling. Supply terminates at SharkBite/ProPress fitting at seam. No soldered joints within 6in of seam face — differential thermal movement would crack solder joints during transport."
+  },
+
+  "staircase": {
+    "location": "within_single_module_at_seam_end",
+    "width_ft": 3.5,
+    "run_direction": "along_module_long_axis",
+    "riser_in": 7.5,
+    "tread_in": 10.0,
+    "headroom_min_in": 80,
+    "stair_module_note": "Stair opening is pre-cut in factory. Stair must fit entirely within one module — cannot span a seam. Place at the seam end of a module so upper and lower landings are within the same module footprint.",
+    "mep_note": "All vertical MEP at stair location passes through pre-drilled factory sleeves. No field-drilled penetrations through stair stringers or module box structure."
+  },
+
+  "mep_routing_priority": ["module_seam_compliance", "dwv_gravity", "hvac", "supply_plumbing", "electrical"],
+
+  "mep_chase": {
+    "primary_location": "within_module_center_or_rear_wall",
+    "module_junction_box_at_seam": true,
+    "vertical_seam_connection_type": "listed_conduit_coupling_at_floor_ceiling_seam",
+    "no_diagonal_cross_seam_runs": true,
+    "no_continuous_runs_across_seam": true,
+    "note": "MEP chases are contained within each module. At each seam, a factory-installed junction box (electrical), SharkBite fitting (supply), and Fernco coupling (DWV) allow on-site connection. The generator must identify every seam crossing and design an explicit connection point — no implicit continuous runs."
+  },
+
+  "hvac": {
+    "strategy": "mini_split_per_module",
+    "ducted_within_module_allowed": true,
+    "cross_module_duct_not_allowed": true,
+    "duct_seam_rule": "HVAC ducted systems must be fully contained within each module. Duct stub-outs at seam faces only — on-site connection via flexible duct connector at seam face.",
+    "duct_stub_out_type": "round_duct_with_flex_connector_at_seam",
+    "heat_pump_required": true,
+    "gas_allowed": false,
+    "outdoor_unit_location": "side_yard_or_rear",
+    "refrigerant_line_routing": "through_module_exterior_wall_chase",
+    "condensate_drain_required": true,
+    "erv_hrv_per_module": true,
+    "service_clearance": {
+      "front_access_in": 24,
+      "side_clearance_in": 12
+    }
+  },
+
+  "plumbing": {
+    "dwv": {
+      "material": "abs_or_pvc",
+      "stack_type": "single_stack_per_module",
+      "stack_location": "wet_wall_within_module",
+      "stack_diameter_in": 4,
+      "bathrooms_must_stack_within_module": true,
+      "slope_in_per_ft": 0.25,
+      "min_branch_slope_in_per_ft": 0.25,
+      "max_branch_length_before_cleanout_ft": 50,
+      "cleanout_at_every_direction_change": true,
+      "cleanout_at_base_of_stack": true,
+      "seam_connection": {
+        "type": "fernco_flex_coupling",
+        "size_in": 4,
+        "location": "at_module_seam_face",
+        "no_solder_within_in": 6,
+        "no_glued_joint_within_in": 3,
+        "note": "Fernco flex couplings at all seam connections accommodate transport vibration and on-site differential settlement. Never use rigid glued or soldered couplings within 6in of seam face."
+      },
+      "building_drain_exit_location": "through_module_sill_to_site_lateral",
+      "routing_constraint": "all_drains_must_gravity_drain_within_module_to_seam_stub_out",
+      "vent_through_roof": true,
+      "vent_seam_connection": "flex_duct_or_belled_coupling_at_roof_seam"
+    },
+    "supply": {
+      "material": "pex_a",
+      "routing": "through_module_wall_chases",
+      "seam_connection": {
+        "type": "sharkbite_or_propress",
+        "no_solder_within_in": 6,
+        "note": "SharkBite or ProPress fittings at seam face — no soldered joints within 6in of seam. Push-fit allows for the slight misalignment that can occur between modules during site placement."
+      },
+      "hot_water_recirculation": false,
+      "insulation_required": true,
+      "effective_diameter_with_insulation_in": 3.0
+    },
+    "water_heater": {
+      "type": "heat_pump",
+      "location": "utility_closet_within_living_module",
+      "min_surrounding_volume_ft3": 450,
+      "service_clearance_front_in": 24,
+      "condensate_drain_required": true
+    }
+  },
+
+  "electrical": {
+    "panel": {
+      "upgrade_required": false,
+      "min_amps": 200,
+      "location": "living_module_utility_closet",
+      "module_junction_box_required": true,
+      "junction_box_note": "Each module has a factory-installed junction box at each seam face. All circuits home-run to the junction box — no continuous wire runs cross the seam. At the junction box, site-installed listed connectors bridge between modules. Listed means UL 514B or equivalent junction box with listed conduit connectors.",
+      "nec_clearance": {
+        "width_in": 30,
+        "depth_in": 36,
+        "height_in": 78
+      }
+    },
+    "wire_method": "romex_within_module_conduit_at_seam_junction_box",
+    "seam_connection": {
+      "type": "listed_junction_box_at_seam_face",
+      "wire_coupling": "wirenuts_or_push_in_connectors_within_listed_box",
+      "no_continuous_wire_across_seam": true,
+      "note": "All module-to-module electrical connections must be made in a listed junction box at the seam face. No single continuous wire may cross the seam — break at junction box with listed connectors."
+    },
+    "ev_charging": {
+      "required": true,
+      "voltage": 240,
+      "amps": 40,
+      "location": "module_exterior_accessible_outlet",
+      "circuit_dedicated": true
+    },
+    "solar": {
+      "pv_layout_required": true,
+      "roof_coverage_target_pct": 65,
+      "roof_mount_type": "flat_or_low_slope_ballasted",
+      "panel_setback_from_roof_edge_in": 24,
+      "wiring_within_module": true,
+      "wiring_seam_note": "Solar micro-inverters per panel allow array wiring to be self-contained per module — no DC home runs crossing seams. Use micro-inverter on each panel, AC home run to module junction box.",
+      "inverter_location": "per_panel_micro_inverter"
+    },
+    "battery_storage": {
+      "pre_wired_required": true,
+      "installed_day_one": false,
+      "location": "module_exterior_wall_or_utility_closet"
+    },
+    "induction_cooktop": true
+  },
+
+  "clearances": {
+    "insulation_hot_water_pipe_extra_diameter_in": 1.5,
+    "insulation_hvac_duct_extra_each_side_in": 1.0,
+    "effective_pipe_diameter_2in_supply_in": 3.0,
+    "effective_duct_diameter_adds_each_side_in": 1.0,
+    "mep_conflict_tolerance_in": 0.25,
+    "seam_face_exclusion_zone_in": 6,
+    "seam_connection_stub_length_in": 6
+  },
+
+  "california_compliance": {
+    "cbc_edition": "2022",
+    "title_24": true,
+    "fully_electric": true,
+    "solar_required": true,
+    "battery_ready": true,
+    "heat_pump_hvac": true,
+    "heat_pump_water_heater": true,
+    "induction_cooktop": true,
+    "ev_charging_required": true,
+    "seismic_design_category": "D",
+    "factory_built_compliance": "hud_code_or_california_factory_built_housing_law_hsc_19971",
+    "fire_sprinklers": "required_if_applicable_occupancy_type",
+    "third_party_inspection": "required_at_factory_and_site"
+  },
+
+  "massing_hints": {
+    "facade_style": "modern_linear",
+    "roof_type": "flat_or_low_slope",
+    "roof_pitch_12": 1,
+    "garage_at_grade": false,
+    "main_entry_elevated": false,
+    "exterior_stairs_to_entry": false,
+    "plan_shape": "rectangle_in_14ft_increments",
+    "module_width_ft": 14,
+    "width_constrained_by_transport": true,
+    "width_to_depth_ratio_typical": 0.35,
+    "horizontal_siding": true,
+    "large_end_wall_glazing": true,
+    "note": "Prefab modern box massing is defined by the 14ft module width constraint. Length is a multiple of module sections. Flat or very low slope roof. Horizontal siding. Large glazing on end walls (not sides, which are often seams). On-site assembly visible as distinct module volumes."
+  },
+
+  "known_constraints_summary": [
+    "MODULE SEAM RULE (NON-NEGOTIABLE): Every MEP run must stay entirely within a single module. Cross-seam connections ONLY at designated stub-out points at the seam face. No diagonal or continuous runs across seams.",
+    "DWV cross-seam: Fernco flex coupling only at seam face. No glued joint within 3in, no soldered joint within 6in of seam.",
+    "Supply cross-seam: SharkBite or ProPress only at seam face. No soldered joints within 6in of seam.",
+    "Electrical cross-seam: listed junction box at seam face. No single continuous wire crosses seam — break at junction box with listed connectors.",
+    "HVAC cross-seam: flexible duct connector at duct stub-out at seam face. No rigid duct span across seam.",
+    "Module max width is 14ft — this is a highway transport limit. Never exceed 14ft module width.",
+    "Foundation must be engineered to exact module grid dimensions — coordinate with module manufacturer before foundation design.",
+    "Site access requires semi-truck + crane: 14ft minimum clearance, 100ft turning radius. Verify site access before selecting this archetype.",
+    "Solar: use micro-inverters per panel so array wiring stays within each roof module — no DC home runs crossing seams.",
+    "Factory construction reduces on-site labor 40-60% but requires exact site prep and crane coordination on installation day."
+  ]
+}
