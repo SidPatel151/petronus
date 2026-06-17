@@ -38,12 +38,17 @@ def detect_archetype(spec, site_context=None) -> Optional[str]:
     if is_adu:
         return 'adu_compact'
 
+    # Hillside: real slope ≥15% wins over everything — even explicit style choice.
+    # A user who picks classic_gabled on a 20% slope still gets a hillside house.
+    if is_sfr and slope_pct >= 15.0:
+        return 'hillside_stepped'
+
     # Victorian: classic_gabled style + SFR 2+ stories (no HVAC restriction — users don't set it)
     if style == 'classic_gabled' and is_sfr and stories >= 2:
         return 'victorian_narrow_lot'
 
-    # Hillside: real slope ≥15% from USGS terrain data, or explicit style choice
-    if is_sfr and (slope_pct >= 15.0 or style in ('sculpted_stepped', 'hillside')):
+    # Hillside: explicit style choice (used when slope data is unavailable / flat parcel)
+    if is_sfr and style in ('sculpted_stepped', 'hillside'):
         return 'hillside_stepped'
 
     # Mid-Century Modern: modern style + single family, 1-2 stories

@@ -836,6 +836,85 @@ class FloorplanGenerator:
             ))
         return walls
 
+    # ── Hillside street-level ground floor ───────────────────────────────────
+    def _layout_hillside_ground(
+        self, footprint, bounds, w, d, level: Level,
+        all_levels: List[Level],
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Street level of a hillside stepped house: garage (front) + entry + mudroom + utility.
+        Generates 4 rooms so the ground floor is not nearly empty."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny = bounds[0], bounds[1]
+        fp_interior = footprint.buffer(-FP_INSET)
+
+        def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
+            cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            try:
+                clipped = fp_interior.intersection(cell)
+                if hasattr(clipped, 'geoms'):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                    return
+                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                rooms.append(Room(
+                    id=f"hs_{rtype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rtype, unit_id="house", polygon=poly, level=lvl,
+                    area_sqft=clipped.area * 10.764,
+                ))
+            except Exception:
+                pass
+
+        # Garage: front 40% of depth
+        garage_d = d * 0.40
+        _clip_room(minx, miny, minx + w, miny + garage_d, "garage")
+
+        # Service zone: back 60% split into entry(40%), mudroom(30%), utility(30%)
+        svc_y0 = miny + garage_d
+        svc_y1 = miny + d
+        entry_x1 = minx + w * 0.40
+        mud_x1   = minx + w * 0.70
+        _clip_room(minx,     svc_y0, entry_x1, svc_y1, "foyer")
+        _clip_room(entry_x1, svc_y0, mud_x1,   svc_y1, "mudroom")
+        _clip_room(mud_x1,   svc_y0, minx + w, svc_y1, "utility")
+
+        room_rects: List[Tuple[float, float, float, float]] = [
+            (minx, miny,   minx + w,  miny + garage_d),
+            (minx, svc_y0, entry_x1,  svc_y1),
+            (entry_x1, svc_y0, mud_x1, svc_y1),
+            (mud_x1, svc_y0, minx + w, svc_y1),
+        ]
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
+
+        # Stair — only for multi-story
+        n_floors = len(all_levels) if all_levels else 1
+        if n_floors > 1:
+            stair_w = min(w * 0.15, 1.5)
+            stair_d_s = min(d * 0.28, 3.5)
+            sr_x0 = (minx + w) - stair_w
+            sr_y0 = miny + (d - stair_d_s) / 2
+            raw_stair = Polygon([
+                [sr_x0, sr_y0], [sr_x0 + stair_w, sr_y0],
+                [sr_x0 + stair_w, sr_y0 + stair_d_s], [sr_x0, sr_y0 + stair_d_s],
+            ])
+            try:
+                cs = fp_interior.intersection(raw_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    rooms.append(Room(
+                        id=f"hs_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type="stair", unit_id="house",
+                        polygon=[[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]],
+                        level=lvl, area_sqft=stair_w * stair_d_s * 10.764,
+                    ))
+            except Exception:
+                pass
+
+        return rooms, walls
+
     # ── Garage-on-grade ground floor (Urban Infill / Production Tract) ─────────
     def _layout_garage_ground(
         self, footprint, bounds, w, d, level: Level, archetype_id: str,
@@ -960,6 +1039,9 @@ class FloorplanGenerator:
             return self._layout_victorian_ground(footprint, bounds, w, d, level, all_levels)
         if archetype_id == 'adu_compact':
             return self._layout_adu_floor(footprint, bounds, w, d, level, all_levels, bedrooms, archetype)
+        # Hillside street level: richer 4-room ground (garage+entry+mudroom+utility)
+        if archetype_id == 'hillside_stepped' and lvl == 0:
+            return self._layout_hillside_ground(footprint, bounds, w, d, level, all_levels)
         # Archetypes with ground-level garage (Urban Infill, Production Tract, etc.)
         _garage_at_grade = (archetype or {}).get('massing_hints', {}).get('garage_at_grade', False)
         if _garage_at_grade and lvl == 0:
