@@ -137,8 +137,82 @@ class MassingGenerator:
                     roof_pitch_12=_roof_pitch_12,
                 ),
             ]
+
+        elif brief_shape == 'narrow_lot':
+            # Victorian / Townhome / Urban Infill: all options stay narrow — no L or U cuts
+            options = [
+                self._option_rectangle(
+                    envelope_local, target_w, target_d, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    label="A", name="Narrow Plate",
+                    desc="Classic narrow-lot plan — maximises street-facade presence",
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_narrow_with_rear_wing(
+                    envelope_local, target_w, target_d, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_stepped(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+            ]
+
+        elif brief_shape == 'wide_shallow':
+            # Mid-Century / Prefab: wide shallow plate — Option A is always the wide plate
+            options = [
+                self._option_rectangle(
+                    envelope_local, target_w, target_d, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    label="A", name="Wide Plate",
+                    desc="Full-width shallow plan — classic ranch / mid-century proportions",
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_l_shape(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_stepped(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+            ]
+
+        elif brief_shape == 'l_shape':
+            # High-End Custom: complex non-rectangular massing
+            options = [
+                self._option_l_shape(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_u_shape(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_stepped(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+            ]
+
         elif brief_shape == 'rectangle':
-            # Standard case: offer shape variety so users aren't stuck with 3 boxes
+            # ADU / Production Tract: standard variety
             options = [
                 self._option_rectangle(
                     envelope_local, target_w, target_d, target_area_m2, stories,
@@ -306,6 +380,57 @@ class MassingGenerator:
             "footprint": list(footprint.exterior.coords),
             "total_area_m2": total_area, "stories": stories, "floor_height_m": floor_height_m,
             "meshes": meshes,
+            "score": self._score(footprint, total_area, target_area_m2, priority),
+        }
+
+    def _option_narrow_with_rear_wing(
+        self, envelope_local, target_w, target_d, target_area_m2, stories,
+        floor_height_m, priority, mat_color, grad_x, grad_z, neighbors,
+        style='classic_gabled', roof_pitch_12: int = 10,
+    ) -> Dict:
+        """Narrow main body + wider rear service wing — Victorian T-plan.
+        Front 70% of depth is the narrow public street-facing volume;
+        rear 30% widens by ~40% for the service/kitchen wing."""
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        eb = base.bounds
+        cx = (eb[0] + eb[2]) / 2
+        cz = (eb[1] + eb[3]) / 2
+        half_w = min(target_w / 2, (eb[2] - eb[0]) / 2 * 0.95)
+        half_d = min(target_d / 2, (eb[3] - eb[1]) / 2 * 0.95)
+
+        front_d = half_d * 2 * 0.72   # 72% of depth is narrow main body
+        rear_d  = half_d * 2 - front_d
+        wing_hw = min(half_w * 1.40, (eb[2] - eb[0]) / 2 * 0.90)  # 40% wider rear
+
+        main = box(cx - half_w, cz - half_d, cx + half_w, cz - half_d + front_d)
+        wing = box(cx - wing_hw, cz - half_d + front_d, cx + wing_hw, cz + half_d)
+
+        try:
+            from shapely.ops import unary_union as _uu
+            combined = _uu([main, wing]).intersection(base)
+            if (combined.is_empty or not hasattr(combined, 'exterior')
+                    or combined.area < 4.0):
+                footprint = self._fit_to_area(base, target_fp_area)
+            else:
+                footprint = self._fit_to_area(combined, target_fp_area)
+        except Exception:
+            footprint = self._fit_to_area(base, target_fp_area)
+
+        total_area = footprint.area * stories
+        meshes = self._extrude_footprint(
+            footprint, stories, floor_height_m, "massing_b",
+            mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12,
+        )
+        meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
+        return {
+            "label": "B", "name": "Narrow + Rear Wing",
+            "description": "Narrow street facade with wider rear service wing — Victorian T-plan",
+            "footprint": list(footprint.exterior.coords),
+            "total_area_m2": total_area, "stories": stories,
+            "floor_height_m": floor_height_m, "meshes": meshes,
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
