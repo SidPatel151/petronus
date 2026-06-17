@@ -847,12 +847,12 @@ function TerrainMesh({ mesh }: { mesh: any }) {
 }
 
 // ── Floor band mesh (unused — bands removed from backend) ──────────────
-function _FloorBandMesh_unused({ mesh }: { mesh: any }) {
+function FloorBandMesh({ mesh }: { mesh: any }) {
   const geometry = useBufferGeo(mesh.vertices, mesh.faces);
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow>
-      <meshStandardMaterial color={mesh.color || '#c0c8d8'} roughness={0.6} metalness={0.15} side={THREE.DoubleSide} />
+      <meshStandardMaterial color={mesh.color || '#0f172a'} roughness={0.5} metalness={0.2} side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -1358,7 +1358,7 @@ function Scene() {
             return <>
               {meshes.map((m: any, i: number) => {
                 if (m.element_type === 'terrain')      return <TerrainMesh key={`t_${i}`} mesh={m} />;
-                if (m.element_type === 'floor_band')   return null;
+                if (m.element_type === 'floor_band')   return activeLayers['architecture'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'overlap')      return <OverlapMesh key={`ov_${i}`} mesh={m} />;
                 if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
                 if (m.element_type === 'roof')         return activeLayers['roof'] ? <RoofMesh key={`r_${i}`} mesh={m} /> : null;

@@ -138,10 +138,12 @@ class FacadeGenerator:
             if has_balconies:
                 balcony_depth = 0.75   # 75 cm Juliet/shallow balcony
         elif arch_style in ("modern", "minimalist", "contemporary", "contemporary_box"):
-            # ADU / prefab: clean flat facade, no bands, strip windows via dedicated path
+            # ADU / prefab: clean flat facade, strip windows
             add_bands    = False
             window_ratio = min(max(window_ratio, 0.40), 0.52)
             band_h_frac  = 0.0
+            if has_balconies:
+                balcony_depth = 0.65   # shallow deck for 2-story ADU/prefab
         elif arch_style in ("colonial", "spanish", "mediterranean"):
             face_offset = 0.12
             band_h_frac = 0.22
