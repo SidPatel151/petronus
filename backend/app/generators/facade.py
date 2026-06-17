@@ -118,34 +118,40 @@ class FacadeGenerator:
 
         # Brief overrides drive visual character to match neighbors
         window_ratio  = min(float(brief.get("window_ratio") or style.get("window_ratio", 0.35)), 0.55)
-        balcony_depth = 0.0  # disabled — residential buildings don't get balconies
         bal_every_n   = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
         add_bands     = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
+        has_balconies = bool(style.get("has_balconies", False))
 
         # ── Arch style overrides ─────────────────────────────────────────────
-        face_offset = 0.09  # base flush offset
+        face_offset   = 0.09
+        balcony_depth = 0.0
         if arch_style in ("craftsman", "victorian", "tudor"):
-            # Deep facade relief, taller bands, narrow windows
             face_offset = 0.15
             band_h_frac = 0.30
-            add_bands = True
+            add_bands   = True
+        elif arch_style == 'modern_linear':
+            # Townhome / urban infill: strong floor bands, large windows, optional balconies
+            face_offset   = 0.10
+            band_h_frac   = 0.16
+            add_bands     = True
+            window_ratio  = min(max(window_ratio, 0.42), 0.52)
+            if has_balconies:
+                balcony_depth = 0.75   # 75 cm Juliet/shallow balcony
         elif arch_style in ("modern", "minimalist", "contemporary", "contemporary_box"):
-            # Clean flat facade, no spandrel bands, designed windows (not curtain wall)
-            add_bands = False
-            window_ratio = min(max(window_ratio, 0.40), 0.52)   # cap — not full glass wall
-            band_h_frac = 0.0
+            # ADU / prefab: clean flat facade, no bands, strip windows via dedicated path
+            add_bands    = False
+            window_ratio = min(max(window_ratio, 0.40), 0.52)
+            band_h_frac  = 0.0
         elif arch_style in ("colonial", "spanish", "mediterranean"):
-            # Moderate bands, symmetrical windows, arched suggestion
             face_offset = 0.12
             band_h_frac = 0.22
-            add_bands = True
+            add_bands   = True
         elif arch_style in ('classic_gabled', 'suburban_traditional'):
-            # Production tract / suburban SFR: moderate pitch, clean facade, medium windows
-            add_bands = False
+            add_bands   = False
             band_h_frac = 0.0
             face_offset = 0.08
         else:
-            band_h_frac = 0.20
+            band_h_frac = 0.18
 
         # ── Window style from neighbors ─────────────────────────────────────
         window_style = style.get("window_style", "standard")
@@ -366,6 +372,57 @@ class FacadeGenerator:
                         "level": 0,
                         "color": "#334155",
                     })
+
+                    # ── Entry canopy for modern / ADU / contemporary styles ──
+                    if arch_style in ('contemporary_box', 'modern_linear', 'minimalist',
+                                      'contemporary', 'urban_infill'):
+                        can_y    = door_sill + door_h + 0.12   # just above door head
+                        can_proj = face_offset + 0.85           # 85 cm projection
+                        can_t    = 0.09                         # slab thickness
+                        can_hw   = door_w * 1.60                # wider than door
+                        can_c    = self._darken(facade_color, 0.60)
+                        can_v = [
+                            [dcx - ux*can_hw + nx*face_offset, can_y,       dcz - uz*can_hw + nz*face_offset],
+                            [dcx + ux*can_hw + nx*face_offset, can_y,       dcz + uz*can_hw + nz*face_offset],
+                            [dcx + ux*can_hw + nx*can_proj,    can_y,       dcz + uz*can_hw + nz*can_proj],
+                            [dcx - ux*can_hw + nx*can_proj,    can_y,       dcz - uz*can_hw + nz*can_proj],
+                            [dcx - ux*can_hw + nx*face_offset, can_y+can_t, dcz - uz*can_hw + nz*face_offset],
+                            [dcx + ux*can_hw + nx*face_offset, can_y+can_t, dcz + uz*can_hw + nz*face_offset],
+                            [dcx + ux*can_hw + nx*can_proj,    can_y+can_t, dcz + uz*can_hw + nz*can_proj],
+                            [dcx - ux*can_hw + nx*can_proj,    can_y+can_t, dcz - uz*can_hw + nz*can_proj],
+                        ]
+                        can_f = [
+                            [4,5,6],[4,6,7],   # top face
+                            [0,4,7],[0,7,3],   # left side
+                            [1,5,6],[1,6,2],   # right side
+                            [3,7,6],[3,6,2],   # front edge
+                            [0,3,2],[0,2,1],   # bottom face
+                        ]
+                        meshes.append({
+                            "element_id": f"canopy_{uuid.uuid4().hex[:5]}",
+                            "element_type": "porch",
+                            "vertices": can_v, "faces": can_f,
+                            "level": 0, "color": can_c,
+                        })
+                        # Two slim steel support legs under the canopy
+                        for leg_sign in (-1, 1):
+                            leg_x = dcx + ux * can_hw * 0.75 * leg_sign
+                            leg_z = dcz + uz * can_hw * 0.75 * leg_sign
+                            leg_proj = face_offset + can_proj * 0.55
+                            lhw = 0.04
+                            leg_v = [
+                                [leg_x - ux*lhw + nx*leg_proj, door_sill,       leg_z - uz*lhw + nz*leg_proj],
+                                [leg_x + ux*lhw + nx*leg_proj, door_sill,       leg_z + uz*lhw + nz*leg_proj],
+                                [leg_x + ux*lhw + nx*leg_proj, can_y,           leg_z + uz*lhw + nz*leg_proj],
+                                [leg_x - ux*lhw + nx*leg_proj, can_y,           leg_z - uz*lhw + nz*leg_proj],
+                            ]
+                            meshes.append({
+                                "element_id": f"canopy_leg_{uuid.uuid4().hex[:4]}",
+                                "element_type": "porch",
+                                "vertices": leg_v,
+                                "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
+                                "level": 0, "color": "#334155",
+                            })
 
                 # ── Balconies ─────────────────────────────────────────────
                 if lvl > 0 and balcony_depth > 0 and (lvl % bal_every_n == 0):

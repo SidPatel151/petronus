@@ -493,8 +493,14 @@ class GenerationOrchestrator:
             lvl_int_walls = [w for w in int_walls if w.level == lvl_idx]
 
             # ── Step 1: map each interior wall to its two adjacent rooms ──────
-            # Offset midpoint ±15 cm along wall normal, PIP-test into every room.
-            wall_to_rooms: dict = {}   # wall.id → (room_id_a, room_id_b, wall)
+            # Probe ±35 cm along the wall normal so we reliably land inside each
+            # room rather than on its edge.  Sort rooms smallest-first so the PIP
+            # test hits the most specific (sub-)room before any enclosing shell.
+            wall_to_rooms: dict = {}
+            _sorted_rooms = sorted(lvl_rooms, key=lambda r: r.area_sqft)
+            _room_area    = {r.id: r.area_sqft for r in lvl_rooms}
+            MIN_ROOM_SQFT = 10.0   # ignore tiny clipping slivers
+
             for wall in lvl_int_walls:
                 s, e = wall.start, wall.end
                 dx = e[0] - s[0]
@@ -505,19 +511,23 @@ class GenerationOrchestrator:
                 nx, nz = -dz / wl, dx / wl
                 mx = (s[0] + e[0]) / 2
                 mz = (s[1] + e[1]) / 2
-                OFFSET = 0.15
+                OFFSET = 0.35   # was 0.15 — deeper probe avoids landing on polygon edge
 
                 sides: list = []
                 for sign in (-1, 1):
                     tx, tz = mx + nx * OFFSET * sign, mz + nz * OFFSET * sign
                     hit = None
-                    for room in lvl_rooms:
-                        if room.polygon and _pip(tx, tz, room.polygon):
+                    for room in _sorted_rooms:
+                        if (room.polygon
+                                and _room_area.get(room.id, 0) >= MIN_ROOM_SQFT
+                                and _pip(tx, tz, room.polygon)):
                             hit = room.id
                             break
                     sides.append(hit)
 
-                if sides[0] and sides[1] and sides[0] != sides[1]:
+                if (sides[0] and sides[1] and sides[0] != sides[1]
+                        and _room_area.get(sides[0], 0) >= MIN_ROOM_SQFT
+                        and _room_area.get(sides[1], 0) >= MIN_ROOM_SQFT):
                     wall_to_rooms[wall.id] = (sides[0], sides[1], wall)
 
             # ── Step 2: build room adjacency graph ────────────────────────────

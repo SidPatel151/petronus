@@ -304,7 +304,9 @@ class MassingGenerator:
             footprint = scaled  # fallback to rectangle if cut fails
         footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
+        # Gabled roofs use the bounding box and span the L-void — use flat parapet instead
+        _l_style = 'modern_linear' if ('classic' in style or 'gabled' in style) else style
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z, style=_l_style, roof_pitch_12=0)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": "A", "name": "L-Shape",
@@ -372,7 +374,9 @@ class MassingGenerator:
             footprint = scaled
         footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
+        # Gabled roofs span the court void — use flat parapet on U-shapes
+        _u_style = 'modern_linear' if ('classic' in style or 'gabled' in style) else style
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z, style=_u_style, roof_pitch_12=0)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": "C", "name": "U-Shape / Forecourt",
