@@ -430,16 +430,20 @@ class FloorplanGenerator:
             cs = fp_interior_mf.intersection(raw_stair)
             if hasattr(cs, 'geoms'):
                 cs = max(cs.geoms, key=lambda g: g.area)
-            stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]] if (not cs.is_empty and hasattr(cs, 'exterior')) else [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
+            if not cs.is_empty and hasattr(cs, 'exterior'):
+                stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            else:
+                stair_poly = None   # outside footprint — omit
         except Exception:
-            stair_poly = [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
-        rooms.append(Room(
-            id=f"stair_{lvl}",
-            type="stair",
-            polygon=stair_poly,
-            level=lvl,
-            area_sqft=STAIR_W_M * STAIR_D_M * 10.764,
-        ))
+            stair_poly = None
+        if stair_poly:
+            rooms.append(Room(
+                id=f"stair_{lvl}",
+                type="stair",
+                polygon=stair_poly,
+                level=lvl,
+                area_sqft=STAIR_W_M * STAIR_D_M * 10.764,
+            ))
 
         corr_y = miny + STAIR_D_M
         raw_corr = Polygon([
@@ -468,12 +472,9 @@ class FloorplanGenerator:
         unit_idx = 0
         cursor_x = minx
 
-        # Collect all room rects (stair, corridor, unit shells, sub-rooms) for
-        # unified wall generation — each shared edge emitted exactly once.
-        stair_b = Polygon(stair_poly).bounds
-        all_rects: List[Tuple[float, float, float, float]] = [
-            (stair_b[0], stair_b[1], stair_b[2], stair_b[3]),
-        ]
+        # Collect room rects for unified wall generation (stair excluded — it's an
+        # open shaft, not a walled room; corridor/unit edges define its boundaries).
+        all_rects: List[Tuple[float, float, float, float]] = []
         corr_b = Polygon(corridor_poly).bounds
         all_rects.append((corr_b[0], corr_b[1], corr_b[2], corr_b[3]))
 
@@ -629,7 +630,7 @@ class FloorplanGenerator:
         return walls
 
     def _layout_victorian_ground(
-        self, footprint, bounds, w, d, level: Level
+        self, footprint, bounds, w, d, level: Level, all_levels: List[Level]
     ) -> Tuple[List[Room], List[Wall]]:
         """Ground floor of a Victorian narrow-lot: garage (front 60%) + utility rear (40%).
         Wet wall anchor and panel location are placed in the rear utility zone per archetype spec."""
@@ -695,6 +696,54 @@ class FloorplanGenerator:
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
+
+        # Stair — only for multi-story buildings
+        n_floors = len(all_levels)
+        if n_floors > 1:
+            maxx_sfr = bounds[2]
+            stair_w_sfr = min(w * 0.15, 1.5)
+            stair_d_sfr = min(d * 0.28, 3.5)
+            sr_x0 = maxx_sfr - stair_w_sfr
+            sr_y0 = miny + (d - stair_d_sfr) / 2
+            raw_sfr_stair = Polygon([
+                [sr_x0, sr_y0], [maxx_sfr, sr_y0],
+                [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+            ])
+            sfr_stair_poly = None
+            try:
+                cs = fp_interior.intersection(raw_sfr_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            except Exception:
+                pass
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
+
         return rooms, walls
 
     def _emit_interior_walls(
@@ -787,6 +836,111 @@ class FloorplanGenerator:
             ))
         return walls
 
+    # ── Garage-on-grade ground floor (Urban Infill / Production Tract) ─────────
+    def _layout_garage_ground(
+        self, footprint, bounds, w, d, level: Level, archetype_id: str,
+        all_levels: List[Level] = None,
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Ground floor with front-facing attached garage + entry zone behind it."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny = bounds[0], bounds[1]
+        fp_interior = footprint.buffer(-FP_INSET)
+
+        # Garage takes the front 40% of the depth; entry+utility gets the back 60%.
+        garage_depth_frac = 0.40
+        garage_d = d * garage_depth_frac
+        entry_d  = d * (1.0 - garage_depth_frac)
+
+        def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
+            cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            try:
+                clipped = fp_interior.intersection(cell)
+                if hasattr(clipped, 'geoms'):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                    return
+                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                cb = clipped.bounds
+                rooms.append(Room(
+                    id=f"sfr_{rtype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rtype, unit_id="house", polygon=poly, level=lvl,
+                    area_sqft=clipped.area * 10.764,
+                ))
+            except Exception:
+                pass
+
+        # Garage (front)
+        _clip_room(minx, miny, minx + w, miny + garage_d, "garage")
+
+        # Entry + utility behind garage
+        entry_w = w * 0.55
+        utility_w = w - entry_w
+        entry_y0 = miny + garage_d
+        entry_y1 = miny + d
+        _clip_room(minx,           entry_y0, minx + entry_w,   entry_y1, "foyer")
+        _clip_room(minx + entry_w, entry_y0, minx + entry_w + utility_w, entry_y1, "utility")
+
+        # Collect room rects for wall generation
+        room_rects: List[Tuple[float, float, float, float]] = [
+            (minx, miny, minx + w, miny + garage_d),
+            (minx, miny + garage_d, minx + entry_w, miny + d),
+            (minx + entry_w, miny + garage_d, minx + w, miny + d),
+        ]
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
+
+        # Stair — only for multi-story buildings
+        n_floors = len(all_levels) if all_levels is not None else 1
+        if n_floors > 1:
+            maxx_sfr = minx + w
+            miny_local = bounds[1]
+            stair_w_sfr = min(w * 0.15, 1.5)
+            stair_d_sfr = min(d * 0.28, 3.5)
+            sr_x0 = maxx_sfr - stair_w_sfr
+            sr_y0 = miny_local + (d - stair_d_sfr) / 2
+            raw_sfr_stair = Polygon([
+                [sr_x0, sr_y0], [maxx_sfr, sr_y0],
+                [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+            ])
+            sfr_stair_poly = None
+            try:
+                cs = fp_interior.intersection(raw_sfr_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            except Exception:
+                pass
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny_local
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
+
+        return rooms, walls
+
     # ── Single-family residential layout ─────────────────────────────────────
     def _layout_sfr_floor(
         self, footprint, bounds, w, d, level: Level,
@@ -803,9 +957,13 @@ class FloorplanGenerator:
         # ── Archetype overrides ───────────────────────────────────────────────
         archetype_id = (archetype or {}).get('id', '')
         if archetype_id == 'victorian_narrow_lot' and lvl == 0:
-            return self._layout_victorian_ground(footprint, bounds, w, d, level)
+            return self._layout_victorian_ground(footprint, bounds, w, d, level, all_levels)
         if archetype_id == 'adu_compact':
             return self._layout_adu_floor(footprint, bounds, w, d, level, all_levels, bedrooms, archetype)
+        # Archetypes with ground-level garage (Urban Infill, Production Tract, etc.)
+        _garage_at_grade = (archetype or {}).get('massing_hints', {}).get('garage_at_grade', False)
+        if _garage_at_grade and lvl == 0:
+            return self._layout_garage_ground(footprint, bounds, w, d, level, archetype_id, all_levels)
 
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
@@ -926,24 +1084,40 @@ class FloorplanGenerator:
                 [sr_x0, sr_y0], [maxx_sfr, sr_y0],
                 [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
             ])
+            sfr_stair_poly = None
             try:
                 cs = fp_interior.intersection(raw_sfr_stair)
                 if hasattr(cs, 'geoms'):
                     cs = max(cs.geoms, key=lambda g: g.area)
-                if not cs.is_empty and hasattr(cs, 'exterior'):
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
                     sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
-                else:
-                    sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
             except Exception:
-                sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
-            rooms.append(Room(
-                id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
-                type="stair",
-                unit_id="house",
-                polygon=sfr_stair_poly,
-                level=lvl,
-                area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
-            ))
+                pass   # clip failed — try fallback below
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
 
         # Phase 3: emit one interior wall per unique shared edge, skip exterior edges
         self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
@@ -1027,7 +1201,7 @@ class FloorplanGenerator:
     def _layout_adu_floor(
         self, footprint, bounds, w, d, level: Level,
         all_levels: List[Level], bedrooms: int,
-        archetype: Optional[Dict[str, Any]] = None,  # noqa: ARG002
+        archetype: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Room], List[Wall]]:
         """ADU room layout: compact rectangle programs from adu_compact.json blueprints."""
         rooms: List[Room] = []

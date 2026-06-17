@@ -139,6 +139,11 @@ class FacadeGenerator:
             face_offset = 0.12
             band_h_frac = 0.22
             add_bands = True
+        elif arch_style in ('classic_gabled', 'suburban_traditional'):
+            # Production tract / suburban SFR: moderate pitch, clean facade, medium windows
+            add_bands = False
+            band_h_frac = 0.0
+            face_offset = 0.08
         else:
             band_h_frac = 0.20
 
@@ -150,6 +155,9 @@ class FacadeGenerator:
         elif window_style in ("wide", "large_horizontal"):
             win_h_frac = 0.38
             win_w_cap  = 2.4
+        elif window_style == 'double_hung':
+            win_h_frac = 0.52
+            win_w_cap  = 1.4
         else:  # standard
             win_h_frac = 0.50
             win_w_cap  = 1.8
@@ -165,7 +173,9 @@ class FacadeGenerator:
         # ── Entry door rules ─────────────────────────────────────────────────
         # Front face = wall(s) with minimum average Z (street-facing in local coords).
         # Only ONE exterior door per building, placed on the front face.
-        is_gabled_style = 'classic' in arch_style or 'gabled' in arch_style
+        is_gabled_style = ('classic' in arch_style or 'gabled' in arch_style
+                           or 'victorian' in arch_style
+                           or arch_style in ('craftsman', 'tudor'))
         front_face_z = (min((w.start[1] + w.end[1]) / 2 for w in ext_walls)
                         if ext_walls else 0.0)
         # For gabled (Victorian/SFR porch), door sill matches porch deck height.
@@ -244,6 +254,10 @@ class FacadeGenerator:
                 win_w       = max(0.55, min(raw_win_w, win_w_cap))
                 win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)
                 win_sill    = base_y + floor_h * (0.28 - window_ratio * 0.05)
+                # Never exceed the floor ceiling
+                _win_top_max = base_y + floor_h - 0.25
+                if win_sill + win_h > _win_top_max:
+                    win_h = max(0.3, _win_top_max - win_sill)
 
                 # Pre-compute front-face status so we can skip windows over the door.
                 _wall_mid_z = (s[1] + e[1]) / 2

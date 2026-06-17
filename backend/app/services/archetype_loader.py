@@ -221,4 +221,19 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
         if 'width_m' in brief:
             brief['width_m'] = min(brief['width_m'], max_w_m * 2)  # up to 2 modules wide
 
+    # Roof pitch (in /12 units) per archetype — used by massing generator
+    _pitch_map = {
+        'adu_compact':           0,
+        'victorian_narrow_lot': 10,
+        'mid_century_modern':    2,
+        'hillside_stepped':      3,
+        'high_density_townhome': 0,
+        'urban_infill_zero_lot': 2,
+        'production_tract':      5,
+        'high_end_custom':       4,
+        'prefab_modern':         0,
+    }
+    if arch_id in _pitch_map:
+        brief['roof_pitch_12'] = _pitch_map[arch_id]
+
     return brief

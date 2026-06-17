@@ -14,6 +14,8 @@ const PBR_SETS: Record<string, {
 }> = {
   brick:          { diff: '/textures/brick_wall_10_diff_4k.jpg',         repeatX: 3, repeatY: 5 },
   stucco:         { diff: '/textures/painted_plaster_wall_diff_4k.jpg',  repeatX: 4, repeatY: 5 },
+  // wood_siding: same planks but wide+horizontal repeats → reads as horizontal siding boards
+  wood_siding:    { diff: '/textures/plank_flooring_04_diff_4k.jpg',     repeatX: 8, repeatY: 3 },
   wood:           { diff: '/textures/plank_flooring_04_diff_4k.jpg',     repeatX: 2, repeatY: 8 },
   stone:          { diff: '/textures/marble_01_diff_4k.jpg', roughJpg: '/textures/marble_01_rough_4k.jpg',           repeatX: 4, repeatY: 5 },
   marble:         { diff: '/textures/marble_01_diff_4k.jpg', roughJpg: '/textures/marble_01_rough_4k.jpg',           repeatX: 3, repeatY: 3 },
@@ -160,6 +162,49 @@ function RoomMesh({ room, matColor, texName, roughness, metalness, floorH }: {
         transparent={isStructural}
         opacity={isStructural ? 0.92 : 1.0}
       />
+    </mesh>
+  );
+}
+
+// ── Room volume: full-height colored semi-transparent box per room ─────
+// Renders each room as a colored volume so it's visible from outside when
+// the MassingShell is semi-transparent. Corridor/stair are excluded because
+// they're already rendered as structural shells.
+const ROOM_VOL_TYPES = new Set([
+  'bedroom','living','kitchen','bathroom','dining',
+  'foyer','office','pantry','mudroom','walk_in_closet',
+  'family_room','bonus_room','loft','media_room','library','gym',
+  'laundry','half_bath','garage','mechanical','utility',
+]);
+const ROOM_VOL_COLORS: Record<string, string> = {
+  bedroom: '#1e4070', living: '#1e4458', kitchen: '#2a4028',
+  bathroom: '#1a3048', dining: '#383420',
+  foyer: '#1e3860', office: '#1e3220', pantry: '#1a3418', mudroom: '#382218',
+  walk_in_closet: '#1a1a48', family_room: '#1a3858', bonus_room: '#1a3448',
+  loft: '#203868', media_room: '#101020', library: '#1a1a08', gym: '#1a3218',
+  laundry: '#1a1a48', half_bath: '#1a2a40',
+  garage: '#141e14', mechanical: '#1e1414', utility: '#141428',
+};
+function RoomVolumeMesh({ room, floorH }: { room: any; floorH: number }) {
+  if (!ROOM_VOL_TYPES.has(room.type) || !room.polygon?.length) return null;
+  const geometry = useMemo(() => {
+    try {
+      const pts = room.polygon;
+      const s = new THREE.Shape();
+      s.moveTo(pts[0][0], -pts[0][1]);
+      for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], -pts[i][1]);
+      s.closePath();
+      const geo = new THREE.ExtrudeGeometry(s, { depth: floorH - 0.10, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      return geo;
+    } catch { return null; }
+  }, [room.polygon, floorH]);
+  if (!geometry) return null;
+  const color = ROOM_VOL_COLORS[room.type] || '#1a2030';
+  const yBase = (room.level || 0) * floorH + 0.10;
+  return (
+    <mesh geometry={geometry} position={[0, yBase, 0]}>
+      <meshStandardMaterial color={color} transparent opacity={0.55} roughness={0.85} side={THREE.DoubleSide} depthWrite={false} />
     </mesh>
   );
 }
@@ -842,9 +887,11 @@ function FootprintMesh({ mesh }: { mesh: any }) {
 
 // ── Solid exterior shell extruded from massing footprint ──────────────
 // This IS the building exterior — matches the parcel shape exactly.
-function MassingShell({ massing, levels, floorH, texName, roughness, metalness }: {
+// When floorsActive the shell turns semi-transparent so room volumes show through.
+function MassingShell({ massing, levels, floorH, texName, roughness, metalness, floorsActive }: {
   massing: any; levels: any[];
   floorH: number; texName: string; roughness: number; metalness: number;
+  floorsActive?: boolean;
 }) {
   const footprint: [number, number][] = massing?.footprint || [];
   if (footprint.length < 3) return null;
@@ -868,7 +915,15 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness }
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <PBRMaterial texName={texName} fallbackColor="#334155" roughness={roughness} metalness={metalness} />
+      <PBRMaterial
+        texName={texName}
+        fallbackColor="#334155"
+        roughness={roughness}
+        metalness={metalness}
+        transparent={floorsActive}
+        opacity={floorsActive ? 0.55 : 1.0}
+        doubleSide={floorsActive}
+      />
     </mesh>
   );
 }
@@ -1243,6 +1298,7 @@ function Scene() {
                     texName={texName}
                     roughness={texRoughness}
                     metalness={texMetalness}
+                    floorsActive={activeLayers['floors']}
                   />
                 )}
                 {/* Interior partition walls — visible whenever architecture OR floors is on */}
@@ -1253,13 +1309,18 @@ function Scene() {
                       <WallMesh key={`iw_${i}`} wall={w} matColor={COLORS.wall_interior} floorH={floorH} roughness={0.8} metalness={0.0} />
                     ))
                 }
-                {/* Facade: windows + doors (architecture only) */}
 
                 {/* ── Floor slabs + room layout (floors layer) ── */}
                 {activeLayers['floors'] && buildingModel.rooms
                   .filter((r: any) => FLOOR_ROOM_TYPES.has(r.type))
                   .map((r: any, i: number) => (
                     <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
+                  ))
+                }
+                {/* ── Room volumes: colored semi-transparent boxes (visible through shell) ── */}
+                {activeLayers['floors'] && !activeLayers['architecture'] && buildingModel.rooms
+                  .map((r: any, i: number) => (
+                    <RoomVolumeMesh key={`rv_${i}`} room={r} floorH={floorH} />
                   ))
                 }
               </>

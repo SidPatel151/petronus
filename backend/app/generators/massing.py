@@ -103,17 +103,69 @@ class MassingGenerator:
         _max_total_area = _max_fp_m2 * stories
         target_area_m2 = min(target_area_m2, _max_total_area)
 
-        if brief_shape == 'rectangle':
+        slope_mag = math.sqrt(grad_x ** 2 + grad_z ** 2)
+        # Hillside mode is driven entirely by archetype detection, which reads
+        # the actual USGS 3DEP slope_pct for this parcel.  No hardcoded threshold here.
+        is_hillside = brief_shape in ('sculpted', 'hillside')
+
+        # Roof pitch from archetype — default 12/12 for Victorian/American-traditional
+        _roof_pitch_12 = int(brief.get("roof_pitch_12", 12))
+
+        if is_hillside:
+            # True hillside stepped massing — each floor cascades downhill
             options = [
-                self._option_rectangle(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, label="A", name="Narrow Rectangle", desc="Full-depth narrow rectangle — classic Victorian narrow-lot form"),
-                self._option_rectangle(envelope_local, target_w * 0.85, target_d * 1.1, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, label="B", name="Deep Narrow", desc="Slightly narrower and deeper — maximises rear yard setback"),
-                self._option_rectangle(envelope_local, target_w, target_d * 0.85, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, label="C", name="Compact Rectangle", desc="Shorter depth with larger rear yard — good for light wells"),
+                self._option_hillside_stepped(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, slope_mag, style_val,
+                    label="A", name="Hillside Cascade",
+                    desc="Each floor steps downhill — classic Oakland/Berkeley Hills form",
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_hillside_stepped(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, slope_mag, style_val,
+                    label="B", name="Wide Hillside Terrace",
+                    desc="Wider, shallower plates maximise view exposure on each terrace",
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_hillside_split(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, slope_mag, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+            ]
+        elif brief_shape == 'rectangle':
+            # Standard case: offer shape variety so users aren't stuck with 3 boxes
+            options = [
+                self._option_rectangle(
+                    envelope_local, target_w, target_d, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    label="A", name="Rectangle",
+                    desc="Clean rectangular footprint — maximum usable area per floor",
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_l_shape(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
+                self._option_u_shape(
+                    envelope_local, target_area_m2, stories,
+                    floor_height_m, spec.priority, mat_color, grad_x, grad_z,
+                    neighbor_local, style_val,
+                    roof_pitch_12=_roof_pitch_12,
+                ),
             ]
         else:
             options = [
-                self._option_l_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
-                self._option_stepped(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
-                self._option_u_shape(envelope_local, target_w, target_d, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val),
+                self._option_l_shape(envelope_local, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, roof_pitch_12=_roof_pitch_12),
+                self._option_stepped(envelope_local, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, roof_pitch_12=_roof_pitch_12),
+                self._option_u_shape(envelope_local, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, roof_pitch_12=_roof_pitch_12),
             ]
         levels = self._build_levels(stories, spec.floor_to_floor_height_ft)
         return options, levels
@@ -156,7 +208,7 @@ class MassingGenerator:
 
     # ── Option builders ───────────────────────────────────────────────────
 
-    def _option_l_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
+    def _option_l_shape(self, envelope_local, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear', roof_pitch_12: int = 12) -> Dict:
         """L-shaped footprint: start with bounding rectangle, cut one rear corner."""
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
@@ -178,7 +230,7 @@ class MassingGenerator:
             footprint = scaled  # fallback to rectangle if cut fails
         footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z, style=style)
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_a", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": "A", "name": "L-Shape",
@@ -189,7 +241,7 @@ class MassingGenerator:
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_stepped(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
+    def _option_stepped(self, envelope_local, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear', roof_pitch_12: int = 12) -> Dict:
         # Base floor = parcel shape scaled to target area; upper floors step back further
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
@@ -203,10 +255,10 @@ class MassingGenerator:
         # Generate lower + upper meshes separately
         lower_stories = max(1, stories // 2)
         upper_stories = stories - lower_stories
-        meshes = self._extrude_footprint(footprint, lower_stories, floor_height_m, "massing_b_low", mat_color, grad_x, grad_z, style='modern_linear')  # lower always flat
+        meshes = self._extrude_footprint(footprint, lower_stories, floor_height_m, "massing_b_low", mat_color, grad_x, grad_z, style='modern_linear', roof_pitch_12=0)  # lower always flat
         if upper_stories > 0:
             y_offset = lower_stories * floor_height_m
-            upper_meshes = self._extrude_footprint(upper_footprint, upper_stories, floor_height_m, "massing_b_up", mat_color, grad_x, grad_z, style=style)
+            upper_meshes = self._extrude_footprint(upper_footprint, upper_stories, floor_height_m, "massing_b_up", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
             # Shift upper meshes up by lower floor height
             for m in upper_meshes:
                 if "vertices" in m:
@@ -223,7 +275,7 @@ class MassingGenerator:
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
-    def _option_u_shape(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear') -> Dict:
+    def _option_u_shape(self, envelope_local, target_area_m2, stories, floor_height_m, priority, mat_color, grad_x, grad_z, neighbors, style='modern_linear', roof_pitch_12: int = 12) -> Dict:
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
             base = envelope_local
@@ -246,7 +298,7 @@ class MassingGenerator:
             footprint = scaled
         footprint = self._fit_to_area(footprint, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z, style=style)
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, "massing_c", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": "C", "name": "U-Shape / Forecourt",
@@ -257,9 +309,140 @@ class MassingGenerator:
             "score": self._score(footprint, total_area, target_area_m2, priority),
         }
 
+    # ── Hillside helpers ──────────────────────────────────────────────────
+
+    def _hillside_step_vec(self, grad_x: float, grad_z: float, slope_mag: float):
+        """Return (dh_x, dh_z) unit vector pointing downhill, derived from USGS terrain gradient."""
+        if slope_mag < 1e-4:
+            return 0.0, 0.0    # no measurable slope — caller should not step
+        return -grad_x / slope_mag, -grad_z / slope_mag
+
+    def _option_hillside_stepped(
+        self, envelope_local, target_area_m2, stories, floor_height_m,
+        priority, mat_color, grad_x, grad_z, neighbors, slope_mag, style,
+        label="A", name="Hillside Cascade", desc="Each floor cascades downhill",
+        roof_pitch_12: int = 12,
+    ) -> Dict:
+        """
+        Each level uses the same footprint area but shifts in the downhill
+        direction, creating the cascading terraced form of Oakland / Berkeley /
+        Los Altos Hills architecture.  Flat floors per level with shed roof on top.
+        """
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        footprint = self._fit_to_area(base, target_fp_area)
+        fc = footprint.centroid
+        base_terrain_y = self._ground_y(fc.x, fc.y, grad_x, grad_z)
+
+        dh_x, dh_z = self._hillside_step_vec(grad_x, grad_z, slope_mag)
+        # Step distance derived directly from measured slope: steeper = shorter step per level
+        step_dist = max(0.8, min(floor_height_m / max(slope_mag, 0.05) * 0.30,
+                                 floor_height_m * 1.5))
+
+        meshes: List[Dict] = []
+        level_footprints: List[Polygon] = []
+
+        for lvl in range(stories):
+            dx = dh_x * step_dist * lvl
+            dz = dh_z * step_dist * lvl
+            level_fp = shp_translate(footprint, dx, dz)
+            clipped = level_fp.intersection(envelope_local)
+            if (not clipped.is_empty and hasattr(clipped, 'exterior')
+                    and clipped.area > 4.0):
+                level_fp = clipped
+            level_footprints.append(level_fp)
+
+            y_offset = base_terrain_y + lvl * floor_height_m
+            # Use 'sculpted' only on the top level to get a shed roof there
+            lvl_style = style if lvl == stories - 1 else 'modern_linear'
+            lvl_meshes = self._extrude_footprint(
+                level_fp, 1, floor_height_m,
+                f"hs_{label}_{lvl}", mat_color, 0.0, 0.0, style=lvl_style,
+                roof_pitch_12=roof_pitch_12,
+            )
+            for m in lvl_meshes:
+                if "vertices" in m:
+                    m["vertices"] = [[v[0], v[1] + y_offset, v[2]]
+                                     for v in m["vertices"]]
+            meshes.extend(lvl_meshes)
+
+        meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
+        total_area = sum(fp.area for fp in level_footprints)
+        return {
+            "label": label, "name": name, "description": desc,
+            "footprint": list(footprint.exterior.coords),
+            "total_area_m2": total_area, "stories": stories,
+            "floor_height_m": floor_height_m, "meshes": meshes,
+            "score": self._score(footprint, total_area, target_area_m2, priority),
+        }
+
+    def _option_hillside_split(
+        self, envelope_local, target_area_m2, stories, floor_height_m,
+        priority, mat_color, grad_x, grad_z, neighbors, slope_mag, style,
+        roof_pitch_12: int = 12,
+    ) -> Dict:
+        """
+        Split-level hillside: half-floor steps (4-5 ft) so the house tracks the
+        terrain contours closely — typical of 1960s-70s Berkeley/Marin Hills homes.
+        Each half-level is offset both vertically (half floor height) and downhill.
+        """
+        base = envelope_local.buffer(-0.5)
+        if base.is_empty:
+            base = envelope_local
+        target_fp_area = target_area_m2 / max(1, stories)
+        footprint = self._fit_to_area(base, target_fp_area * 0.75)
+        fc = footprint.centroid
+        base_terrain_y = self._ground_y(fc.x, fc.y, grad_x, grad_z)
+
+        dh_x, dh_z = self._hillside_step_vec(grad_x, grad_z, slope_mag)
+        half_h = floor_height_m * 0.5
+        step_dist = max(0.6, min(half_h / max(slope_mag, 0.05) * 0.30,
+                                 floor_height_m))
+
+        half_levels = stories * 2          # double the levels at half height
+        meshes: List[Dict] = []
+        level_footprints: List[Polygon] = []
+
+        for hlvl in range(half_levels):
+            dx = dh_x * step_dist * hlvl
+            dz = dh_z * step_dist * hlvl
+            level_fp = shp_translate(footprint, dx, dz)
+            clipped = level_fp.intersection(envelope_local)
+            if (not clipped.is_empty and hasattr(clipped, 'exterior')
+                    and clipped.area > 3.0):
+                level_fp = clipped
+            level_footprints.append(level_fp)
+
+            y_offset = base_terrain_y + hlvl * half_h
+            lvl_style = style if hlvl == half_levels - 1 else 'modern_linear'
+            lvl_meshes = self._extrude_footprint(
+                level_fp, 1, half_h,
+                f"hs_split_{hlvl}", mat_color, 0.0, 0.0, style=lvl_style,
+                roof_pitch_12=roof_pitch_12,
+            )
+            for m in lvl_meshes:
+                if "vertices" in m:
+                    m["vertices"] = [[v[0], v[1] + y_offset, v[2]]
+                                     for v in m["vertices"]]
+            meshes.extend(lvl_meshes)
+
+        meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
+        total_area = sum(fp.area for fp in level_footprints)
+        return {
+            "label": "C", "name": "Split-Level Hillside",
+            "description": "Half-story steps track terrain contours — classic 1960s Berkeley/Marin split-level",
+            "footprint": list(footprint.exterior.coords),
+            "total_area_m2": total_area, "stories": stories,
+            "floor_height_m": floor_height_m, "meshes": meshes,
+            "score": self._score(footprint, total_area, target_area_m2, priority),
+        }
+
     def _option_rectangle(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m,
                           priority, mat_color, grad_x, grad_z, neighbors, style='classic_gabled',
-                          label="A", name="Rectangle", desc="Rectangular footprint") -> Dict:
+                          label="A", name="Rectangle", desc="Rectangular footprint",
+                          roof_pitch_12: int = 12) -> Dict:
         """Simple rectangular footprint — used for Victorian narrow-lot and other brief_shape='rectangle' archetypes."""
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
@@ -277,7 +460,7 @@ class MassingGenerator:
             clipped = self._fit_to_area(base, target_fp_area)
         footprint = self._fit_to_area(clipped, target_fp_area)
         total_area = footprint.area * stories
-        meshes = self._extrude_footprint(footprint, stories, floor_height_m, f"massing_{label.lower()}", mat_color, grad_x, grad_z, style=style)
+        meshes = self._extrude_footprint(footprint, stories, floor_height_m, f"massing_{label.lower()}", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
         return {
             "label": label, "name": name,
@@ -296,7 +479,8 @@ class MassingGenerator:
     def _extrude_footprint(self, footprint: Polygon, stories: int, floor_height_m: float,
                            prefix: str, color: str = "#94a3b8",
                            grad_x: float = 0.0, grad_z: float = 0.0,
-                           style: str = 'modern_linear') -> List[Dict]:
+                           style: str = 'modern_linear',
+                           roof_pitch_12: int = 12) -> List[Dict]:
         coords = list(footprint.exterior.coords[:-1])
         if not coords:
             return []
@@ -346,9 +530,9 @@ class MassingGenerator:
             b = footprint.bounds
             bw = b[2] - b[0]
             bd = b[3] - b[1]
-            # 12/12 pitch (45°) — steep Victorian/American-traditional roof
-            # peak_height = half-span × tan(45°) = half-span × 1.0 = span × 0.5
-            peak_height = min(bw, bd) * 0.5
+            # Pitch driven by archetype (default 12/12 for Victorian/American-traditional)
+            pitch_12 = roof_pitch_12
+            peak_height = min(bw, bd) / 2 * (pitch_12 / 12.0)
             cx_b = (b[0] + b[2]) / 2
             cz_b = (b[1] + b[3]) / 2
 
@@ -684,8 +868,8 @@ class MassingGenerator:
         n = len(coords)
         OUT = 0.12
         H = 0.08
-        cx_f = sum(x for x, z in coords) / n
-        cz_f = sum(z for x, z in coords) / n
+        cx_f = sum(x for x, _ in coords) / n
+        cz_f = sum(z for _, z in coords) / n
 
         verts_fp = []
         faces_fp = []
@@ -734,8 +918,8 @@ class MassingGenerator:
 
         if outer_coords and len(outer_coords) >= 3:
             # Fan-triangulate the padded footprint polygon from its centroid
-            cx_t = sum(x for x, z in outer_coords) / len(outer_coords)
-            cz_t = sum(z for x, z in outer_coords) / len(outer_coords)
+            cx_t = sum(x for x, _ in outer_coords) / len(outer_coords)
+            cz_t = sum(z for _, z in outer_coords) / len(outer_coords)
             gy_c = self._ground_y(cx_t, cz_t, grad_x, grad_z) - 0.05
             verts_t = [[cx_t, gy_c, cz_t]]   # index 0 = centroid
             for x, z in outer_coords:

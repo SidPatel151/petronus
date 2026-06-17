@@ -6,7 +6,7 @@ from app.api import projects, site, generate, exports, chat
 app = FastAPI(
     title="Petronus API",
     description="Automated BIM generation for California multi-family residential",
-    version="0.1.0"
+    version="0.1.0",
 )
 
 _cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002")
