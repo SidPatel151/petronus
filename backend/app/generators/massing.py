@@ -727,13 +727,13 @@ class MassingGenerator:
                 near0_i = d0i <= d1i
                 near0_j = d0j <= d1j
                 if near0_i and near0_j:
-                    roof_faces.extend([[i, j, R0], [R0, j, i]])
+                    roof_faces.append([i, j, R0])
                 elif not near0_i and not near0_j:
-                    roof_faces.extend([[i, j, R1], [R1, j, i]])
+                    roof_faces.append([i, j, R1])
                 else:
                     Ri = R0 if near0_i else R1
                     Rj = R0 if near0_j else R1
-                    roof_faces.extend([[i, j, Ri], [Ri, j, i], [j, Rj, Ri], [Ri, Rj, j]])
+                    roof_faces.extend([[i, j, Ri], [j, Rj, Ri]])
 
             meshes.append({
                 "element_id": f"{prefix}_roof",
@@ -948,7 +948,6 @@ class MassingGenerator:
             for i in range(n_s):
                 j = (i + 1) % n_s
                 shed_faces.append([i, j, ci_shed])
-                shed_faces.append([ci_shed, j, i])  # double-sided
 
             meshes.append({
                 "element_id": f"{prefix}_roof",
@@ -980,7 +979,6 @@ class MassingGenerator:
             for i in range(n):
                 j = (i + 1) % n
                 deck_faces.append([n+i, ci_d, n+j])
-                deck_faces.append([ci_d, n+j, n+i])
             meshes.append({
                 "element_id": f"{prefix}_roof",
                 "element_type": "roof",

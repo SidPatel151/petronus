@@ -921,7 +921,7 @@ function MassingShell({ massing, levels, floorH, texName, roughness, metalness, 
         roughness={roughness}
         metalness={metalness}
         transparent={floorsActive}
-        opacity={floorsActive ? 0.55 : 1.0}
+        opacity={floorsActive ? 0.18 : 1.0}
         doubleSide={floorsActive}
       />
     </mesh>
@@ -1317,8 +1317,8 @@ function Scene() {
                     <RoomMesh key={`rm_${i}`} room={r} matColor={matColor} texName={floorTexName} roughness={floorRoughness} metalness={floorMetalness} floorH={floorH} />
                   ))
                 }
-                {/* ── Room volumes: colored semi-transparent boxes (visible through shell) ── */}
-                {activeLayers['floors'] && !activeLayers['architecture'] && buildingModel.rooms
+                {/* ── Room volumes: colored boxes always visible through semi-transparent shell ── */}
+                {activeLayers['floors'] && buildingModel.rooms
                   .map((r: any, i: number) => (
                     <RoomVolumeMesh key={`rv_${i}`} room={r} floorH={floorH} />
                   ))
