@@ -350,7 +350,7 @@ SFR_UPPER_LARGE: Dict[int, List[Dict]] = {
 }
 
 # Threshold: floor plate above this uses expanded large-house programs
-LARGE_HOUSE_THRESHOLD_M2 = 150.0  # ~1615 sqft per floor
+LARGE_HOUSE_THRESHOLD_M2 = 100.0  # ~1075 sqft per floor — use large programs more broadly
 
 # For multi-story SFR: floor 0 is public, floor 1+ is private (bedrooms)
 SFR_GROUND_ROWS = {  # standard — keyed by bedrooms
@@ -1050,16 +1050,12 @@ class FloorplanGenerator:
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
 
-        # Victorian: floor 0 = garage (handled above), floor 1 = main living floor,
-        # floor 2+ = sleeping floor.  Shift the program level down by 1 so level 1
-        # gets the public ground program (living/dining/kitchen) instead of bedrooms.
         _is_victorian = archetype_id == 'victorian_narrow_lot'
-        _prog_lvl = (lvl - 1) if (_is_victorian and lvl >= 1) else lvl
 
         # Select which row program to use for this floor
         if n_floors == 1:
             if use_large:
-                # Single-story large: combine ground + upper programs
+                # Single-story large: combine ground + upper programs for max rooms
                 ground = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
                 upper = SFR_UPPER_LARGE.get(br, [])
                 combined = ground + upper
@@ -1067,14 +1063,21 @@ class FloorplanGenerator:
                 row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in combined]
             else:
                 row_program = SFR_PROGRAMS[br]
-        elif _prog_lvl == 0:
+        elif lvl == 0:
             if use_large:
                 row_program = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
             else:
                 row_program = SFR_GROUND_ROWS[br]
             total = sum(r["row_frac_d"] for r in row_program)
             row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
+        elif _is_victorian and lvl == 1:
+            # Victorian main floor (above garage): use the FULL per-bedroom program so
+            # living rooms AND bedrooms both appear on the same floor (real Victorians do this).
+            row_program = list(SFR_PROGRAMS.get(br, SFR_PROGRAMS[3]))
+            total = sum(r["row_frac_d"] for r in row_program)
+            row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
         else:
+            # Upper floors: sleeping + bonus — use large programs broadly
             if use_large:
                 row_program = SFR_UPPER_LARGE.get(br, SFR_UPPER_ROWS[br])
             else:
