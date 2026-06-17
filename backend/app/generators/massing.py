@@ -617,7 +617,11 @@ class MassingGenerator:
         total_height = stories * floor_height_m
         meshes = []
 
-        # ── Main shell (transparent-ish massing) ──
+        # Footprint centroid — used for belt offset and gabled roof calculations
+        cx_fp = sum(x for x, z in coords) / n
+        cz_fp = sum(z for x, z in coords) / n
+
+        # ── Main shell (wall faces only — no top cap, roof mesh closes the top) ──
         vertices = []
         faces = []
         for x, z in coords:
@@ -632,16 +636,6 @@ class MassingGenerator:
             faces.append([i, j, j + n])
             faces.append([i, j + n, i + n])
 
-        # Top cap
-        cx = sum(v[0] for v in vertices[n:]) / n
-        cy_top = sum(v[1] for v in vertices[n:]) / n
-        cz = sum(v[2] for v in vertices[n:]) / n
-        center_idx = len(vertices)
-        vertices.append([cx, cy_top, cz])
-        for i in range(n):
-            j = (i + 1) % n
-            faces.append([n + i, center_idx, n + j])
-
         meshes.append({
             "element_id": f"{prefix}_mass",
             "element_type": "massing",
@@ -649,9 +643,40 @@ class MassingGenerator:
             "level": 0, "color": color,
         })
 
+        # ── Floor-line belt: thin dark slab at each inter-floor boundary ──
+        # Pushed 3 cm outward so it's always visible above the main wall surface.
+        # Applied to multi-story modern/contemporary builds (including ADU).
+        _modern_style = any(k in style for k in ('modern', 'contemporary', 'minimalist', 'urban'))
+        if stories >= 2 and _modern_style:
+            BELT_H    = 0.14   # 14 cm slab depth
+            BELT_PUSH = 0.03   # 3 cm outward from wall face
+            for flr in range(1, stories):
+                belt_y = flr * floor_height_m
+                bv: List = []
+                bf: List = []
+                for x, z in coords:
+                    gy = self._ground_y(x, z, grad_x, grad_z)
+                    dx = x - cx_fp
+                    dz = z - cz_fp
+                    dist = math.sqrt(dx * dx + dz * dz) or 1.0
+                    bx = x + (dx / dist) * BELT_PUSH
+                    bz = z + (dz / dist) * BELT_PUSH
+                    bv.append([bx, gy + belt_y, bz])           # bottom ring
+                    bv.append([bx, gy + belt_y + BELT_H, bz])  # top ring
+                for i in range(n):
+                    j = (i + 1) % n
+                    bf.append([2*i, 2*j, 2*j+1])
+                    bf.append([2*i, 2*j+1, 2*i+1])
+                meshes.append({
+                    "element_id": f"{prefix}_belt_{flr}",
+                    "element_type": "floor_band",
+                    "vertices": bv, "faces": bf,
+                    "level": flr - 1, "color": "#0f172a",
+                })
+
         # ── Roof — three distinct forms per style ──
         roof_height_rel = stories * floor_height_m
-        is_gabled   = 'classic' in style or 'gabled' in style
+        is_gabled   = 'classic' in style or 'gabled' in style or 'victorian' in style
         is_sculpted = 'sculpted' in style
 
         if is_gabled:

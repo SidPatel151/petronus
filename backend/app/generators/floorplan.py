@@ -1050,6 +1050,12 @@ class FloorplanGenerator:
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
 
+        # Victorian: floor 0 = garage (handled above), floor 1 = main living floor,
+        # floor 2+ = sleeping floor.  Shift the program level down by 1 so level 1
+        # gets the public ground program (living/dining/kitchen) instead of bedrooms.
+        _is_victorian = archetype_id == 'victorian_narrow_lot'
+        _prog_lvl = (lvl - 1) if (_is_victorian and lvl >= 1) else lvl
+
         # Select which row program to use for this floor
         if n_floors == 1:
             if use_large:
@@ -1061,7 +1067,7 @@ class FloorplanGenerator:
                 row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in combined]
             else:
                 row_program = SFR_PROGRAMS[br]
-        elif lvl == 0:
+        elif _prog_lvl == 0:
             if use_large:
                 row_program = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
             else:

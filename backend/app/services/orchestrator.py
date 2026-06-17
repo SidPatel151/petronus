@@ -234,11 +234,18 @@ class GenerationOrchestrator:
         # Step 3: Massing with neighbor awareness
         self.progress_cb(30, "Generating massing options…")
         log.append("Generating 3 massing options with neighbor context")
+        # Archetype arch_style (set in design_brief by apply_archetype_to_design_brief)
+        # takes priority over user's raw style choice so the massing generator
+        # receives e.g. 'classic_gabled' for Victorian, not whatever the user typed.
+        _massing_style = (
+            (design_brief.get('arch_style') if design_brief else None)
+            or getattr(spec, 'style', None)
+        )
         massing_options, levels = self.massing_gen.generate(
             spec, site_ctx,
             neighbor_buildings=neighbor_buildings,
             design_brief=design_brief,
-            style=getattr(spec, 'style', None),
+            style=_massing_style,
         )
         model.massing_options = massing_options
         model.levels = levels

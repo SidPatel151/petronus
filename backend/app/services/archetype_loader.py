@@ -113,8 +113,8 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
 
     if arch_id == 'adu_compact':
         neighbor_style['window_style']      = 'large_horizontal'
-        neighbor_style['horizontal_bands']  = False
-        neighbor_style['has_balconies']     = False
+        neighbor_style['horizontal_bands']  = True   # floor-line bands
+        neighbor_style['has_balconies']     = True   # small deck on 2-story ADU
         neighbor_style['dominant_material'] = 'fiber_cement'
     elif arch_id == 'victorian_narrow_lot':
         neighbor_style['window_style']     = 'tall_narrow'
