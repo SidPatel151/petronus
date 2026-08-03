@@ -157,10 +157,39 @@ class FacadeGenerator:
         meshes: List[Dict] = []
         ext_walls = [w for w in walls if w.is_exterior and w.level == 0]
 
-        # Compute polygon centroid from exterior wall endpoints for correct outward normal
-        poly_pts = [w.start for w in ext_walls]
-        poly_cx = sum(p[0] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
-        poly_cz = sum(p[1] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
+        # Prefer using massing footprint if provided to ensure roofs/parapets align.
+        footprint = massing_option.get("footprint") if massing_option else None
+        if footprint:
+            poly_pts = [(round(p[0], 6), round(p[1], 6)) for p in footprint]
+            poly_cx = sum(p[0] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
+            poly_cz = sum(p[1] for p in poly_pts) / len(poly_pts) if poly_pts else 0.0
+            from types import SimpleNamespace
+            ext_walls = []
+            nfp = len(poly_pts)
+            for i in range(nfp):
+                s = poly_pts[i]
+                e = poly_pts[(i + 1) % nfp]
+                ext_walls.append(SimpleNamespace(start=(s[0], s[1]), end=(e[0], e[1]), is_exterior=True, level=0))
+        else:
+            # Build an ordered, deduplicated polygon of exterior wall endpoints.
+            # Walls may be unordered or contain near-duplicate vertices; compute a
+            # centroid and sort vertices by angle to produce a stable CCW ordering.
+            poly_pts_raw = []
+            for w in ext_walls:
+                poly_pts_raw.append((round(w.start[0], 6), round(w.start[1], 6)))
+                poly_pts_raw.append((round(w.end[0], 6), round(w.end[1], 6)))
+            poly_pts_uniq = []
+            for p in poly_pts_raw:
+                if p not in poly_pts_uniq:
+                    poly_pts_uniq.append(p)
+
+            if poly_pts_uniq:
+                poly_cx = sum(p[0] for p in poly_pts_uniq) / len(poly_pts_uniq)
+                poly_cz = sum(p[1] for p in poly_pts_uniq) / len(poly_pts_uniq)
+                poly_pts = sorted(poly_pts_uniq, key=lambda q: math.atan2(q[1] - poly_cz, q[0] - poly_cx))
+            else:
+                poly_pts = []
+                poly_cx = poly_cz = 0.0
 
         # ── Entry door rules ─────────────────────────────────────────────────
         # Front face = wall(s) with minimum average Z (street-facing in local coords).
@@ -409,6 +438,10 @@ class FacadeGenerator:
         n_pts = len(footprint)
         if n_pts < 3:
             return
+        # If massing already provided parapet/roof meshes, avoid duplicating them.
+        for m in massing_option.get("meshes", []):
+            if m.get("element_type") in ("parapet", "roof"):
+                return
         n = n_pts - 1 if (footprint[0] == footprint[-1]) else n_pts
         for i in range(n):
             x0, z0 = footprint[i][0], footprint[i][1]
@@ -443,6 +476,12 @@ class FacadeGenerator:
         n_pts = len(footprint)
         if n_pts < 3:
             return
+
+        # If massing already provided a roof, skip pitched roof generation to
+        # avoid overlapping roof geometry.
+        for m in massing_option.get("meshes", []):
+            if m.get("element_type") == "roof":
+                return
 
         roof_y = stories * floor_h
         n = n_pts - 1 if (footprint[0] == footprint[-1]) else n_pts

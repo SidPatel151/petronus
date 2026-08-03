@@ -227,16 +227,22 @@ function WallMesh({ wall, matColor, texName, roughness, metalness, floorH }: {
 
 // ── Backend structural member (from StructuralEngine) ─────────────────
 function StructuralMemberMesh({ member }: { member: any }) {
-  const [x0, y0, z0] = member.start || [0, 0, 0];
-  const [x1, y1, z1] = member.end || [x0, y0 + 3, z0];
+  const validCoords = (coords: any): coords is [number, number, number] =>
+    Array.isArray(coords) && coords.length === 3 && coords.every((n) => typeof n === 'number' && Number.isFinite(n));
+
+  if (!validCoords(member.start) || !validCoords(member.end)) return null;
+  const [x0, y0, z0] = member.start;
+  const [x1, y1, z1] = member.end;
   const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
-  const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (length < 0.01) return null;
 
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
-  const color = member.color || '#a855f7';
-  const size = member.size_m || 0.2;
-  const mat = member.material || 'wood';
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const cz = (z0 + z1) / 2;
+  const mat = (member.material || 'wood').toLowerCase();
+  const size = Math.max(0.05, member.size_m || 0.2);
+  const color = member.color || (mat === 'steel' ? '#6B7B8D' : mat === 'concrete' ? '#8C8C8C' : '#a855f7');
   const roughness = mat === 'concrete' ? 0.85 : mat === 'steel' ? 0.3 : 0.7;
   const metalness = mat === 'steel' ? 0.7 : 0.0;
 
@@ -253,14 +259,20 @@ function StructuralMemberMesh({ member }: { member: any }) {
   }, [dx, dy, dz]);
 
   const type = member.type;
+  const thickness = type === 'shear_wall' ? 0.15 : size;
 
   if (type === 'column') {
     if (mat === 'steel') {
-      // H-section column
       return (
         <group position={[cx, cy, cz]} quaternion={quaternion}>
-          <mesh castShadow><boxGeometry args={[size, length, size * 0.15]} /><meshStandardMaterial color={color} roughness={roughness} metalness={metalness} /></mesh>
-          <mesh castShadow><boxGeometry args={[size * 0.15, length, size]} /><meshStandardMaterial color={color} roughness={roughness} metalness={metalness} /></mesh>
+          <mesh castShadow>
+            <boxGeometry args={[size, length, size * 0.15]} />
+            <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+          </mesh>
+          <mesh castShadow>
+            <boxGeometry args={[size * 0.15, length, size]} />
+            <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+          </mesh>
         </group>
       );
     }
@@ -276,17 +288,15 @@ function StructuralMemberMesh({ member }: { member: any }) {
     const w = type === 'joist' ? size * 0.4 : size;
     return (
       <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
-        <boxGeometry args={[w * 0.5, length, w]} />
+        <boxGeometry args={[Math.max(0.05, w * 0.5), length, Math.max(0.05, w)]} />
         <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
       </mesh>
     );
   }
 
   if (type === 'footing' || type === 'grade_beam') {
-    // size_m for footings IS the footing width (backend already sets it correctly)
-    // grade beams: same — use size directly, no extra multiplier
     return (
-      <mesh position={[cx, cy, cz]} castShadow receiveShadow>
+      <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow receiveShadow>
         <boxGeometry args={[size, length, size]} />
         <meshStandardMaterial color={color} roughness={0.9} metalness={0.0} transparent opacity={0.8} />
       </mesh>
@@ -294,16 +304,14 @@ function StructuralMemberMesh({ member }: { member: any }) {
   }
 
   if (type === 'shear_wall') {
-    // Thin panel along the wall
     return (
       <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
-        <boxGeometry args={[length, size * 0.15, size * 3]} />
-        <meshStandardMaterial color={color} roughness={0.7} metalness={0.0} transparent opacity={0.75} />
+        <boxGeometry args={[thickness, length, Math.max(0.2, size * 1.5)]} />
+        <meshStandardMaterial color={color} roughness={0.7} metalness={0.0} transparent opacity={0.75} side={THREE.DoubleSide} />
       </mesh>
     );
   }
 
-  // Generic fallback
   return (
     <mesh position={[cx, cy, cz]} quaternion={quaternion} castShadow>
       <cylinderGeometry args={[size / 2, size / 2, length, 8]} />
@@ -1111,7 +1119,7 @@ function PowerGridLine({ connection, siteCenter }: { connection: any; siteCenter
 
 // ── Main scene ─────────────────────────────────────────────────────────
 function Scene() {
-  const { buildingModel, activeLayers, selectedSite, infrastructure, neighborConstraints, spec, siteContext, drawnParcel } = useAppStore();
+  const { buildingModel, activeLayers, selectedMassing, selectedSite, infrastructure, neighborConstraints, spec, siteContext, drawnParcel } = useAppStore();
   const siteCenter: [number, number] = selectedSite ? [selectedSite.lon, selectedSite.lat] : [0, 0];
 
   // When a model is generated, hide the OSM building we're replacing.
@@ -1158,6 +1166,7 @@ function Scene() {
     ? buildingModel.levels[0].height_ft * 0.3048
     : 3.0;
   const FLOOR_H = floorH;
+  const massingIndex = Math.max(0, Math.min(selectedMassing ?? buildingModel?.chosen_massing_index ?? 0, (buildingModel?.massing_options?.length ?? 1) - 1));
 
   // Resolve wall texture: material_overrides.walls > design_brief > arch_style default > neighbor_style
   const wallOverride = (spec as any)?.material_overrides?.walls ?? '';
@@ -1232,7 +1241,7 @@ function Scene() {
         <>
           {/* ── Exterior shell + interior walls (architecture layer) ── */}
           {(() => {
-            const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
+            const massing = buildingModel.massing_options?.[massingIndex];
             return (
               <>
                 {activeLayers['architecture'] && (
@@ -1292,7 +1301,7 @@ function Scene() {
 
           {/* Massing meshes: terrain, footprint outline, overlap, roof, parapet */}
           {(() => {
-            const massing = buildingModel.massing_options?.[buildingModel.chosen_massing_index];
+            const massing = buildingModel.massing_options?.[massingIndex];
             const meshes: any[] = massing?.meshes || [];
             return <>
               {meshes.map((m: any, i: number) => {

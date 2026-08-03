@@ -123,29 +123,43 @@ class MEPRouter:
         # bathrooms: None / whole number = full baths, x.5 = includes a half bath
         bath_count = getattr(spec, 'bathrooms', None)
 
-        # Rebuild footprint polygon from level-0 exterior walls.
-        # Use it to filter rooms BEFORE routing — any room whose centroid is
-        # outside the actual polygon (e.g. in the void of an L/U shape) is excluded,
-        # which prevents MEP from routing to coordinates that are outside the building.
+        # Rebuild footprint polygon from level-0 exterior walls robustly.
+        # Many sources produce unordered wall segments or small coordinate
+        # differences; attempt to order the wall endpoints into a valid polygon
+        # and fall back to simpler tests if ordering fails.
         from shapely.geometry import Polygon as _ShpPoly, Point as _ShpPoint
         ext_walls_l0 = [w for w in walls if getattr(w, 'is_exterior', False) and w.level == 0]
         fp_poly = None
         if ext_walls_l0:
             try:
-                fp_pts = [w.start for w in ext_walls_l0]
-                fp_poly = _ShpPoly(fp_pts)
-            except Exception:
-                pass
+                # Try to build an ordered list of unique exterior vertices by
+                # computing the centroid and sorting by angle. This handles
+                # unordered segments and minor duplication.
+                pts = [tuple((round(p[0], 6), round(p[1], 6))) for w in ext_walls_l0 for p in (w.start, w.end)]
+                uniq = []
+                for p in pts:
+                    if p not in uniq:
+                        uniq.append(p)
 
-        if fp_poly is not None:
-            fp_interior = fp_poly.buffer(-0.20)
-            rooms_inside = [
-                r for r in rooms
-                if fp_interior.contains(_ShpPoint(*self._centroid(r)))
-            ]
-            print(f"MEP: {len(rooms)} total rooms → {len(rooms_inside)} inside footprint")
-        else:
-            rooms_inside = rooms
+                # If we have at least 3 unique points, sort them CCW around centroid
+                if len(uniq) >= 3:
+                    cx = sum(p[0] for p in uniq) / len(uniq)
+                    cz = sum(p[1] for p in uniq) / len(uniq)
+                    uniq.sort(key=lambda q: math.atan2(q[1] - cz, q[0] - cx))
+                    fp_poly = _ShpPoly(uniq)
+                else:
+                    # Fallback: attempt to construct from wall starts in original order
+                    fp_pts = [w.start for w in ext_walls_l0]
+                    fp_poly = _ShpPoly(fp_pts)
+                if not fp_poly.is_valid or fp_poly.is_empty:
+                    fp_poly = None
+            except Exception:
+                fp_poly = None
+
+        # Rooms are generated from the floorplan footprint and should already
+        # be clipped to the interior shell. Do not exclude rooms by footprint
+        # test here, as that can incorrectly omit entire wings or stepped massing.
+        rooms_inside = rooms
 
         is_adu = getattr(spec, 'building_use', None) in ('adu',)
         try:
