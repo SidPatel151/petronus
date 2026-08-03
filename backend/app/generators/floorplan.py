@@ -403,11 +403,215 @@ class FloorplanGenerator:
                     footprint, bounds, w, d, level, levels, bedrooms, archetype=archetype
                 )
             else:
-                rooms, walls = self._layout_floor(footprint, bounds, w, d, level, spec)
+                rooms, walls = self._layout_multifamily_floor(footprint, bounds, w, d, level, spec)
             all_rooms.extend(rooms)
             all_walls.extend(walls)
 
-        return all_rooms, all_walls
+        return self._carve_vertical_cores(all_rooms), all_walls
+
+    def _carve_vertical_cores(self, rooms: List[Room]) -> List[Room]:
+        """Remove stair/core footprints from every overlapping programmed room."""
+        cores_by_level: Dict[int, List[Polygon]] = {}
+        for room in rooms:
+            if room.type == "stair" and len(room.polygon) >= 3:
+                cores_by_level.setdefault(room.level, []).append(Polygon(room.polygon))
+        if not cores_by_level:
+            return rooms
+        carved: List[Room] = []
+        for room in rooms:
+            if room.type == "stair" or room.level not in cores_by_level:
+                carved.append(room)
+                continue
+            remainder = Polygon(room.polygon)
+            for core in cores_by_level[room.level]:
+                if remainder.intersects(core):
+                    remainder = remainder.difference(core.buffer(0.02, join_style=2))
+            if hasattr(remainder, "geoms"):
+                polygon_parts = [
+                    geometry for geometry in remainder.geoms
+                    if geometry.geom_type == "Polygon" and geometry.area >= 0.5
+                ]
+                remainder = max(polygon_parts, key=lambda geometry: geometry.area) if polygon_parts else None
+            if remainder is None or remainder.is_empty or not hasattr(remainder, "exterior") or remainder.area < 0.5:
+                continue
+            carved.append(room.model_copy(update={
+                "polygon": [[c[0], c[1]] for c in list(remainder.exterior.coords)[:-1]],
+                "area_sqft": remainder.area * 10.764,
+            }))
+        return carved
+
+    def _find_vertical_core(
+        self, interior: Polygon, target_width: float, target_depth: float
+    ) -> Optional[Polygon]:
+        """Find a repeatable stair/core rectangle inside irregular footprints."""
+        if interior.is_empty:
+            return None
+        if interior.geom_type == "MultiPolygon":
+            interior = max(interior.geoms, key=lambda geometry: geometry.area)
+        min_x, min_z, max_x, max_z = interior.bounds
+        center_x = (min_x + max_x) / 2.0
+        center_z = (min_z + max_z) / 2.0
+        for scale in (1.0, 0.85, 0.70):
+            width = min(target_width * scale, max_x - min_x)
+            depth = min(target_depth * scale, max_z - min_z)
+            x_positions = [
+                center_x - width / 2.0,
+                max_x - width,
+                min_x,
+                min_x + (max_x - min_x - width) * 0.25,
+                min_x + (max_x - min_x - width) * 0.75,
+            ]
+            z_positions = [
+                min_z,
+                center_z - depth / 2.0,
+                max_z - depth,
+                min_z + (max_z - min_z - depth) * 0.25,
+                min_z + (max_z - min_z - depth) * 0.75,
+            ]
+            preferred = [
+                (x_positions[0], z_positions[0]),
+                (x_positions[1], z_positions[0]),
+                (x_positions[2], z_positions[0]),
+                (x_positions[1], z_positions[1]),
+                (x_positions[2], z_positions[1]),
+                (x_positions[0], z_positions[1]),
+            ]
+            seen = set()
+            for x0, z0 in preferred + [(x, z) for z in z_positions for x in x_positions]:
+                key = (round(x0, 5), round(z0, 5))
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidate = Polygon([
+                    [x0, z0], [x0 + width, z0],
+                    [x0 + width, z0 + depth], [x0, z0 + depth],
+                ])
+                if interior.covers(candidate):
+                    return candidate
+        return None
+
+    def _layout_multifamily_floor(
+        self, footprint: Polygon, bounds, w: float, d: float,
+        level: Level, spec: ProjectSpec,
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Lay out a complete double-loaded multifamily floor.
+
+        Rooms are allocated on both sides of a centered corridor.  Irregular
+        band components (for example the two legs of a U-shaped footprint) are
+        programmed independently so a whole wing cannot be left empty.
+        """
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        min_x, min_z, max_x, max_z = bounds
+        interior = footprint.buffer(-FP_INSET, join_style=2)
+        if interior.is_empty:
+            return rooms, self._place_exterior_walls(footprint, level)
+
+        core = self._find_vertical_core(interior, STAIR_W_M, STAIR_D_M)
+        if core is not None:
+            rooms.append(Room(
+                id=f"stair_{lvl}", type="stair",
+                polygon=[[c[0], c[1]] for c in list(core.exterior.coords)[:-1]],
+                level=lvl, area_sqft=core.area * 10.764,
+            ))
+        available = interior.difference(core.buffer(0.02, join_style=2)) if core is not None else interior
+
+        corridor_z0 = min_z + (d - CORRIDOR_WIDTH_M) / 2.0
+        corridor_strip = box(min_x, corridor_z0, max_x, corridor_z0 + CORRIDOR_WIDTH_M)
+        corridor_shape = available.intersection(corridor_strip)
+        if hasattr(corridor_shape, "geoms"):
+            corridor_parts = [
+                geometry for geometry in corridor_shape.geoms
+                if geometry.geom_type == "Polygon" and geometry.area >= 1.0
+            ]
+            corridor_shape = max(corridor_parts, key=lambda geometry: geometry.area) if corridor_parts else None
+        if corridor_shape is not None and not corridor_shape.is_empty and hasattr(corridor_shape, "exterior"):
+            rooms.append(Room(
+                id=f"corridor_{lvl}", type="corridor",
+                polygon=[[c[0], c[1]] for c in list(corridor_shape.exterior.coords)[:-1]],
+                level=lvl, area_sqft=corridor_shape.area * 10.764,
+            ))
+
+        band_shapes = [
+            available.intersection(box(min_x, min_z, max_x, corridor_z0)),
+            available.intersection(box(min_x, corridor_z0 + CORRIDOR_WIDTH_M, max_x, max_z)),
+        ]
+        components: List[Polygon] = []
+        for band_shape in band_shapes:
+            geometries = list(band_shape.geoms) if hasattr(band_shape, "geoms") else [band_shape]
+            components.extend(
+                geometry for geometry in geometries
+                if geometry.geom_type == "Polygon" and geometry.area >= 6.0
+                and (geometry.bounds[3] - geometry.bounds[1]) >= 2.5
+            )
+        components.sort(key=lambda geometry: (geometry.bounds[1], geometry.bounds[0]))
+
+        # Start with conventional ~7.5m-wide units, but honor the user's total
+        # count where geometry permits. Every disconnected wing retains at
+        # least one programmed cell.
+        slots = [max(1, round((component.bounds[2] - component.bounds[0]) / 7.5)) for component in components]
+        requested_per_floor = (
+            max(1, math.ceil(spec.unit_count / max(spec.stories, 1)))
+            if spec.unit_count else sum(slots)
+        )
+        target_slots = max(len(components), requested_per_floor)
+        while sum(slots) < target_slots and components:
+            candidates = [
+                ((component.bounds[2] - component.bounds[0]) / (slots[index] + 1), index)
+                for index, component in enumerate(components)
+            ]
+            next_width, index = max(candidates)
+            if next_width < 3.2:
+                break
+            slots[index] += 1
+        while sum(slots) > target_slots and any(count > 1 for count in slots):
+            index = min(
+                (idx for idx, count in enumerate(slots) if count > 1),
+                key=lambda idx: (components[idx].bounds[2] - components[idx].bounds[0]) / slots[idx],
+            )
+            slots[index] -= 1
+
+        all_rects: List[Tuple[float, float, float, float]] = []
+        if corridor_shape is not None and hasattr(corridor_shape, "bounds"):
+            all_rects.append(corridor_shape.bounds)
+        unit_index = 0
+        for component_index, (component, component_slots) in enumerate(zip(components, slots)):
+            comp_min_x, comp_min_z, comp_max_x, comp_max_z = component.bounds
+            cell_width = (comp_max_x - comp_min_x) / component_slots
+            for slot_index in range(component_slots):
+                x0 = comp_min_x + cell_width * slot_index
+                x1 = comp_min_x + cell_width * (slot_index + 1)
+                cell = component.intersection(box(x0, comp_min_z, x1, comp_max_z))
+                if hasattr(cell, "geoms"):
+                    polygons = [geometry for geometry in cell.geoms if geometry.geom_type == "Polygon"]
+                    cell = max(polygons, key=lambda geometry: geometry.area) if polygons else None
+                if cell is None or cell.is_empty or not hasattr(cell, "exterior") or cell.area < 6.0:
+                    continue
+                cell_bounds = cell.bounds
+                width = cell_bounds[2] - cell_bounds[0]
+                unit_type = "2br" if width >= 8.5 else "1br"
+                template = UNIT_TEMPLATES[unit_type]
+                uid = f"unit_{unit_type}_{lvl}_{component_index}_{slot_index}_{unit_index}"
+                rooms.append(Room(
+                    id=uid, type="unit", unit_id=uid,
+                    polygon=[[c[0], c[1]] for c in list(cell.exterior.coords)[:-1]],
+                    level=lvl, area_sqft=cell.area * 10.764,
+                ))
+                sub_rooms = self._place_unit_rooms(
+                    uid,
+                    cell_bounds[0], cell_bounds[1],
+                    cell_bounds[2] - cell_bounds[0], cell_bounds[3] - cell_bounds[1],
+                    template, lvl, fp_interior=cell,
+                )
+                rooms.extend(sub_rooms)
+                all_rects.append(cell_bounds)
+                all_rects.extend(self._unit_subrects(cell_bounds, template))
+                unit_index += 1
+
+        self._emit_interior_walls(all_rects, footprint, interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
+        return rooms, walls
 
     def _layout_floor(
         self, footprint, bounds, w, d, level: Level, _spec: ProjectSpec
@@ -436,13 +640,19 @@ class FloorplanGenerator:
                 stair_poly = None   # outside footprint — omit
         except Exception:
             stair_poly = None
+        # The fixed front-center candidate can sit entirely in a U-shaped
+        # courtyard. Fall back to a contained side core found by a deterministic
+        # footprint search so every occupied level retains vertical egress.
+        stair_shape = self._find_vertical_core(fp_interior_mf, STAIR_W_M, STAIR_D_M)
+        if stair_shape is not None:
+            stair_poly = [[c[0], c[1]] for c in list(stair_shape.exterior.coords)[:-1]]
         if stair_poly:
             rooms.append(Room(
                 id=f"stair_{lvl}",
                 type="stair",
                 polygon=stair_poly,
                 level=lvl,
-                area_sqft=STAIR_W_M * STAIR_D_M * 10.764,
+                area_sqft=Polygon(stair_poly).area * 10.764,
             ))
 
         corr_y = miny + STAIR_D_M
@@ -735,13 +945,35 @@ class FloorplanGenerator:
                 except Exception:
                     pass
             if sfr_stair_poly:
+                stair_shape = Polygon(sfr_stair_poly)
+                carved_rooms: List[Room] = []
+                for placed_room in rooms:
+                    room_shape = Polygon(placed_room.polygon)
+                    if not room_shape.intersects(stair_shape):
+                        carved_rooms.append(placed_room)
+                        continue
+                    remainder = room_shape.difference(stair_shape.buffer(0.02, join_style=2))
+                    if hasattr(remainder, 'geoms'):
+                        polygon_parts = [
+                            geometry for geometry in remainder.geoms
+                            if geometry.geom_type == 'Polygon' and geometry.area >= 0.5
+                        ]
+                        remainder = max(polygon_parts, key=lambda geometry: geometry.area) if polygon_parts else None
+                    if remainder is None or remainder.is_empty or not hasattr(remainder, 'exterior') or remainder.area < 0.5:
+                        continue
+                    carved_rooms.append(placed_room.model_copy(update={
+                        "polygon": [[c[0], c[1]] for c in list(remainder.exterior.coords)[:-1]],
+                        "area_sqft": remainder.area * 10.764,
+                    }))
+                rooms = carved_rooms
+                room_rects = [Polygon(room.polygon).bounds for room in rooms]
                 rooms.append(Room(
                     id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
                     type="stair",
                     unit_id="house",
                     polygon=sfr_stair_poly,
                     level=lvl,
-                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                    area_sqft=stair_shape.area * 10.764,
                 ))
 
         return rooms, walls

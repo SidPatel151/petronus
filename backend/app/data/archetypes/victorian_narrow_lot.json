@@ -127,7 +127,7 @@
     "fallback_strategy": "high_velocity",
     "ducted_central_allowed": false,
     "units_per_living_floor": 1,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "rear_yard_or_roof",
     "refrigerant_line_routing": "rear_wall_chase_or_chimney_flue",
@@ -219,15 +219,15 @@
   },
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
+    "fully_electric_design_default": true,
     "solar_ready": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "seismic_retrofit_likely": true
   },
 

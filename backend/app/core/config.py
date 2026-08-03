@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key"
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
-    ANTHROPIC_API_KEY: str = "AQ.Ab8RN6IBgjwyLtUJCOk5Vkjo5ahJTcTF6Nx3fMp5iFLNZ89xEQ"
+    # Credentials must only come from the environment / backend/.env.  Never
+    # ship a usable key as a source-code default.
+    ANTHROPIC_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

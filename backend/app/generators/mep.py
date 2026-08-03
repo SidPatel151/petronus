@@ -1,5 +1,5 @@
 """
-MEPRouter — comprehensive residential MEP systems
+MEPRouter — code-informed preliminary residential MEP systems
 All coordinates: local meters, [X, Y_elevation, Z].
 
 Routing zones per floor (floor_h = 3.048m / 10ft default):
@@ -14,8 +14,11 @@ Each element carries a bounding box so the ClashDetector can find conflicts.
 """
 import uuid
 import math
-from typing import List, Dict, Tuple, Optional, Any
+import heapq
+from typing import List, Dict, Tuple, Optional, Any, Sequence
 from app.models.schemas import MEPElement, Room, Wall, ProjectSpec, Level
+from shapely.geometry import Polygon, Point as ShpPoint, LineString
+from shapely.ops import polygonize, unary_union
 
 # ── Zone heights relative to floor datum ─────────────────────────────────
 ZONE = {
@@ -26,14 +29,14 @@ ZONE = {
     "supply_pipe":    0.50,   # domestic water supply (in wall)
     "waste_pipe":     0.10,   # waste (just below slab, gravity)
     "ceil_elec":      2.20,   # electrical conduit @ ceiling
-    "ceil_fire":      2.35,   # sprinkler branch pipes
+    "ceil_fire":      2.30,   # sprinkler branch pipes; separated from return ducts
     "ceil_light":     2.45,   # light fixtures
-    "duct_return":    2.55,   # HVAC return air
-    "duct_supply":    2.70,   # HVAC supply duct (main)
-    "duct_branch":    2.60,   # HVAC branch ducts
+    "duct_return":    2.65,   # HVAC return air
+    "duct_supply":    2.82,   # HVAC supply duct (main)
+    "duct_branch":    2.72,   # HVAC branch ducts
 }
 
-# ── Domestic water fixture unit values (IPC Table 610.3) ─────────────────
+# ── Preliminary domestic-water planning fixture units ────────────────────
 FIXTURE_UNITS = {
     "toilet":   3.0,
     "sink":     2.0,
@@ -43,7 +46,7 @@ FIXTURE_UNITS = {
     "washer":   3.0,
 }
 
-# ── IPC pipe sizing by fixture units (Table 604.1, wsfu) ─────────────────
+# ── Preliminary pipe sizing by fixture units; verify against adopted CPC ─
 # (max_wsfu, pipe_size_in)
 WATER_PIPE_SIZES = [
     (1.5,  0.50),
@@ -54,7 +57,7 @@ WATER_PIPE_SIZES = [
     (60.0, 2.00),
 ]
 
-# ── Drain pipe sizing by drainage fixture units (DFU) ────────────────────
+# ── Preliminary drain sizing by DFU; verify against adopted CPC ──────────
 # (max_dfu, pipe_size_in)
 DRAIN_PIPE_SIZES = [
     (1,   1.25),
@@ -65,16 +68,15 @@ DRAIN_PIPE_SIZES = [
     (160, 6.00),
 ]
 
-# ── Duct sizing by CFM (ASHRAE Manual D, simplified) ─────────────────────
+# ── Conceptual duct sizing by CFM; final design requires loads/Manual D ──
 # CFM per room type per 100 sqft (approximate for residential)
 CFM_PER_100SQFT = {
-    "bedroom": 25, "living": 30, ""
-    ""
-    "": 40, "bathroom": 50,
-    "dining": 20, "corridor": 15,
+    "bedroom": 25, "living": 30, "family_room": 30,
+    "office": 25, "unit": 30, "kitchen": 40, "bathroom": 50,
+    "dining": 20, "corridor": 15, "laundry": 30,
 }
 
-# ASHRAE duct sizing: (max_cfm, width_in, height_in, diameter_in_round)
+# Preliminary mapping: (max_cfm, width_in, height_in, diameter_in_round)
 DUCT_SIZES = [
     (60,   6,  6,  6),
     (120,  8,  6,  8),
@@ -92,10 +94,13 @@ CIRCUIT_AMPS   = 20           # standard 20A branch circuit
 CIRCUIT_VOLTS  = 120          # single-phase
 CIRCUIT_VA     = CIRCUIT_AMPS * CIRCUIT_VOLTS   # 2400 VA per circuit
 
-# ── Sprinkler sizing (NFPA 13R residential) ──────────────────────────────
-SPRINKLER_COVERAGE_M2  = 16.7   # max 180 sqft (16.7 m²) per head, NFPA 13R
+# ── Conceptual residential sprinkler prelayout ───────────────────────────
+# A conservative notional cell used only to avoid visibly uncovered rooms.
+# Final spacing, obstruction, listing, flow, and pipe sizing require the
+# occupancy-specific adopted standard and a hydraulic design.
+SPRINKLER_COVERAGE_M2  = 16.7
 SPRINKLER_FLOW_GPM     = 13.0   # residential head K=4.9, 10psi → 15.5 gpm
-SPRINKLER_PIPE_FLOW = [         # NFPA 13R pipe sizing
+SPRINKLER_PIPE_FLOW = [         # preliminary branch sizing by served heads
     (2,   1.0),   # ≤2 heads: 1" pipe
     (4,   1.25),
     (6,   1.5),
@@ -103,6 +108,23 @@ SPRINKLER_PIPE_FLOW = [         # NFPA 13R pipe sizing
     (40,  2.5),
     (100, 3.0),
 ]
+
+# Centreline keep-outs used by the visibility router.  Values include the
+# largest expected device radius plus the inter-trade preflight clearance.
+ROLE_KEEP_OUT_M = {
+    "fire": 0.32,
+    "soil": 0.34,
+    "cold": 0.31,
+    "hot": 0.31,
+    "electrical": 0.30,
+    "hvac_supply": 0.46,   # includes a 30-inch mini-split head
+    "hvac_return": 0.30,
+    "hvac_equipment": 0.50,
+    "exhaust": 0.16,
+    "alarm": 0.12,
+    "lighting": 0.12,
+    "sprinkler": 0.21,
+}
 
 
 class MEPRouter:
@@ -115,51 +137,35 @@ class MEPRouter:
         spec: ProjectSpec,
         power_connection: dict = None,
         structural_members: List[Dict] = None,
+        archetype: Optional[Dict[str, Any]] = None,
     ) -> List[MEPElement]:
         """Route all MEP systems and return elements sorted by system."""
-        fine = (spec.fine_details or {}) if hasattr(spec, 'fine_details') else {}
+        fine = self._resolve_mep_profile(spec, archetype)
         floor_h = levels[0].height_ft * 0.3048 if levels else 3.048
 
         # bathrooms: None / whole number = full baths, x.5 = includes a half bath
         bath_count = getattr(spec, 'bathrooms', None)
 
-        # Rebuild footprint polygon from level-0 exterior walls robustly.
-        # Many sources produce unordered wall segments or small coordinate
-        # differences; attempt to order the wall endpoints into a valid polygon
-        # and fall back to simpler tests if ordering fails.
-        from shapely.geometry import Polygon as _ShpPoly, Point as _ShpPoint
-        ext_walls_l0 = [w for w in walls if getattr(w, 'is_exterior', False) and w.level == 0]
-        fp_poly = None
-        if ext_walls_l0:
-            try:
-                # Try to build an ordered list of unique exterior vertices by
-                # computing the centroid and sorting by angle. This handles
-                # unordered segments and minor duplication.
-                pts = [tuple((round(p[0], 6), round(p[1], 6))) for w in ext_walls_l0 for p in (w.start, w.end)]
-                uniq = []
-                for p in pts:
-                    if p not in uniq:
-                        uniq.append(p)
-
-                # If we have at least 3 unique points, sort them CCW around centroid
-                if len(uniq) >= 3:
-                    cx = sum(p[0] for p in uniq) / len(uniq)
-                    cz = sum(p[1] for p in uniq) / len(uniq)
-                    uniq.sort(key=lambda q: math.atan2(q[1] - cz, q[0] - cx))
-                    fp_poly = _ShpPoly(uniq)
-                else:
-                    # Fallback: attempt to construct from wall starts in original order
-                    fp_pts = [w.start for w in ext_walls_l0]
-                    fp_poly = _ShpPoly(fp_pts)
-                if not fp_poly.is_valid or fp_poly.is_empty:
-                    fp_poly = None
-            except Exception:
-                fp_poly = None
+        # Polygonize the actual wall network.  Sorting vertices by angle turns
+        # concave L/U footprints into the wrong shell and drops valid routes in
+        # the building wings.
+        fp_poly = self._footprint_polygon(rooms, walls)
 
         # Rooms are generated from the floorplan footprint and should already
         # be clipped to the interior shell. Do not exclude rooms by footprint
         # test here, as that can incorrectly omit entire wings or stepped massing.
-        rooms_inside = rooms
+        rooms_inside = list(rooms)
+        # Multifamily floorplans can include an enclosing ``unit`` shell plus
+        # its programmed child rooms. Route leaf rooms only so loads and device
+        # counts are not doubled over the same physical area.
+        child_unit_ids = {
+            room.unit_id for room in rooms_inside
+            if room.unit_id and room.type != "unit"
+        }
+        rooms_inside = [
+            room for room in rooms_inside
+            if not (room.type == "unit" and room.id in child_unit_ids)
+        ]
 
         is_adu = getattr(spec, 'building_use', None) in ('adu',)
         try:
@@ -170,8 +176,13 @@ class MEPRouter:
 
         elements = []
         elements.extend(self._route_fire_protection(rooms_inside, levels, floor_h, fine))
-        elements.extend(self._route_plumbing(rooms_inside, walls, levels, floor_h, bath_count, is_adu=is_adu))
-        elements.extend(self._route_hvac(rooms_inside, levels, spec.hvac_preference, floor_h))
+        elements.extend(self._route_plumbing(
+            rooms_inside, walls, levels, floor_h, bath_count,
+            is_adu=is_adu, profile=fine,
+        ))
+        elements.extend(self._route_hvac(
+            rooms_inside, levels, spec.hvac_preference, floor_h, fine,
+        ))
         elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine, is_adu=is_adu))
         elements.extend(self._place_furniture(rooms_inside, levels, floor_h))
         if is_adu:
@@ -181,39 +192,313 @@ class MEPRouter:
         # (x, z) start or end lands outside the building interior.
         # Vertical risers (same x,z for start and end) are exempt.
         if fp_poly is not None:
-            fp_check = fp_poly.buffer(-0.10)
+            # Include wall-mounted devices placed 5 cm inside the perimeter.
+            fp_check = fp_poly.buffer(0.02)
             kept = []
             for el in elements:
+                if el.type in {"utility_lateral", "sewer_lateral"}:
+                    meta = dict(el.metadata or {})
+                    meta["allow_outside_footprint"] = True
+                    kept.append(el.model_copy(update={"metadata": meta}))
+                    continue
                 s = getattr(el, 'start', None)
                 e = getattr(el, 'end', None)
                 if s:
-                    if not fp_check.contains(_ShpPoint(s[0], s[2])):
+                    if not fp_check.covers(ShpPoint(s[0], s[2])):
                         continue  # start outside — skip
                 if e:
                     # Only reject if end is outside AND it's a horizontal move
                     # (vertical risers have same x,z so they're always inside)
                     same_xz = abs(e[0] - s[0]) < 0.01 and abs(e[2] - s[2]) < 0.01
-                    if not same_xz and not fp_check.contains(_ShpPoint(e[0], e[2])):
+                    if not same_xz and not fp_check.covers(ShpPoint(e[0], e[2])):
                         continue  # end outside — skip
                 kept.append(el)
-            elements = kept
+            elements = self._contain_and_reroute(kept, fp_poly)
 
         return elements
 
     # ════════════════════════════════════════════════════════════════════════
-    # FIRE PROTECTION (NFPA 13R)
+    # FIRE PROTECTION (occupancy-specific preliminary layout)
     # ════════════════════════════════════════════════════════════════════════
+
+    def _resolve_mep_profile(
+        self, spec: ProjectSpec, archetype: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge conservative defaults, archetype guidance, and user choices.
+
+        The image-derived archetype files contain useful system preferences,
+        but user selections remain authoritative.  Only fields with a concrete
+        generator implementation are promoted into this runtime profile.
+        """
+        profile: Dict[str, Any] = {
+            "outlets_per_room": 3,
+            "fire_alarms": True,
+            "carbon_monoxide_detectors": True,
+            "exhaust_fans": True,
+            "fire_sprinklers": True,
+            "whole_building_ventilation": True,
+            "heat_pump_hvac": True,
+            "heat_pump_water_heater": True,
+        }
+        if archetype:
+            electrical = archetype.get("electrical") or {}
+            hvac = archetype.get("hvac") or {}
+            plumbing = archetype.get("plumbing") or {}
+            compliance = archetype.get("california_compliance") or {}
+            for key in (
+                "outlets_per_room", "fire_alarms",
+                "carbon_monoxide_detectors", "exhaust_fans",
+            ):
+                if key in electrical:
+                    profile[key] = electrical[key]
+            if "erv_hrv_required" in hvac:
+                profile["erv_hrv_required"] = bool(hvac["erv_hrv_required"])
+            if "heat_pump_design_default" in hvac:
+                profile["heat_pump_hvac"] = bool(hvac["heat_pump_design_default"])
+            elif "heat_pump_required" in hvac:  # legacy archetype compatibility
+                profile["heat_pump_hvac"] = bool(hvac["heat_pump_required"])
+            water_heater = plumbing.get("water_heater") or {}
+            if water_heater.get("type"):
+                profile["water_heater_type"] = water_heater["type"]
+            sprinkler_rule = compliance.get("fire_sprinklers")
+            if isinstance(sprinkler_rule, bool):
+                profile["fire_sprinklers"] = sprinkler_rule
+
+        # An ADU is not required to add sprinklers when the primary dwelling is
+        # not sprinklered (California Gov. Code 66314(d)(12)).
+        building_use = getattr(getattr(spec, "building_use", None), "value", getattr(spec, "building_use", None))
+        profile["building_use"] = building_use
+        profile["fire_standard"] = (
+            "NFPA 13D" if building_use in ("single_family", "adu") else "NFPA 13R"
+        )
+        profile.update((getattr(spec, "fine_details", None) or {}))
+        # This generator creates new residential buildings. Required life-safety
+        # systems are code applicability, not cosmetic user preferences.  The
+        # statutory ADU exception is the only modeled sprinkler opt-out.
+        profile["fire_alarms"] = True
+        profile["carbon_monoxide_detectors"] = True
+        profile["fire_sprinklers"] = not (
+            building_use == "adu"
+            and getattr(spec, "primary_dwelling_sprinklered", None) is False
+        )
+        return profile
+
+    def _footprint_polygon(
+        self, rooms: List[Room], walls: List[Wall]
+    ) -> Optional[Polygon]:
+        exterior = [
+            LineString([w.start, w.end])
+            for w in walls
+            if getattr(w, "is_exterior", False) and w.level == 0
+            and len(w.start) >= 2 and len(w.end) >= 2
+        ]
+        try:
+            candidates = list(polygonize(unary_union(exterior))) if exterior else []
+            if candidates:
+                shell = max(candidates, key=lambda p: p.area)
+                if shell.is_valid and not shell.is_empty:
+                    return shell
+        except Exception:
+            pass
+
+        # Safe fallback for incomplete wall graphs: union the actual level-zero
+        # room polygons.  A tiny closing buffer bridges wall-thickness gaps.
+        try:
+            room_polys = [
+                Polygon(r.polygon)
+                for r in rooms if r.level == 0 and len(r.polygon) >= 3
+            ]
+            merged = unary_union(room_polys).buffer(0.12, join_style=2)
+            if not merged.is_empty:
+                if merged.geom_type == "MultiPolygon":
+                    merged = max(merged.geoms, key=lambda p: p.area)
+                return merged if merged.is_valid else merged.buffer(0)
+        except Exception:
+            pass
+        return None
+
+    def _shortest_horizontal_path(
+        self, start: Tuple[float, float], end: Tuple[float, float], footprint: Polygon,
+        avoid_points: Optional[List[Tuple[float, ...]]] = None,
+        clearance_m: float = 0.0,
+    ) -> List[Tuple[float, float]]:
+        """Visibility-graph path inside the shell and around reserved chases.
+
+        ``avoid_points`` represent vertical risers or ceiling terminals whose
+        full 3-D geometry cannot be crossed simply by clipping a route to the
+        footprint.  Diamond-shaped keep-outs keep the graph compact while
+        still producing deterministic, orthogonal-looking coordination bends.
+        """
+        allowed_shell = footprint.buffer(0.03, join_style=2)
+        direct = LineString([start, end])
+        barriers = []
+        # A third value on a keep-out is its required centreline radius.  Keep
+        # the largest radius when multiple trades reserve the same coordinate.
+        keepout_radii: Dict[Tuple[float, float], float] = {}
+        for raw_point in avoid_points or []:
+            coordinate = (round(float(raw_point[0]), 4), round(float(raw_point[1]), 4))
+            radius = (
+                float(raw_point[2])
+                if len(raw_point) >= 3 and float(raw_point[2]) > 0
+                else clearance_m
+            )
+            if radius > 0:
+                keepout_radii[coordinate] = max(radius, keepout_radii.get(coordinate, 0.0))
+        for coordinate, radius in keepout_radii.items():
+            point = ShpPoint(*coordinate)
+            # A route cannot avoid its own endpoint. Callers should choose
+            # separated terminals; ignore an accidental endpoint keep-out
+            # so generation still returns a visible, diagnosable route.
+            if point.distance(ShpPoint(start)) < 0.01 or point.distance(ShpPoint(end)) < 0.01:
+                continue
+            # Keep every reserved vertical chase. A detour around one obstacle
+            # can cross a second chase that was far from the original direct
+            # line, so filtering only against that direct line is unsafe.
+            barrier = point.buffer(radius, resolution=1)
+            if allowed_shell.intersects(barrier):
+                barriers.append(barrier)
+        allowed = (
+            allowed_shell.difference(unary_union(barriers))
+            if barriers else allowed_shell
+        )
+        if allowed.covers(direct):
+            return [start, end]
+
+        vertices = list(footprint.exterior.coords[:-1])
+        for ring in footprint.interiors:
+            vertices.extend(ring.coords[:-1])
+        for barrier in barriers:
+            clipped = barrier.intersection(allowed_shell)
+            if clipped.geom_type == "Polygon":
+                vertices.extend(clipped.exterior.coords[:-1])
+            elif clipped.geom_type == "MultiPolygon":
+                for polygon in clipped.geoms:
+                    vertices.extend(polygon.exterior.coords[:-1])
+        nodes = [start, end] + [(float(x), float(z)) for x, z in vertices]
+        graph: List[List[Tuple[int, float]]] = [[] for _ in nodes]
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                segment = LineString([nodes[i], nodes[j]])
+                if allowed.covers(segment):
+                    distance = segment.length
+                    graph[i].append((j, distance))
+                    graph[j].append((i, distance))
+
+        distances = [math.inf] * len(nodes)
+        previous = [-1] * len(nodes)
+        distances[0] = 0.0
+        queue = [(0.0, 0)]
+        while queue:
+            distance, node = heapq.heappop(queue)
+            if distance != distances[node]:
+                continue
+            if node == 1:
+                break
+            for neighbor, weight in graph[node]:
+                candidate = distance + weight
+                if candidate < distances[neighbor]:
+                    distances[neighbor] = candidate
+                    previous[neighbor] = node
+                    heapq.heappush(queue, (candidate, neighbor))
+        if not math.isfinite(distances[1]):
+            return []
+        order = []
+        node = 1
+        while node != -1:
+            order.append(node)
+            node = previous[node]
+        return [nodes[index] for index in reversed(order)]
+
+    def _contain_and_reroute(
+        self, elements: List[MEPElement], footprint: Polygon
+    ) -> List[MEPElement]:
+        allowed = footprint.buffer(0.02, join_style=2)
+        output: List[MEPElement] = []
+        external_types = {"utility_lateral", "sewer_lateral"}
+        for element in elements:
+            metadata = dict(element.metadata or {})
+            avoid_points = metadata.pop("_coordination_avoid_points", [])
+            clearance_m = float(metadata.pop("_coordination_clearance_m", 0.0) or 0.0)
+            element = element.model_copy(update={"metadata": metadata})
+            if element.type in external_types or metadata.get("allow_outside_footprint"):
+                metadata["allow_outside_footprint"] = True
+                output.append(element.model_copy(update={"metadata": metadata}))
+                continue
+
+            start = element.start
+            end = element.end
+            if not start or not allowed.covers(ShpPoint(start[0], start[2])):
+                continue
+            if not end:
+                output.append(element)
+                continue
+            if not allowed.covers(ShpPoint(end[0], end[2])):
+                continue
+            if abs(end[0] - start[0]) < 0.01 and abs(end[2] - start[2]) < 0.01:
+                output.append(element)
+                continue
+
+            path = self._shortest_horizontal_path(
+                (start[0], start[2]), (end[0], end[2]), footprint,
+                avoid_points=[tuple(point[:3]) for point in avoid_points if len(point) >= 2],
+                clearance_m=clearance_m,
+            )
+            if not path:
+                # Dense keep-outs can occasionally disconnect a small room.
+                # Preserve the required network branch and fall back to the
+                # shortest shell-contained path; the clash preflight will then
+                # report any remaining coordination work instead of silently
+                # deleting service to the room.
+                path = self._shortest_horizontal_path(
+                    (start[0], start[2]), (end[0], end[2]), footprint,
+                )
+                metadata["coordination_routing_fallback"] = True
+                element = element.model_copy(update={"metadata": metadata})
+            if len(path) <= 2:
+                if path:
+                    output.append(element)
+                continue
+
+            lengths = [
+                math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1])
+                for i in range(len(path) - 1)
+            ]
+            total = sum(lengths) or 1.0
+            travelled = 0.0
+            for index, ((x0, z0), (x1, z1)) in enumerate(zip(path, path[1:])):
+                y0 = start[1] + (end[1] - start[1]) * travelled / total
+                travelled += lengths[index]
+                y1 = start[1] + (end[1] - start[1]) * travelled / total
+                segment_metadata = dict(metadata)
+                segment_metadata.update({
+                    "route_parent_id": element.id,
+                    "route_segment": index + 1,
+                    "route_segment_count": len(path) - 1,
+                })
+                output.append(element.model_copy(update={
+                    "id": f"{element.id}_seg{index + 1}",
+                    "start": [x0, y0, z0],
+                    "end": [x1, y1, z1],
+                    "metadata": segment_metadata,
+                }))
+        return output
 
     def _route_fire_protection(
         self, rooms: List[Room], levels: List[Level], floor_h: float, fine: dict
     ) -> List[MEPElement]:
         """
-        Place residential sprinkler heads on every floor per NFPA 13R.
-        Main riser in stair or utility core, branch lines along ceiling.
+        Place a conceptual residential sprinkler layout on every floor.
+        The selected NFPA family is metadata for downstream review; final
+        applicability, head listing, obstructions, and hydraulics remain an
+        AHJ/fire-protection design task.
         """
         do_sprinklers = fine.get("fire_sprinklers", True)   # default ON for new builds
+        fire_standard = str(fine.get("fire_standard", "NFPA 13R"))
         elements = []
         total_floors = len(levels)
+
+        if not do_sprinklers:
+            return elements
 
         # ── Riser location: utility/mechanical chase, never through stairwell ──
         rx, rz = self._mep_chase_position(rooms) if rooms else (0.0, 0.0)
@@ -229,6 +514,7 @@ class MEPRouter:
             end=[rx, riser_top, rz],
             level=0,
             diameter_in=2.0,
+            metadata={"design_standard": fire_standard, "hydraulic_design_required": True},
         ))
 
         # Backflow preventer at entry (ground level, building perimeter)
@@ -243,9 +529,6 @@ class MEPRouter:
                 level=0,
             ))
 
-        if not do_sprinklers:
-            return elements
-
         # ── Per-floor sprinkler heads — route directly from riser to each room ──
         # No horizontal trunk across the full building (would cross L/U voids).
         # Each branch drops straight from the riser at ceiling height to the head.
@@ -253,25 +536,38 @@ class MEPRouter:
             lvl = level.index
             ceil_y = lvl * floor_h + ZONE["ceil_fire"]
 
-            lvl_rooms = [r for r in rooms if r.level == lvl
-                         and r.type not in ("stair", "corridor")]
+            lvl_rooms = [r for r in rooms if r.level == lvl]
             if not lvl_rooms:
                 continue
+
+            # Horizontal systems occupy separated elevation zones.  The fire
+            # branches therefore reserve only vertical chases; treating every
+            # ceiling terminal as a full-height obstacle can disconnect small
+            # rooms and force unsafe direct-route fallbacks.
+            hvac_keepouts: List[List[float]] = []
+            ground_wet_rooms = [
+                room for room in rooms
+                if room.level == 0 and room.type in ("bathroom", "kitchen", "laundry")
+            ]
+            for wet_room in ground_wet_rooms[:2]:
+                hvac_keepouts.append(self._room_keepout(wet_room, "soil", 0.16))
+            if ground_wet_rooms:
+                for role in ("cold", "hot"):
+                    hvac_keepouts.append(self._room_keepout(ground_wet_rooms[0], role, 0.12))
+            central_hvac_x, central_hvac_z = self._central_hvac_position(rooms)
+            electrical_x, electrical_z = self._central_hvac_position(rooms, role="electrical")
+            hvac_keepouts.extend((
+                self._point_keepout(central_hvac_x, central_hvac_z, "hvac_equipment", 0.30),
+                self._point_keepout(electrical_x, electrical_z, "electrical", 0.28),
+            ))
 
             # Sprinkler heads per room — route from riser position
             for room in lvl_rooms:
                 if not do_sprinklers:
                     break
-                cx, cz = self._centroid(room)
                 head_y = ceil_y + 0.05
-
-                positions = [(cx, cz)]
-
-                # Large rooms get an extra head
-                bds = self._bounds(room)
-                room_area_m2 = max((bds[2]-bds[0]) * (bds[3]-bds[1]), 1.0)
-                if room_area_m2 > SPRINKLER_COVERAGE_M2:
-                    positions.append(((bds[0]+cx)/2, (bds[1]+cz)/2))
+                positions = self._sprinkler_positions(room)
+                branch_size = self._fire_pipe_size(len(positions))
 
                 for (hx, hz) in positions:
                     elements.append(MEPElement(
@@ -279,6 +575,12 @@ class MEPRouter:
                         system="fire", type="sprinkler",
                         start=[hx, head_y, hz],
                         level=lvl, diameter_in=0.5,
+                        metadata={
+                            "room_id": room.id,
+                            "design_coverage_m2": SPRINKLER_COVERAGE_M2,
+                            "design_standard": fire_standard,
+                            "listing_and_obstruction_review_required": True,
+                        },
                     ))
                     # Vertical drop from riser at ceiling down to head
                     elements.append(MEPElement(
@@ -286,7 +588,16 @@ class MEPRouter:
                         system="fire", type="fire_branch_drop",
                         start=[rx, ceil_y, rz],
                         end=[hx, head_y, hz],
-                        level=lvl, diameter_in=0.75,
+                        level=lvl, diameter_in=branch_size,
+                        metadata={
+                            "room_id": room.id,
+                            "network_id": "fire_sprinkler",
+                            "seismic_braced": True,
+                            "design_standard": fire_standard,
+                            "hydraulic_design_required": True,
+                            "_coordination_avoid_points": hvac_keepouts,
+                            "_coordination_clearance_m": 0.22,
+                        },
                     ))
 
         return elements
@@ -298,26 +609,33 @@ class MEPRouter:
         return 3.0
 
     # ════════════════════════════════════════════════════════════════════════
-    # PLUMBING (IPC)
+    # PLUMBING (preliminary CPC-informed layout)
     # ════════════════════════════════════════════════════════════════════════
 
     def _route_plumbing(
         self, rooms: List[Room], walls: List[Wall], levels: List[Level], floor_h: float,
         bath_count: Optional[float] = None, is_adu: bool = False,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> List[MEPElement]:
         """
         Route domestic water supply (hot + cold) and waste/vent.
         bath_count: whole number = full baths, x.5 includes a half bath (toilet+sink, no shower).
         """
         elements = []
+        profile = profile or {}
         total_floors = len(levels)
         # True if spec includes a .5 half bath (toilet+sink only, no shower)
         _has_half_bath = bath_count is not None and (bath_count % 1) == 0.5
+        bathroom_rooms = sorted(
+            (room for room in rooms if room.type == "bathroom"),
+            key=lambda room: (room.area_sqft, room.level, room.id),
+        )
+        half_bath_room_ids = {bathroom_rooms[0].id} if _has_half_bath and bathroom_rooms else set()
         top_y = total_floors * floor_h   # vent stack ends at roof level
 
         wet_rooms_by_level = {}
         for r in rooms:
-            if r.type in ("bathroom", "kitchen"):
+            if r.type in ("bathroom", "kitchen", "laundry"):
                 wet_rooms_by_level.setdefault(r.level, []).append(r)
 
         if not any(wet_rooms_by_level.values()):
@@ -328,16 +646,25 @@ class MEPRouter:
         if not lvl0_wet:
             lvl0_wet = [r for lvs in wet_rooms_by_level.values() for r in lvs][:1]
 
+        fire_x, fire_z = self._mep_chase_position(rooms)
+        hvac_x, hvac_z = self._central_hvac_position(rooms)
+        electrical_x, electrical_z = self._central_hvac_position(rooms, role="electrical")
+        vertical_trade_keepouts = [
+            self._point_keepout(fire_x, fire_z, "fire", 0.15),
+            self._point_keepout(hvac_x, hvac_z, "hvac_return", 0.34),
+            self._point_keepout(electrical_x, electrical_z, "electrical", 0.17),
+        ]
+
         stack_positions = []
         drain_d = 4.0  # default drain diameter
         for room in lvl0_wet[:2]:   # max 2 stacks for small buildings
-            sx, sz = self._centroid(room)
+            sx, sz = self._room_slot(room, "soil")
             stack_positions.append((sx, sz))
 
             # Soil stack (main waste): ground slab to roof vent
             total_dfu = sum(
                 FIXTURE_UNITS.get(r.type, 1.0) * 1.5
-                for r in rooms if r.type in ("bathroom", "kitchen")
+                for r in rooms if r.type in ("bathroom", "kitchen", "laundry")
             )
             drain_d = self._drain_pipe_size(total_dfu)
 
@@ -355,49 +682,117 @@ class MEPRouter:
         all_room_pts = [p for r in rooms for p in r.polygon]
         if all_room_pts:
             service_z = min(p[1] for p in all_room_pts)   # building front wall
-            sx0, sz0 = stack_positions[0]
+            cold_x, cold_z = self._room_slot(lvl0_wet[0], "cold")
             # Water service runs inside building from front wall to stack
             elements.append(MEPElement(
                 id="water_service",
                 system="plumbing",
                 type="water_service",
-                start=[sx0, 0.3, service_z],
-                end=[sx0, 0.3, sz0],
+                start=[cold_x, 0.3, service_z],
+                end=[cold_x, 0.3, cold_z],
                 level=0,
                 diameter_in=1.5,
+                metadata={
+                    "network_id": "domestic_water",
+                    "_coordination_avoid_points": vertical_trade_keepouts,
+                    "_coordination_clearance_m": 0.34,
+                },
             ))
             elements.append(MEPElement(
                 id="water_meter",
                 system="plumbing",
                 type="water_meter",
-                start=[sx0, 0.3, service_z + 0.3],  # just inside the wall
+                start=[cold_x, 0.3, service_z + 0.3],  # just inside the wall
                 level=0,
+                metadata={"network_id": "domestic_water"},
+            ))
+            elements.append(MEPElement(
+                id="potable_backflow",
+                system="plumbing",
+                type="backflow_preventer",
+                start=[cold_x, 0.45, service_z + 0.45],
+                level=0,
+                metadata={"network_id": "domestic_water", "testable": True},
+            ))
+            elements.append(MEPElement(
+                id="building_cleanout",
+                system="plumbing",
+                type="cleanout",
+                start=[stack_positions[0][0], 0.05, service_z + 0.25],
+                level=0,
+                metadata={"network_id": "sanitary", "access_clearance_in": 24},
             ))
 
         # ── Hot water heater (in utility or near kitchen, ground floor) ──
         util_rooms = [r for r in rooms if r.type in ("laundry", "utility", "kitchen") and r.level == 0]
         if util_rooms:
-            hwh_cx, hwh_cz = self._centroid(util_rooms[0])
+            hwh_cx, hwh_cz = self._room_slot(util_rooms[0], "equipment")
         else:
             hwh_cx, hwh_cz = stack_positions[0] if stack_positions else (0.0, 0.0)
 
         # ADU: prefer heat pump water heater (CA Title 24 / energy compliance)
-        hwh_type = "heat_pump_water_heater" if is_adu else "water_heater"
+        configured_hwh = str(profile.get("water_heater_type", "")).lower()
+        use_heat_pump_hwh = bool(profile.get("heat_pump_water_heater", True))
+        hwh_type = (
+            "heat_pump_water_heater"
+            if is_adu or use_heat_pump_hwh or "heat_pump" in configured_hwh
+            else "water_heater"
+        )
         elements.append(MEPElement(
             id="hot_water_heater",
             system="plumbing",
             type=hwh_type,
             start=[hwh_cx, 0.0, hwh_cz],
             level=0,
+            metadata={
+                "network_id": "domestic_hot_water",
+                "heat_pump": hwh_type == "heat_pump_water_heater",
+                "anchored": True,
+                "service_clearance_in": 30,
+            },
         ))
+
+        # Explicit hot/cold risers make upper-floor branches connected rather
+        # than appearing to originate in mid-air at the stack coordinates.
+        cold_x, cold_z = self._room_slot(lvl0_wet[0], "cold")
+        hot_x, hot_z = self._room_slot(lvl0_wet[0], "hot")
+        elements.extend([
+            MEPElement(
+                id="cold_water_riser", system="plumbing", type="cold_water_riser",
+                start=[cold_x, 0.3, cold_z], end=[cold_x, top_y - 0.2, cold_z], level=0,
+                diameter_in=1.0,
+                metadata={"network_id": "domestic_cold_water", "seismic_braced": True},
+            ),
+            MEPElement(
+                id="hot_water_riser", system="plumbing", type="hot_water_riser",
+                start=[hot_x, 0.5, hot_z], end=[hot_x, top_y - 0.2, hot_z], level=0,
+                diameter_in=0.75,
+                metadata={"network_id": "domestic_hot_water", "insulated": True, "seismic_braced": True},
+            ),
+            MEPElement(
+                id="hot_water_header", system="plumbing", type="hot_supply",
+                start=[hwh_cx, 0.5, hwh_cz], end=[hot_x, 0.5, hot_z], level=0,
+                diameter_in=0.75,
+                metadata={
+                    "network_id": "domestic_hot_water", "insulated": True,
+                    "_coordination_avoid_points": vertical_trade_keepouts,
+                    "_coordination_clearance_m": 0.34,
+                },
+            ),
+        ])
 
         # ── Per wet room: supply branches and fixture connections ──
         for lvl, lvl_rooms in wet_rooms_by_level.items():
             floor_y = lvl * floor_h
-            sx, sz = stack_positions[0]
 
             for room in lvl_rooms:
-                cx, cz = self._centroid(room)
+                connection_x, connection_z = self._room_slot(room, "plumbing_terminal")
+                waste_x, waste_z = min(
+                    stack_positions,
+                    key=lambda point: math.hypot(
+                        point[0] - connection_x, point[1] - connection_z
+                    ),
+                )
                 bds = self._bounds(room)
                 # Route pipes inside the floor/wall zone — visible inside the building
                 supply_y = floor_y + 0.15   # in-wall supply height
@@ -410,22 +805,34 @@ class MEPRouter:
                     id=f"cold_{uuid.uuid4().hex[:5]}",
                     system="plumbing",
                     type="cold_supply",
-                    start=[sx, supply_y, sz],
-                    end=[cx, supply_y, cz],
+                    start=[cold_x, supply_y, cold_z],
+                    end=[connection_x, supply_y, connection_z],
                     level=lvl,
                     diameter_in=supply_d,
+                    metadata={
+                        "room_id": room.id, "network_id": "domestic_cold_water",
+                        "fixture_units": total_room_fu,
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.34,
+                    },
                 ))
 
                 # Hot supply branch (from water heater, parallel, slightly offset)
-                if room.type in ("bathroom", "kitchen"):
+                if room.type in ("bathroom", "kitchen", "laundry"):
                     elements.append(MEPElement(
                         id=f"hot_{uuid.uuid4().hex[:5]}",
                         system="plumbing",
                         type="hot_supply",
-                        start=[hwh_cx, supply_y + 0.04, hwh_cz],
-                        end=[cx, supply_y + 0.04, cz],
+                        start=[hot_x, supply_y + 0.04, hot_z],
+                        end=[connection_x, supply_y + 0.04, connection_z],
                         level=lvl,
                         diameter_in=supply_d,
+                        metadata={
+                            "room_id": room.id, "network_id": "domestic_hot_water",
+                            "insulated": True,
+                            "_coordination_avoid_points": vertical_trade_keepouts,
+                            "_coordination_clearance_m": 0.34,
+                        },
                     ))
 
                 # Waste branch
@@ -433,37 +840,54 @@ class MEPRouter:
                     id=f"waste_{uuid.uuid4().hex[:5]}",
                     system="plumbing",
                     type="waste_branch",
-                    start=[cx, waste_y, cz],
-                    end=[sx, waste_y, sz],
+                    start=[connection_x, waste_y, connection_z],
+                    end=[waste_x, waste_y, waste_z],
                     level=lvl,
                     diameter_in=max(1.5, drain_d - 1.0),
+                    metadata={
+                        "room_id": room.id, "network_id": "sanitary",
+                        "slope_pct": 2.1, "vented": True,
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.34,
+                    },
                 ))
 
                 # Fixture placement — half bath (small room or last bath when .5 count)
                 # gets toilet + sink only; full bath gets toilet + sink + shower
                 if room.type == "bathroom":
-                    room_area_m2 = (bds[2]-bds[0]) * (bds[3]-bds[1])
-                    # Half bath: under 3.5 m² OR spec explicitly has a .5 bath and this is a small room
-                    is_half = room_area_m2 < 3.5 or (_has_half_bath and room_area_m2 < 5.0)
+                    # Only an explicitly requested fractional bath is treated
+                    # as a half bath. Compact geometry alone must not silently
+                    # remove the tub/shower from a requested full bathroom.
+                    is_half = room.id in half_bath_room_ids
                     elements.append(MEPElement(
                         id=f"toilet_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="toilet",
-                        start=[bds[0]+0.45, floor_y+0.01, bds[1]+0.45], level=lvl))
+                        start=self._fixture_xyz(room, "fixture_toilet", floor_y + 0.01), level=lvl,
+                        metadata={"room_id": room.id, "fixture_units": 3.0, "trap_seal_in": 2, "vented": True}))
                     elements.append(MEPElement(
                         id=f"sink_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="sink",
-                        start=[bds[0]+(bds[2]-bds[0])*0.7, floor_y+0.01, bds[1]+0.35], level=lvl))
+                        start=self._fixture_xyz(room, "fixture_sink", floor_y + 0.01), level=lvl,
+                        metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
                     if not is_half:
                         # Full bath: add shower
                         elements.append(MEPElement(
                             id=f"shower_{uuid.uuid4().hex[:5]}",
                             system="plumbing", type="shower",
-                            start=[bds[2]-0.6, floor_y+0.01, bds[3]-0.6], level=lvl))
+                            start=self._fixture_xyz(room, "fixture_shower", floor_y + 0.01), level=lvl,
+                            metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
                 elif room.type == "kitchen":
                     elements.append(MEPElement(
                         id=f"ksink_{uuid.uuid4().hex[:5]}",
-                        system="plumbing", type="sink",
-                        start=[bds[0]+0.5, floor_y+0.01, bds[3]-0.45], level=lvl))
+                        system="plumbing", type="kitchen_sink",
+                        start=self._fixture_xyz(room, "fixture_kitchen_sink", floor_y + 0.01), level=lvl,
+                        metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
+                elif room.type == "laundry":
+                    elements.append(MEPElement(
+                        id=f"washer_box_{uuid.uuid4().hex[:5]}",
+                        system="plumbing", type="washer_connection",
+                        start=self._fixture_xyz(room, "fixture_laundry", floor_y + 0.9), level=lvl,
+                        metadata={"room_id": room.id, "fixture_units": 3.0, "trap_seal_in": 2, "vented": True}))
 
         return elements
 
@@ -491,7 +915,8 @@ class MEPRouter:
     # ════════════════════════════════════════════════════════════════════════
 
     def _route_hvac(
-        self, rooms: List[Room], levels: List[Level], preference, floor_h: float
+        self, rooms: List[Room], levels: List[Level], preference, floor_h: float,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> List[MEPElement]:
         """
         Route HVAC systems.
@@ -499,14 +924,111 @@ class MEPRouter:
         rooftop: central RTU + main trunk + branches to each room.
         """
         pref = getattr(preference, 'value', str(preference)).lower()
-        elements = []
+        profile = profile or {}
 
         if pref == "mini_split":
-            return self._hvac_mini_split(rooms, levels, floor_h)
+            elements = self._hvac_mini_split(rooms, levels, floor_h, profile)
         else:
-            return self._hvac_central(rooms, levels, floor_h)
+            elements = self._hvac_central(rooms, levels, floor_h, profile)
+        elements.extend(self._route_ventilation_and_exhaust(rooms, levels, floor_h, profile))
+        return elements
 
-    def _hvac_mini_split(self, rooms, levels, floor_h) -> List[MEPElement]:
+    def _sprinkler_positions(self, room: Room) -> List[Tuple[float, float]]:
+        """Lay out enough heads to keep each notional cell below 180 ft².
+
+        This is a deterministic preliminary layout, not a hydraulic design.
+        Intersections with the actual room polygon keep heads out of concave
+        notches, which the previous bounding-box placement could not do.
+        """
+        polygon = Polygon(room.polygon)
+        if polygon.is_empty or not polygon.is_valid:
+            cx, cz = self._centroid(room)
+            return [(cx, cz)]
+        target_count = max(1, math.ceil(polygon.area / SPRINKLER_COVERAGE_M2))
+        min_x, min_z, max_x, max_z = polygon.bounds
+        width = max(max_x - min_x, 0.1)
+        depth = max(max_z - min_z, 0.1)
+        columns = max(1, math.ceil(math.sqrt(target_count * width / depth)))
+        rows = max(1, math.ceil(target_count / columns))
+        positions: List[Tuple[float, float]] = []
+        reserved = [
+            self._room_slot(room, role)
+            for role in (
+                "fire", "soil", "cold", "hot", "electrical",
+                "hvac_supply", "hvac_return", "hvac_equipment", "exhaust", "alarm",
+            )
+        ]
+        for row in range(rows):
+            for column in range(columns):
+                cell = Polygon([
+                    [min_x + width * column / columns, min_z + depth * row / rows],
+                    [min_x + width * (column + 1) / columns, min_z + depth * row / rows],
+                    [min_x + width * (column + 1) / columns, min_z + depth * (row + 1) / rows],
+                    [min_x + width * column / columns, min_z + depth * (row + 1) / rows],
+                ])
+                clipped = polygon.intersection(cell)
+                if clipped.is_empty or clipped.area < 0.05:
+                    continue
+                point = clipped.representative_point()
+                min_cell_x, min_cell_z, max_cell_x, max_cell_z = clipped.bounds
+                candidates = [point]
+                for fraction_x, fraction_z in (
+                    (0.20, 0.20), (0.20, 0.80), (0.80, 0.20), (0.80, 0.80),
+                    (0.35, 0.50), (0.65, 0.50), (0.50, 0.35), (0.50, 0.65),
+                ):
+                    candidate = ShpPoint(
+                        min_cell_x + (max_cell_x - min_cell_x) * fraction_x,
+                        min_cell_z + (max_cell_z - min_cell_z) * fraction_z,
+                    )
+                    if clipped.buffer(-0.08).covers(candidate):
+                        candidates.append(candidate)
+                separation_points = reserved + positions
+                best = max(
+                    candidates,
+                    key=lambda candidate: min(
+                        math.hypot(candidate.x - other_x, candidate.y - other_z)
+                        for other_x, other_z in separation_points
+                    ),
+                )
+                positions.append((float(best.x), float(best.y)))
+        return positions or [self._centroid(room)]
+
+    def _lighting_positions(self, room: Room) -> List[Tuple[float, float]]:
+        """Mirror the electrical ceiling-light layout for trade coordination."""
+        polygon = Polygon(room.polygon)
+        if polygon.is_empty:
+            return []
+        positions: List[Tuple[float, float]] = []
+        reserved = [
+            self._room_slot(room, role)
+            for role in (
+                "fire", "soil", "cold", "hot", "electrical",
+                "hvac_supply", "hvac_return", "hvac_equipment", "exhaust", "alarm",
+            )
+        ]
+        for light_x, light_z in self._sprinkler_positions(room):
+            candidates = []
+            for offset_x, offset_z in (
+                (-0.55, 0.0), (0.55, 0.0), (0.0, -0.55), (0.0, 0.55),
+                (-0.42, -0.42), (-0.42, 0.42), (0.42, -0.42), (0.42, 0.42),
+                (-0.30, 0.0), (0.30, 0.0), (0.0, -0.30), (0.0, 0.30),
+                (0.0, 0.0),
+            ):
+                candidate = ShpPoint(light_x + offset_x, light_z + offset_z)
+                if polygon.buffer(-0.08).covers(candidate) or (offset_x == 0 and offset_z == 0):
+                    candidates.append(candidate)
+            separation_points = reserved + positions + [(light_x, light_z)]
+            best = max(
+                candidates,
+                key=lambda candidate: min(
+                    math.hypot(candidate.x - other_x, candidate.y - other_z)
+                    for other_x, other_z in separation_points
+                ),
+            )
+            positions.append((float(best.x), float(best.y)))
+        return positions
+
+    def _hvac_mini_split(self, rooms, levels, floor_h, profile) -> List[MEPElement]:
         """One indoor head unit per bedroom/living area. Condenser on roof."""
         elements = []
         total_floors = len(levels)
@@ -514,9 +1036,27 @@ class MEPRouter:
 
         # Outdoor condenser units on roof — use weighted centroid so it stays inside footprint
         if rooms:
-            roof_cx, roof_cz = self._building_centroid(rooms)
+            roof_cx, roof_cz = self._central_hvac_position(rooms)
         else:
             roof_cx, roof_cz = 0.0, 0.0
+
+        vertical_trade_keepouts: List[List[float]] = []
+        ground_wet_rooms = [
+            room for room in rooms
+            if room.level == 0 and room.type in ("bathroom", "kitchen", "laundry")
+        ]
+        for wet_room in ground_wet_rooms[:2]:
+            vertical_trade_keepouts.append(self._room_keepout(wet_room, "soil"))
+        if ground_wet_rooms:
+            for role in ("cold", "hot"):
+                vertical_trade_keepouts.append(self._room_keepout(ground_wet_rooms[0], role))
+        if rooms:
+            fire_x, fire_z = self._mep_chase_position(rooms)
+            electrical_x, electrical_z = self._central_hvac_position(rooms, role="electrical")
+            vertical_trade_keepouts.extend((
+                self._point_keepout(fire_x, fire_z, "fire"),
+                self._point_keepout(electrical_x, electrical_z, "electrical"),
+            ))
 
         elements.append(MEPElement(
             id="condenser_main",
@@ -524,6 +1064,23 @@ class MEPRouter:
             type="condenser_unit",
             start=[roof_cx, roof_y + 0.15, roof_cz],
             level=total_floors - 1,
+            metadata={
+                "heat_pump": bool(profile.get("heat_pump_hvac", True)),
+                "seer2": 16.0, "hspf2": 8.5,
+                "anchored": True, "service_clearance_in": 30,
+            },
+        ))
+
+        elements.append(MEPElement(
+            id="refrigerant_riser_main",
+            system="hvac", type="refrigerant_riser",
+            start=[roof_cx, 0.25, roof_cz],
+            end=[roof_cx, roof_y, roof_cz],
+            level=0, diameter_in=2.0,
+            metadata={
+                "network_id": "refrigerant", "insulated": True,
+                "seismic_braced": True, "shared_chase": True,
+            },
         ))
 
         for level in levels:
@@ -531,34 +1088,50 @@ class MEPRouter:
             for room in rooms:
                 if room.level != lvl:
                     continue
-                if room.type not in ("bedroom", "living", "unit", "dining"):
+                if room.type not in (
+                    "bedroom", "living", "family_room", "unit", "dining",
+                    "kitchen", "office", "media_room", "bonus_room", "loft",
+                ):
                     continue
-                cx, cz = self._centroid(room)
-                bds = self._bounds(room)
+                head_x, head_z = self._room_slot_away(
+                    room, "hvac_supply", vertical_trade_keepouts
+                )
                 head_y = lvl * floor_h + ZONE["duct_supply"]
                 # Wall-mount head on interior wall (0.1m from wall)
                 elements.append(MEPElement(
                     id=f"ms_head_{uuid.uuid4().hex[:5]}",
                     system="hvac",
                     type="mini_split_head",
-                    start=[cx, head_y, bds[1] + 0.15],
+                    start=[head_x, head_y, head_z],
                     level=lvl,
                     width_in=30,
                     height_in=10,
+                    metadata={
+                        "room_id": room.id,
+                        "capacity_cfm": max(50, round(room.area_sqft * 0.3)),
+                        "heat_pump": bool(profile.get("heat_pump_hvac", True)),
+                    },
                 ))
                 # Refrigerant line (slim — 1") up to roof condenser
                 elements.append(MEPElement(
                     id=f"refrig_{uuid.uuid4().hex[:5]}",
                     system="hvac",
                     type="refrigerant_line",
-                    start=[cx, head_y, bds[1] + 0.15],
-                    end=[roof_cx, roof_y, roof_cz],
+                    start=[head_x, head_y, head_z],
+                    end=[roof_cx, head_y, roof_cz],
                     level=lvl,
                     diameter_in=1.0,
+                    metadata={
+                        "room_id": room.id, "network_id": "refrigerant",
+                        "insulated": True, "seismic_braced": True,
+                        "shared_riser_id": "refrigerant_riser_main",
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.20,
+                    },
                 ))
         return elements
 
-    def _hvac_central(self, rooms, levels, floor_h) -> List[MEPElement]:
+    def _hvac_central(self, rooms, levels, floor_h, profile) -> List[MEPElement]:
         """Central rooftop unit + main supply trunk + branch ducts to each room."""
         elements = []
         total_floors = len(levels)
@@ -566,11 +1139,27 @@ class MEPRouter:
 
         if not rooms:
             return elements
-        # Area-weighted centroid keeps RTU and trunk spine inside L/U/stepped footprints
-        bld_cx, bld_cz = self._building_centroid(rooms)
-        all_pts = [p for r in rooms for p in r.polygon]
-        min_x = min(p[0] for p in all_pts)
-        max_x = max(p[0] for p in all_pts)
+        # A dedicated service chase prevents the large vertical supply riser
+        # from landing at a room centroid, where outlets and other trades tend
+        # to be generated. The helper also keeps the chase within the common
+        # footprint of stacked levels where one exists.
+        bld_cx, bld_cz = self._central_hvac_position(rooms)
+        vertical_trade_keepouts: List[List[float]] = []
+        ground_wet_rooms = [
+            room for room in rooms
+            if room.level == 0 and room.type in ("bathroom", "kitchen", "laundry")
+        ]
+        for wet_room in ground_wet_rooms[:2]:
+            vertical_trade_keepouts.append(self._room_keepout(wet_room, "soil"))
+        if ground_wet_rooms:
+            for role in ("cold", "hot"):
+                vertical_trade_keepouts.append(self._room_keepout(ground_wet_rooms[0], role))
+        fire_x, fire_z = self._mep_chase_position(rooms)
+        electrical_x, electrical_z = self._central_hvac_position(rooms, role="electrical")
+        vertical_trade_keepouts.extend((
+            self._point_keepout(fire_x, fire_z, "fire"),
+            self._point_keepout(electrical_x, electrical_z, "electrical"),
+        ))
 
         # Rooftop unit
         elements.append(MEPElement(
@@ -581,6 +1170,12 @@ class MEPRouter:
             level=total_floors - 1,
             width_in=48,
             height_in=36,
+            metadata={
+                "heat_pump": bool(profile.get("heat_pump_hvac", True)),
+                "seer2": 16.0, "hspf2": 8.5,
+                "anchored": True, "service_clearance_in": 30,
+                "duct_r_value": 8, "duct_sealed": True,
+            },
         ))
 
         for level in levels:
@@ -595,13 +1190,18 @@ class MEPRouter:
                 start=[bld_cx, lvl * floor_h + 0.1, bld_cz],
                 end=[bld_cx, roof_y, bld_cz],
                 level=lvl, diameter_in=16,
+                metadata={
+                    "network_id": "hvac_supply", "seismic_braced": True,
+                    "duct_r_value": 8, "duct_sealed": True,
+                },
             ))
 
             # Direct branch from riser to each room centroid — no spanning trunk
             for room in rooms:
                 if room.level != lvl or room.type in ("stair",):
                     continue
-                cx, cz = self._centroid(room)
+                supply_x, supply_z = self._room_slot(room, "hvac_supply")
+                return_x, return_z = self._room_slot(room, "hvac_return")
                 room_area_m2 = room.area_sqft * 0.0929
                 cfm = max(50, int(room_area_m2 * 10.764 *
                           CFM_PER_100SQFT.get(room.type, 20) / 100))
@@ -611,16 +1211,136 @@ class MEPRouter:
                     id=f"hvac_branch_{uuid.uuid4().hex[:5]}",
                     system="hvac", type="supply_branch",
                     start=[bld_cx, ceil_y, bld_cz],
-                    end=[cx, ceil_y, cz],
+                    end=[supply_x, ceil_y, supply_z],
                     level=lvl, width_in=bw, height_in=bh,
+                    metadata={
+                        "room_id": room.id, "network_id": "hvac_supply",
+                        "capacity_cfm": cfm, "duct_r_value": 8,
+                        "duct_sealed": True, "seismic_braced": True,
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.32,
+                    },
                 ))
                 elements.append(MEPElement(
                     id=f"diffuser_{uuid.uuid4().hex[:5]}",
                     system="hvac", type="supply_diffuser",
-                    start=[cx, lvl * floor_h + ZONE["ceil_light"] - 0.05, cz],
+                    start=[supply_x, lvl * floor_h + ZONE["duct_supply"] - 0.07, supply_z],
                     level=lvl, width_in=bw, height_in=4,
+                    metadata={"room_id": room.id, "capacity_cfm": cfm},
+                ))
+                # A complete central system needs a return/transfer path, not
+                # only supply air.  Keep return branches in their own zone.
+                elements.append(MEPElement(
+                    id=f"return_{uuid.uuid4().hex[:5]}",
+                    system="hvac", type="return_branch",
+                    start=[return_x, ret_y, return_z], end=[bld_cx, ret_y, bld_cz],
+                    level=lvl, width_in=max(8, bw), height_in=max(6, bh),
+                    metadata={
+                        "room_id": room.id, "network_id": "hvac_return",
+                        "capacity_cfm": cfm, "duct_r_value": 8,
+                        "duct_sealed": True, "seismic_braced": True,
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.32,
+                    },
+                ))
+                elements.append(MEPElement(
+                    id=f"return_grille_{uuid.uuid4().hex[:5]}",
+                    system="hvac", type="return_grille",
+                    start=[return_x, lvl * floor_h + ZONE["duct_return"] + 0.03, return_z],
+                    level=lvl, width_in=max(8, bw), height_in=4,
+                    metadata={"room_id": room.id, "capacity_cfm": cfm},
                 ))
 
+        return elements
+
+    def _route_ventilation_and_exhaust(
+        self, rooms, levels, floor_h: float, profile: Dict[str, Any]
+    ) -> List[MEPElement]:
+        elements: List[MEPElement] = []
+        do_exhaust = bool(profile.get("exhaust_fans", True))
+        do_whole_building = bool(profile.get("whole_building_ventilation", True))
+        plumbing_keepouts: List[List[float]] = []
+        ground_wet_rooms = [
+            room for room in rooms
+            if room.level == 0 and room.type in ("bathroom", "kitchen", "laundry")
+        ]
+        for wet_room in ground_wet_rooms[:2]:
+            plumbing_keepouts.append(self._room_keepout(wet_room, "soil"))
+        if ground_wet_rooms:
+            for role in ("cold", "hot"):
+                plumbing_keepouts.append(self._room_keepout(ground_wet_rooms[0], role))
+        if rooms:
+            fire_x, fire_z = self._mep_chase_position(rooms)
+            electrical_x, electrical_z = self._central_hvac_position(rooms, role="electrical")
+            plumbing_keepouts.extend((
+                self._point_keepout(fire_x, fire_z, "fire"),
+                self._point_keepout(electrical_x, electrical_z, "electrical"),
+            ))
+        for level in levels:
+            lvl = level.index
+            level_rooms = [r for r in rooms if r.level == lvl]
+            if not level_rooms:
+                continue
+            fixture_y = lvl * floor_h + ZONE["ceil_light"] + 0.08
+            plenum_y = lvl * floor_h + ZONE["duct_supply"]
+
+            if do_whole_building:
+                equipment_rooms = [
+                    room for room in level_rooms
+                    if room.type in ("mechanical", "utility", "laundry")
+                ]
+                equipment_room = equipment_rooms[0] if equipment_rooms else max(
+                    level_rooms, key=lambda room: room.area_sqft
+                )
+                cx, cz = self._room_slot(equipment_room, "hvac_equipment")
+                # Avoid double-counting MF unit shell rooms that overlap their
+                # child rooms when estimating a preliminary outdoor-air rate.
+                net_area = sum(r.area_sqft for r in level_rooms if r.type != "unit")
+                if net_area <= 0:
+                    net_area = sum(r.area_sqft for r in level_rooms)
+                outdoor_cfm = max(30, round(net_area * 0.03))
+                equipment_type = "erv" if profile.get("erv_hrv_required") else "whole_house_ventilator"
+                elements.append(MEPElement(
+                    id=f"ventilator_{lvl}", system="hvac", type=equipment_type,
+                    start=[cx, plenum_y, cz], level=lvl, width_in=18, height_in=10,
+                    metadata={
+                        "outdoor_air_cfm": outdoor_cfm, "level": lvl,
+                        "duct_r_value": 8, "duct_sealed": True,
+                        "anchored": True, "service_clearance_in": 30,
+                    },
+                ))
+
+            if do_exhaust:
+                for room in level_rooms:
+                    if room.type not in ("bathroom", "kitchen", "laundry"):
+                        continue
+                    cx, cz = self._room_slot(room, "exhaust")
+                    bds = self._bounds(room)
+                    exhaust_cfm = 100 if room.type in ("kitchen", "laundry") else 50
+                    fan_type = "range_hood" if room.type == "kitchen" else "exhaust_fan"
+                    elements.append(MEPElement(
+                        id=f"exhaust_{uuid.uuid4().hex[:5]}",
+                        system="hvac", type=fan_type,
+                        start=[cx, fixture_y, cz], level=lvl,
+                        metadata={
+                            "room_id": room.id, "capacity_cfm": exhaust_cfm,
+                            "terminates_outdoors": True,
+                        },
+                    ))
+                    elements.append(MEPElement(
+                        id=f"exhaust_duct_{uuid.uuid4().hex[:5]}",
+                        system="hvac", type="exhaust_duct",
+                        start=[cx, plenum_y, cz],
+                        end=[bds[0] + 0.02, plenum_y, cz],
+                        level=lvl, width_in=6, height_in=6,
+                        metadata={
+                            "room_id": room.id, "capacity_cfm": exhaust_cfm,
+                            "duct_r_value": 8, "duct_sealed": True,
+                            "terminates_outdoors": True,
+                            "_coordination_avoid_points": plumbing_keepouts,
+                            "_coordination_clearance_m": 0.24,
+                        },
+                    ))
         return elements
 
     def _duct_size(self, cfm: int) -> Tuple[int, int, int]:
@@ -631,7 +1351,7 @@ class MEPRouter:
         return 20, 12, 20
 
     # ════════════════════════════════════════════════════════════════════════
-    # ELECTRICAL (NEC)
+    # ELECTRICAL (preliminary CEC-informed layout)
     # ════════════════════════════════════════════════════════════════════════
 
     def _route_electrical(
@@ -639,7 +1359,7 @@ class MEPRouter:
         floor_h: float, power_connection: dict, fine: dict, is_adu: bool = False,
     ) -> List[MEPElement]:
         """
-        NEC-compliant residential electrical:
+        Code-informed preliminary residential electrical layout:
         - Service entry + main panel + sub-panels
         - Branch circuits sized by NEC 220.12
         - Outlets spaced ≤12ft (3.66m) per NEC 210.52
@@ -647,258 +1367,332 @@ class MEPRouter:
         - Dedicated circuits for kitchen, laundry, bath
         - Light fixture at ceiling center of each room
         """
-        elements = []
-        outlets_per_room = int(fine.get("outlets_per_room", 3))
-        do_alarms = fine.get("fire_alarms", True)
-
-        all_room_pts = [p for r in rooms for p in r.polygon]
+        elements: List[MEPElement] = []
+        outlets_per_room = max(1, int(fine.get("outlets_per_room", 3)))
+        do_alarms = bool(fine.get("fire_alarms", True))
+        do_co = bool(fine.get("carbon_monoxide_detectors", True))
+        specific_rooms = [r for r in rooms if r.type != "unit"] or rooms
+        all_room_pts = [p for r in specific_rooms for p in r.polygon]
         if not all_room_pts:
             return elements
 
-        min_x = min(p[0] for p in all_room_pts)
-        min_z = min(p[1] for p in all_room_pts)
+        footprint = unary_union([Polygon(r.polygon) for r in specific_rooms if r.polygon])
+        if footprint.geom_type == "MultiPolygon":
+            footprint = max(footprint.geoms, key=lambda p: p.area)
+        building_point = footprint.representative_point()
+        min_z = footprint.bounds[1]
+        front_point = footprint.boundary.interpolate(
+            footprint.boundary.project(ShpPoint(building_point.x, min_z))
+        )
+        panel_x, panel_z = self._central_hvac_position(
+            specific_rooms, role="electrical"
+        )
 
-        # ── Service entry and main panel ──
-        panel_x = min_x + 0.5
-        panel_z = min_z + 0.5
-        panel_y = 0.0   # ground floor
-
-        # ADU electrical service decision (NEC 230.2, CA Title 24):
-        # ≤600 sqft → sub-panel fed from main house (60–100A feeder)
-        # >600 sqft → new utility service drop (100A minimum)
-        adu_area_sqft = sum(r.area_sqft for r in rooms)
-        adu_needs_new_service = is_adu and adu_area_sqft > 600
-        panel_type = "main_panel" if (not is_adu or adu_needs_new_service) else "sub_panel"
-        panel_amps = 100 if adu_needs_new_service else (60 if is_adu else 200)
-
-        elements.append(MEPElement(
-            id="main_panel",
-            system="electrical",
-            type=panel_type,
-            start=[panel_x, panel_y + 1.2, panel_z],
-            level=0,
-            metadata={"amps": panel_amps, "adu_service": "new_drop" if adu_needs_new_service else ("sub_panel_from_house" if is_adu else "standard")},
-        ))
-
-        # Service conduit: from front wall to panel — stays inside building
-        elements.append(MEPElement(
-            id="service_entry",
-            system="electrical",
-            type="service_conduit",
-            start=[panel_x, 1.2, min_z + 0.05],   # just inside front wall
-            end=[panel_x, 1.2, panel_z],
-            level=0,
-            diameter_in=2.0,
-        ))
-
-        # ── Utility lateral: run from front wall toward nearest power pole/line ──
-        # This is the only electrical element that intentionally exits the building.
-        if power_connection:
-            pole_dx = power_connection.get("dx_m", 0.0)
-            pole_dz = power_connection.get("dz_m", -8.0)  # default: 8m in front
-            # Clamp lateral length to 30m — beyond that the utility company owns it
-            dist = max(0.1, math.sqrt(pole_dx**2 + pole_dz**2))
-            lateral_len = min(dist, 30.0)
-            ux = panel_x + pole_dx / dist * lateral_len
-            uz = min_z + pole_dz / dist * lateral_len   # extends outward from front wall
-            elements.append(MEPElement(
-                id="utility_lateral",
-                system="electrical",
-                type="utility_lateral",
-                start=[panel_x, 5.5, min_z],      # overhead at ~18ft (utility attachment height)
-                end=[ux, 5.5, uz],
-                level=0,
-                diameter_in=1.0,
+        # Reserve the deterministic vertical chases used by the earlier
+        # plumbing, fire, and central-HVAC passes. Horizontal conduit branches
+        # are bent around these points during final footprint routing.
+        riser_keepouts: List[List[float]] = []
+        ground_wet_rooms = [
+            room for room in specific_rooms
+            if room.level == 0 and room.type in ("bathroom", "kitchen", "laundry")
+        ]
+        for wet_room in ground_wet_rooms[:2]:
+            riser_keepouts.append(self._room_keepout(wet_room, "soil"))
+        if ground_wet_rooms:
+            for role in ("cold", "hot"):
+                riser_keepouts.append(self._room_keepout(ground_wet_rooms[0], role))
+        if specific_rooms:
+            fire_x, fire_z = self._mep_chase_position(specific_rooms)
+            hvac_x, hvac_z = self._central_hvac_position(specific_rooms)
+            riser_keepouts.extend((
+                self._point_keepout(fire_x, fire_z, "fire"),
+                self._point_keepout(hvac_x, hvac_z, "hvac_return"),
             ))
 
+        # Service sizing is preliminary until an NEC 220 load calculation is
+        # completed.  Do not infer a separate ADU service from floor area alone.
+        adu_service = str(fine.get("adu_electrical_service", "sub_panel_from_primary"))
+        dedicated_adu_service = is_adu and adu_service == "dedicated_service"
+        panel_type = "main_panel" if not is_adu or dedicated_adu_service else "sub_panel"
+        panel_amps = int(fine.get("service_amps", 100 if is_adu else 200))
+        elements.append(MEPElement(
+            id="main_panel", system="electrical", type=panel_type,
+            start=[panel_x, 1.2, panel_z], level=0,
+            metadata={
+                "amps": panel_amps,
+                "adu_service": adu_service if is_adu else "standard",
+                "load_calculation_required": True,
+                "service_clearance_in": 30,
+                "anchored": True,
+            },
+        ))
+        elements.append(MEPElement(
+            id="service_entry", system="electrical", type="service_conduit",
+            start=[float(front_point.x), 1.2, float(front_point.y)],
+            end=[panel_x, 1.2, panel_z], level=0, diameter_in=2.0,
+            metadata={
+                "network_id": "electrical_service", "bonded": True,
+                "_coordination_avoid_points": riser_keepouts,
+                "_coordination_clearance_m": 0.32,
+            },
+        ))
+
+        if power_connection:
+            pole_dx = float(power_connection.get("dx_m", 0.0))
+            pole_dz = float(power_connection.get("dz_m", -8.0))
+            distance = max(0.1, math.hypot(pole_dx, pole_dz))
+            lateral_length = min(distance, 30.0)
+            elements.append(MEPElement(
+                id="service_mast", system="electrical", type="service_mast",
+                start=[float(front_point.x), 1.2, float(front_point.y)],
+                end=[float(front_point.x), 5.5, float(front_point.y)],
+                level=0, diameter_in=2.0,
+                metadata={
+                    "allow_outside_footprint": True,
+                    "network_id": "electrical_utility",
+                    "bonded": True,
+                },
+            ))
+            elements.append(MEPElement(
+                id="utility_lateral", system="electrical", type="utility_lateral",
+                start=[float(front_point.x), 5.5, float(front_point.y)],
+                end=[
+                    float(front_point.x + pole_dx / distance * lateral_length), 5.5,
+                    float(front_point.y + pole_dz / distance * lateral_length),
+                ],
+                level=0, diameter_in=1.0,
+                metadata={
+                    "allow_outside_footprint": True,
+                    "network_id": "electrical_utility",
+                    "utility_coordination_required": True,
+                },
+            ))
+
+        defined_circuits: set = set()
+
+        def ensure_circuit(
+            circuit_id: str, level_index: int, panel_position: Tuple[float, float],
+            amps: int, purpose: str, *, gfci: bool = False, afci: bool = False,
+            room_id: Optional[str] = None,
+        ) -> None:
+            if circuit_id in defined_circuits:
+                return
+            defined_circuits.add(circuit_id)
+            elements.append(MEPElement(
+                id=f"circuit_{circuit_id}", system="electrical", type="branch_circuit",
+                start=[panel_position[0], level_index * floor_h + 1.25, panel_position[1]],
+                level=level_index,
+                metadata={
+                    "circuit_id": circuit_id, "amps": amps, "poles": 1,
+                    "amperage": amps, "purpose": purpose,
+                    "circuit_type": purpose, "gfci": gfci, "afci": afci,
+                    "breaker_type": "dual_function" if gfci and afci else (
+                        "gfci" if gfci else "afci" if afci else "standard"
+                    ),
+                    "panel_id": "main_panel" if level_index == 0 else f"sub_panel_{level_index}",
+                    "room_id": room_id, "copper_conductors": True,
+                },
+            ))
+
+        previous_panel = (panel_x, panel_z)
+        habitable_types = {
+            "bedroom", "living", "family_room", "dining", "office",
+            "media_room", "bonus_room", "loft", "kitchen",
+        }
         for level in levels:
             lvl = level.index
             floor_y = lvl * floor_h
             ceil_y_elec = floor_y + ZONE["ceil_elec"]
             ceil_y_light = floor_y + ZONE["ceil_light"]
-
-            # Sub-panel on upper floors
+            lvl_rooms = [r for r in specific_rooms if r.level == lvl]
+            if not lvl_rooms:
+                continue
+            # Stack panels in a dedicated electrical chase so feeders are
+            # vertical and cannot cut diagonally across intermediate floors.
+            level_panel = (panel_x, panel_z)
             if lvl > 0:
                 elements.append(MEPElement(
-                    id=f"sub_panel_{lvl}",
-                    system="electrical",
-                    type="sub_panel",
-                    start=[panel_x, floor_y + 1.2, panel_z],
-                    level=lvl,
+                    id=f"sub_panel_{lvl}", system="electrical", type="sub_panel",
+                    start=[level_panel[0], floor_y + 1.2, level_panel[1]], level=lvl,
+                    metadata={
+                        "amps": min(panel_amps, 125), "service_clearance_in": 30,
+                        "anchored": True, "load_calculation_required": True,
+                    },
                 ))
-                # Feeder riser
                 elements.append(MEPElement(
-                    id=f"feeder_{lvl}",
-                    system="electrical",
-                    type="feeder",
-                    start=[panel_x, (lvl-1)*floor_h + 1.2, panel_z],
-                    end=[panel_x, floor_y + 1.2, panel_z],
-                    level=lvl,
-                    diameter_in=1.5,
+                    id=f"feeder_{lvl}", system="electrical", type="feeder",
+                    start=[previous_panel[0], (lvl - 1) * floor_h + 1.2, previous_panel[1]],
+                    end=[level_panel[0], floor_y + 1.2, level_panel[1]],
+                    level=lvl, diameter_in=1.5,
+                    metadata={"network_id": "electrical_feeder", "level_served": lvl},
                 ))
+            previous_panel = level_panel
 
-            lvl_rooms = [r for r in rooms if r.level == lvl]
-
-            # ── Circuit trunk along corridor or building spine ──
-            corrs = [r for r in lvl_rooms if r.type == "corridor"]
-            if corrs:
-                bds = self._bounds(corrs[0])
-                trunk_z = bds[1] + 0.2
-                trunk_x_start = bds[0]
-                trunk_x_end   = bds[2]
-            else:
-                if not lvl_rooms:
-                    continue
-                pts = [p for r in lvl_rooms for p in r.polygon]
-                # Weighted centroid Z keeps the trunk inside L/U shapes
-                _, trunk_z = self._building_centroid(lvl_rooms)
-                trunk_x_start = min(p[0] for p in pts)
-                trunk_x_end   = max(p[0] for p in pts)
-
-            elements.append(MEPElement(
-                id=f"elec_trunk_{lvl}",
-                system="electrical",
-                type="conduit_trunk",
-                start=[trunk_x_start, ceil_y_elec, trunk_z],
-                end=[trunk_x_end, ceil_y_elec, trunk_z],
-                level=lvl,
-                diameter_in=1.0,
-            ))
-
-            # ── Per room: outlets, lights, fire alarms, circuits ──
-            for room in lvl_rooms:
-                if room.type in ("stair",):
-                    continue
-
+            lighting_circuit = f"lighting_l{lvl}"
+            ensure_circuit(lighting_circuit, lvl, level_panel, 15, "lighting", afci=True)
+            active_rooms = list(lvl_rooms)
+            for room_index, room in enumerate(active_rooms):
                 cx, cz = self._centroid(room)
-                bds = self._bounds(room)
-                room_area_ft2 = room.area_sqft
-                is_wet = room.type in ("bathroom", "kitchen")
-                is_bedroom = room.type == "bedroom"
-
-                # Circuit drops from trunk to room
+                polygon = Polygon(room.polygon)
+                if polygon.is_empty:
+                    continue
+                general_circuit = f"general_l{lvl}_{room_index // 5 + 1}"
+                ensure_circuit(general_circuit, lvl, level_panel, 20, "general receptacles", afci=True)
                 elements.append(MEPElement(
-                    id=f"branch_{uuid.uuid4().hex[:5]}",
-                    system="electrical",
+                    id=f"branch_{uuid.uuid4().hex[:5]}", system="electrical",
                     type="conduit_branch",
-                    start=[cx, ceil_y_elec, trunk_z],
-                    end=[cx, ceil_y_elec, cz],
-                    level=lvl,
-                    diameter_in=0.75,
+                    start=[level_panel[0], ceil_y_elec, level_panel[1]],
+                    end=[cx, ceil_y_elec, cz], level=lvl, diameter_in=0.75,
+                    metadata={
+                        "room_id": room.id, "circuit_id": general_circuit,
+                        "_coordination_avoid_points": riser_keepouts,
+                        "_coordination_clearance_m": 0.32,
+                    },
                 ))
 
-                # Ceiling light fixture(s) — large rooms get multiple lights
-                bds_l = self._bounds(room)
-                room_area_m2_l = (bds_l[2]-bds_l[0]) * (bds_l[3]-bds_l[1])
-                if room_area_m2_l > 20.0:
-                    # Two rows of lights for large rooms
-                    for lx_off, lz_off in [(cx - (bds_l[2]-bds_l[0])*0.2, cz),
-                                           (cx + (bds_l[2]-bds_l[0])*0.2, cz)]:
-                        elements.append(MEPElement(
-                            id=f"light_{uuid.uuid4().hex[:5]}",
-                            system="electrical",
-                            type="lighting_point",
-                            start=[lx_off, ceil_y_light, lz_off],
-                            level=lvl,
-                        ))
+                # Provide one lighting point per ~215 ft² and keep it offset
+                # from the sprinkler-grid point used by the fire system.
+                for light_x, light_z in self._lighting_positions(room):
+                    elements.append(MEPElement(
+                        id=f"light_{uuid.uuid4().hex[:5]}", system="electrical",
+                        type="lighting_point", start=[light_x, ceil_y_light, light_z], level=lvl,
+                        metadata={"room_id": room.id, "circuit_id": lighting_circuit},
+                    ))
+
+                boundary = polygon.exterior
+                inward_point = polygon.representative_point()
+                perimeter = max(boundary.length, 0.1)
+                if room.type in habitable_types:
+                    outlet_count = max(outlets_per_room, math.ceil(perimeter / 3.6576))
+                elif room.type in ("bathroom", "laundry", "garage", "utility", "mechanical"):
+                    outlet_count = 1
+                elif room.type in ("corridor", "hall", "hallway") and perimeter >= 3.0:
+                    outlet_count = 1
                 else:
-                    elements.append(MEPElement(
-                        id=f"light_{uuid.uuid4().hex[:5]}",
-                        system="electrical",
-                        type="lighting_point",
-                        start=[cx, ceil_y_light, cz],
-                        level=lvl,
+                    outlet_count = 0
+                outlet_count = min(outlet_count, 24)
+                receptacle_positions: List[Tuple[float, float, bool]] = []
+                for outlet_index in range(outlet_count):
+                    wall_point = boundary.interpolate(perimeter * (outlet_index + 0.5) / outlet_count)
+                    move_x = inward_point.x - wall_point.x
+                    move_z = inward_point.y - wall_point.y
+                    move_length = max(math.hypot(move_x, move_z), 0.001)
+                    receptacle_positions.append((
+                        float(wall_point.x + move_x / move_length * 0.05),
+                        float(wall_point.y + move_z / move_length * 0.05), False,
                     ))
 
-                # Fire/smoke alarm
-                if do_alarms and room.type in ("bedroom", "living", "corridor", "unit"):
-                    elements.append(MEPElement(
-                        id=f"alarm_{uuid.uuid4().hex[:5]}",
-                        system="electrical",
-                        type="fire_alarm",
-                        start=[cx, ceil_y_light - 0.05, cz],
-                        level=lvl,
-                    ))
-
-                # Outlets placed on wall segments that bound this room.
-                # Match room edges to actual wall segments (interior or exterior).
-                # A wall "bounds" this room if its midpoint is within 0.5m of a room edge midpoint.
-                outlet_y = floor_y + ZONE["outlet"]
-                if outlets_per_room > 0:
-                    if room_area_ft2 <= 150:
-                        n_outlets = min(outlets_per_room, 3)
-                    else:
-                        n_outlets = min(3 + int((room_area_ft2 - 150) / 60), 6)
-                    if room.type == "kitchen":
-                        n_outlets = min(n_outlets + 2, 8)
-
-                    # Collect all walls at this level
-                    lvl_walls = [w for w in walls if w.level == lvl]
-                    pts = room.polygon
-                    n_pts = len(pts)
-                    rcx = sum(p[0] for p in pts) / n_pts
-                    rcz = sum(p[1] for p in pts) / n_pts
-
-                    # For each room edge, find a matching wall and place outlet on it
-                    placed = 0
-                    for i in range(n_pts):
-                        if placed >= n_outlets:
-                            break
-                        p0, p1 = pts[i], pts[(i + 1) % n_pts]
-                        edge_mx = (p0[0] + p1[0]) / 2
-                        edge_mz = (p0[1] + p1[1]) / 2
-
-                        # Find closest wall whose midpoint is near this edge midpoint
-                        best_wall = None
-                        best_dist = 0.6  # max 60cm match distance
-                        for w in lvl_walls:
-                            wm_x = (w.start[0] + w.end[0]) / 2
-                            wm_z = (w.start[1] + w.end[1]) / 2
-                            d = math.sqrt((wm_x - edge_mx)**2 + (wm_z - edge_mz)**2)
-                            if d < best_dist:
-                                best_dist = d
-                                best_wall = w
-
-                        if best_wall:
-                            # Place outlet on the wall face, pushed 5cm into the room
-                            wm_x = (best_wall.start[0] + best_wall.end[0]) / 2
-                            wm_z = (best_wall.start[1] + best_wall.end[1]) / 2
-                            dx = rcx - wm_x
-                            dz2 = rcz - wm_z
-                            dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
-                            ox = wm_x + dx / dist * 0.05
-                            oz = wm_z + dz2 / dist * 0.05
-                        else:
-                            # No matching wall — fall back to room edge midpoint
-                            dx = rcx - edge_mx
-                            dz2 = rcz - edge_mz
-                            dist = max(0.001, math.sqrt(dx*dx + dz2*dz2))
-                            ox = edge_mx + dx / dist * 0.05
-                            oz = edge_mz + dz2 / dist * 0.05
-
-                        elements.append(MEPElement(
-                            id=f"outlet_{uuid.uuid4().hex[:5]}",
-                            system="electrical", type="outlet",
-                            start=[ox, outlet_y, oz], level=lvl,
-                        ))
-                        elements.append(MEPElement(
-                            id=f"conduit_drop_{uuid.uuid4().hex[:5]}",
-                            system="electrical", type="conduit_branch",
-                            start=[ox, ceil_y_elec, oz],
-                            end=[ox, outlet_y + 0.05, oz],
-                            level=lvl, diameter_in=0.5,
-                        ))
-                        placed += 1
-
-                # Dedicated circuit label for kitchen/laundry
+                # Kitchen counter wall-line spacing: no point is more than 24
+                # inches from a receptacle.  The generated counter is capped at
+                # 3.5 m, so three evenly spaced receptacles cover its full run.
                 if room.type == "kitchen":
+                    min_x, min_room_z, max_x, max_room_z = polygon.bounds
+                    counter_length = min((max_room_z - min_room_z) * 0.75, 3.5)
+                    counter_count = max(2, math.ceil(counter_length / 1.2192))
+                    for counter_index in range(counter_count):
+                        px = min_x + 0.06
+                        pz = min_room_z + 0.3 + counter_length * (counter_index + 0.5) / counter_count
+                        if polygon.buffer(0.01).covers(ShpPoint(px, pz)):
+                            receptacle_positions.append((px, pz, True))
+
+                for outlet_index, (outlet_x, outlet_z, countertop) in enumerate(receptacle_positions):
+                    is_wet = room.type in ("bathroom", "kitchen", "laundry", "garage")
+                    if room.type == "kitchen":
+                        circuit_id = f"kitchen_sabc_{room.id}_{outlet_index % 2 + 1}"
+                        ensure_circuit(
+                            circuit_id, lvl, level_panel, 20, "small_appliance",
+                            gfci=True, afci=True, room_id=room.id,
+                        )
+                    elif room.type == "bathroom":
+                        circuit_id = f"bath_{room.id}"
+                        ensure_circuit(
+                            circuit_id, lvl, level_panel, 20, "bathroom",
+                            gfci=True, afci=True, room_id=room.id,
+                        )
+                    elif room.type == "laundry":
+                        circuit_id = f"laundry_{room.id}"
+                        ensure_circuit(
+                            circuit_id, lvl, level_panel, 20, "laundry",
+                            gfci=True, afci=True, room_id=room.id,
+                        )
+                    else:
+                        circuit_id = general_circuit
                     elements.append(MEPElement(
-                        id=f"ded_circuit_{uuid.uuid4().hex[:5]}",
-                        system="electrical",
-                        type="dedicated_circuit",
-                        start=[bds[0]+0.3, floor_y+1.0, bds[1]+0.3],
-                        level=lvl,
+                        id=f"outlet_{uuid.uuid4().hex[:5]}", system="electrical", type="outlet",
+                        start=[outlet_x, floor_y + ZONE["outlet"], outlet_z], level=lvl,
+                        metadata={
+                            "room_id": room.id, "circuit_id": circuit_id,
+                            "gfci": is_wet, "afci": room.type in habitable_types,
+                            "tamper_resistant": True, "countertop": countertop,
+                            "max_spacing_ft": 4 if countertop else 12,
+                        },
                     ))
+                    elements.append(MEPElement(
+                        id=f"conduit_drop_{uuid.uuid4().hex[:5]}", system="electrical",
+                        type="conduit_branch",
+                        start=[outlet_x, ceil_y_elec, outlet_z],
+                        end=[outlet_x, floor_y + ZONE["outlet"] + 0.05, outlet_z],
+                        level=lvl, diameter_in=0.5,
+                        metadata={"room_id": room.id, "circuit_id": circuit_id},
+                    ))
+
+                switch_point = boundary.interpolate(min(0.45, perimeter * 0.1))
+                sx = switch_point.x + (inward_point.x - switch_point.x) * 0.08
+                sz = switch_point.y + (inward_point.y - switch_point.y) * 0.08
+                elements.append(MEPElement(
+                    id=f"switch_{uuid.uuid4().hex[:5]}", system="electrical", type="light_switch",
+                    start=[float(sx), floor_y + ZONE["switch"], float(sz)], level=lvl,
+                    metadata={
+                        "room_id": room.id, "circuit_id": lighting_circuit,
+                        "controls_room_lighting": True,
+                    },
+                ))
+
+                if do_alarms and room.type == "bedroom":
+                    alarm_x, alarm_z = self._room_slot(room, "alarm")
+                    elements.append(MEPElement(
+                        id=f"alarm_{uuid.uuid4().hex[:5]}", system="electrical", type="fire_alarm",
+                        start=[alarm_x, ceil_y_light + 0.02, alarm_z],
+                        level=lvl,
+                        metadata={
+                            "room_id": room.id, "detector": "smoke",
+                            "hardwired": True, "battery_backup": True,
+                            "interconnected": True,
+                        },
+                    ))
+
+            # One alarm outside sleeping areas and one CO detector per story.
+            safety_rooms = [r for r in lvl_rooms if r.type in ("corridor", "hall", "hallway")]
+            safety_room = safety_rooms[0] if safety_rooms else max(
+                lvl_rooms, key=lambda room: room.area_sqft
+            )
+            safety_x, safety_z = self._room_slot(safety_room, "alarm")
+            if do_alarms:
+                elements.append(MEPElement(
+                    id=f"story_alarm_{lvl}", system="electrical", type="fire_alarm",
+                    start=[safety_x, ceil_y_light + 0.02, safety_z], level=lvl,
+                    metadata={
+                        "detector": "smoke", "outside_sleeping_area": True,
+                        "hardwired": True, "battery_backup": True, "interconnected": True,
+                    },
+                ))
+            if do_co:
+                elements.append(MEPElement(
+                    id=f"co_detector_{lvl}", system="electrical", type="carbon_monoxide_detector",
+                    start=[safety_x, floor_y + 1.5, safety_z], level=lvl,
+                    metadata={"outside_sleeping_area": True, "listed": True},
+                ))
+
+        if fine.get("ev_charging"):
+            garages = [r for r in specific_rooms if r.type == "garage" and r.level == 0]
+            if garages:
+                gx, gz = self._centroid(garages[0])
+                ensure_circuit("evse", 0, (panel_x, panel_z), 50, "EV charging", gfci=True)
+                elements.append(MEPElement(
+                    id="evse", system="electrical", type="ev_charger",
+                    start=[gx, 1.2, gz], level=0,
+                    metadata={"circuit_id": "evse", "amps": 40, "gfci": True},
+                ))
 
         return elements
 
@@ -1079,8 +1873,8 @@ class MEPRouter:
     def _adu_sewer_lateral(self, rooms: List[Room], walls: List[Wall]) -> List[MEPElement]:
         """
         ADU sewer lateral: exits the ADU and connects to the primary home's existing sewer.
-        IPC/CPC require minimum 1/4" per foot (2%) slope on 4" ABS/PVC lateral.
-        Typical ADU-to-main-sewer run: 20–40 ft.
+        Uses a conservative notional 2.1% slope. Final size, material, route,
+        invert elevation, and slope require adopted CPC and utility review.
         """
         elements = []
         all_pts = [p for r in rooms for p in r.polygon]
@@ -1117,11 +1911,176 @@ class MEPRouter:
 
     # ── Geometry helpers ──────────────────────────────────────────────────
 
+    def _central_hvac_position(
+        self, rooms: List[Room], role: str = "hvac_equipment"
+    ) -> Tuple[float, float]:
+        """Choose a contained, trade-specific chase shared by stacked floors."""
+        if not rooms:
+            return 0.0, 0.0
+        lowest_level = min(room.level for room in rooms)
+        ground_rooms = [room for room in rooms if room.level == lowest_level]
+        priority = {
+            "mechanical": 0, "utility": 1, "laundry": 2,
+            "garage": 3, "corridor": 4, "hall": 4, "hallway": 4,
+        }
+        service_room = min(
+            ground_rooms,
+            key=lambda room: (priority.get(room.type, 10), -room.area_sqft, room.id),
+        )
+        desired = self._room_slot(service_room, role)
+
+        level_footprints = []
+        for level_index in sorted({room.level for room in rooms}):
+            polygons = [
+                Polygon(room.polygon)
+                for room in rooms
+                if room.level == level_index and len(room.polygon) >= 3
+            ]
+            if polygons:
+                level_footprints.append(unary_union(polygons))
+        if not level_footprints:
+            return desired
+        common = level_footprints[0]
+        for level_footprint in level_footprints[1:]:
+            common = common.intersection(level_footprint)
+        if common.is_empty:
+            return desired
+        if common.geom_type == "MultiPolygon":
+            common = max(common.geoms, key=lambda polygon: polygon.area)
+        elif common.geom_type == "GeometryCollection":
+            polygons = [geometry for geometry in common.geoms if geometry.geom_type == "Polygon"]
+            if not polygons:
+                return desired
+            common = max(polygons, key=lambda polygon: polygon.area)
+        usable = common.buffer(-0.18, join_style=2)
+        if usable.is_empty:
+            usable = common
+        desired_point = ShpPoint(desired)
+        if usable.covers(desired_point):
+            return desired
+        min_x, min_z, max_x, max_z = usable.bounds
+        fallback_fraction = (0.82, 0.55) if role == "electrical" else (0.70, 0.30)
+        offset_candidate = ShpPoint(
+            min_x + (max_x - min_x) * fallback_fraction[0],
+            min_z + (max_z - min_z) * fallback_fraction[1],
+        )
+        chosen = offset_candidate if usable.covers(offset_candidate) else usable.representative_point()
+        return float(chosen.x), float(chosen.y)
+
+    def _room_slot(self, room: Room, role: str) -> Tuple[float, float]:
+        """Return a deterministic, contained service point for one trade role.
+
+        Reusing the room centroid for every system creates real riser and
+        terminal collisions.  Fractional slots keep trades separated while an
+        inward fallback keeps points valid for concave and narrow rooms.
+        """
+        fractions = {
+            "fire": (0.18, 0.18),
+            "soil": (0.18, 0.48),
+            "cold": (0.18, 0.68),
+            "hot": (0.18, 0.84),
+            "equipment": (0.82, 0.18),
+            "plumbing_terminal": (0.30, 0.38),
+            "hvac_supply": (0.72, 0.68),
+            "hvac_return": (0.30, 0.70),
+            "hvac_equipment": (0.70, 0.30),
+            "exhaust": (0.70, 0.35),
+            "lighting": (0.30, 0.30),
+            "alarm": (0.52, 0.72),
+            "electrical": (0.84, 0.52),
+            "fixture_toilet": (0.22, 0.22),
+            "fixture_sink": (0.72, 0.22),
+            "fixture_shower": (0.72, 0.78),
+            "fixture_kitchen_sink": (0.22, 0.78),
+            "fixture_laundry": (0.22, 0.30),
+        }
+        polygon = Polygon(room.polygon)
+        if polygon.is_empty or not polygon.is_valid:
+            return self._centroid(room)
+        min_x, min_z, max_x, max_z = polygon.bounds
+        fraction_x, fraction_z = fractions.get(role, (0.5, 0.5))
+        target = ShpPoint(
+            min_x + (max_x - min_x) * fraction_x,
+            min_z + (max_z - min_z) * fraction_z,
+        )
+        inner = polygon.buffer(-0.12, join_style=2)
+        allowed = inner if not inner.is_empty else polygon
+        if allowed.covers(target):
+            return float(target.x), float(target.y)
+        representative = allowed.representative_point()
+        # Walk toward the guaranteed interior point; this preserves as much of
+        # the role-specific offset as the actual room shape permits.
+        for step in range(1, 11):
+            ratio = step / 10.0
+            candidate = ShpPoint(
+                target.x + (representative.x - target.x) * ratio,
+                target.y + (representative.y - target.y) * ratio,
+            )
+            if allowed.covers(candidate):
+                return float(candidate.x), float(candidate.y)
+        return float(representative.x), float(representative.y)
+
+    def _fixture_xyz(self, room: Room, role: str, elevation: float) -> List[float]:
+        """Return an ``[x, y, z]`` fixture point contained by its room polygon."""
+        x, z = self._room_slot(room, role)
+        return [x, elevation, z]
+
+    def _room_slot_away(
+        self, room: Room, role: str, avoid_points: Sequence[Sequence[float]]
+    ) -> Tuple[float, float]:
+        """Choose a contained room slot with maximum distance from vertical chases."""
+        polygon = Polygon(room.polygon)
+        if polygon.is_empty or not polygon.is_valid:
+            return self._room_slot(room, role)
+        inner = polygon.buffer(-0.12, join_style=2)
+        allowed = inner if not inner.is_empty else polygon
+        min_x, min_z, max_x, max_z = allowed.bounds
+        preferred = self._room_slot(room, role)
+        candidates = [ShpPoint(preferred)]
+        for fraction_x in (0.15, 0.30, 0.50, 0.70, 0.85):
+            for fraction_z in (0.15, 0.30, 0.50, 0.70, 0.85):
+                candidate = ShpPoint(
+                    min_x + (max_x - min_x) * fraction_x,
+                    min_z + (max_z - min_z) * fraction_z,
+                )
+                if allowed.covers(candidate):
+                    candidates.append(candidate)
+        coordinates = [
+            (float(point[0]), float(point[1]))
+            for point in avoid_points if len(point) >= 2
+        ]
+        if not coordinates:
+            return preferred
+        chosen = max(
+            candidates,
+            key=lambda candidate: (
+                min(math.hypot(candidate.x - x, candidate.y - z) for x, z in coordinates),
+                -math.hypot(candidate.x - preferred[0], candidate.y - preferred[1]),
+            ),
+        )
+        return float(chosen.x), float(chosen.y)
+
+    def _room_keepout(
+        self, room: Room, role: str, radius_m: Optional[float] = None
+    ) -> List[float]:
+        x, z = self._room_slot(room, role)
+        return [x, z, radius_m or ROLE_KEEP_OUT_M.get(role, 0.20)]
+
+    def _point_keepout(
+        self, x: float, z: float, role: str, radius_m: Optional[float] = None
+    ) -> List[float]:
+        return [x, z, radius_m or ROLE_KEEP_OUT_M.get(role, 0.20)]
+
     def _centroid(self, room: Room) -> Tuple[float, float]:
         pts = room.polygon
         if not pts:
             return 0.0, 0.0
-        return sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
+        try:
+            polygon = Polygon(pts)
+            point = polygon.representative_point()
+            return float(point.x), float(point.y)
+        except Exception:
+            return sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
 
     def _bounds(self, room: Room) -> Tuple[float, float, float, float]:
         pts = room.polygon
@@ -1129,12 +2088,18 @@ class MEPRouter:
         return min(xs), min(ys), max(xs), max(ys)
 
     def _building_centroid(self, rooms: List[Room]) -> Tuple[float, float]:
-        """Room-area-weighted centroid — always inside the building for L/U/stepped shapes.
-        Unlike averaging raw polygon vertices, this is biased toward where rooms actually are."""
-        total = sum(r.area_sqft for r in rooms) or 1.0
-        cx = sum(self._centroid(r)[0] * r.area_sqft for r in rooms) / total
-        cz = sum(self._centroid(r)[1] * r.area_sqft for r in rooms) / total
-        return cx, cz
+        """Return a guaranteed interior point for L/U/stepped floorplates."""
+        try:
+            specific_rooms = [r for r in rooms if r.type != "unit"] or rooms
+            merged = unary_union([Polygon(r.polygon) for r in specific_rooms if r.polygon])
+            if not merged.is_empty:
+                if merged.geom_type == "MultiPolygon":
+                    merged = max(merged.geoms, key=lambda p: p.area)
+                point = merged.representative_point()
+                return float(point.x), float(point.y)
+        except Exception:
+            pass
+        return self._centroid(rooms[0]) if rooms else (0.0, 0.0)
 
     def _mep_chase_position(self, rooms: List[Room]) -> Tuple[float, float]:
         """Best position for a vertical MEP riser/stack.
@@ -1161,6 +2126,6 @@ class MEPRouter:
             if not candidates:
                 candidates = [r for r in non_stair if r.type in preferred]
             if candidates:
-                return self._centroid(candidates[0])
+                return self._room_slot(candidates[0], "fire")
 
-        return self._building_centroid(non_stair)
+        return self._room_slot(non_stair[0], "fire")

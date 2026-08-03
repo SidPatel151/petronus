@@ -104,17 +104,10 @@ async def save_project(body: SaveBody):
     seismic = (site.get("seismic_design_category") or "D")
     flood   = (site.get("flood_zone") or "X")
 
-    # Strip heavy render data before persisting — meshes alone can be 5-10 MB.
-    # We keep rooms, walls, levels, issues, and spec for future re-loading.
-    slim_bm = None
-    if bm:
-        slim_bm = {k: v for k, v in bm.items()
-                   if k not in ("meshes", "mep_elements", "structural_members", "columns")}
-
     upsert_project(
         pid, body.name, body.address or "", body.spec,
         "generated" if body.building_model else "created",
-        slim_bm,
+        body.building_model,
         stories, units, sqft, seismic, flood,
     )
     _projects[pid] = {

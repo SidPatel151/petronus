@@ -61,8 +61,11 @@ class GenerationOrchestrator:
         if max_h:
             floor_h = spec.floor_to_floor_height_ft or 10.0
             max_floors = min(max_floors, max(1, int(max_h / floor_h)))
-        if is_adu:
-            max_floors = min(max_floors, 2)  # CA AB-68: ADU max 2 stories
+        if is_adu and getattr(spec, 'max_floors', None) is None:
+            # Conservative default only. California ADU law permits local
+            # objective height standards and some jurisdictions allow a taller
+            # form, which can be supplied explicitly through ``max_floors``.
+            max_floors = min(max_floors, 2)
         stories = min(stories, max_floors, PLATFORM_MAX_STORIES)
         updates['stories'] = stories
 
@@ -75,8 +78,13 @@ class GenerationOrchestrator:
         # Clamp target area: user max_sqft → then platform cap
         raw_area = updates.get('target_gross_area_sqft') or spec.target_gross_area_sqft or 0
         user_max = getattr(spec, 'max_sqft', None)
-        # ADU hard cap: CA law (AB-68/AB-881) limits to 1,200 sqft
-        platform_cap = ADU_MAX_SQFT if is_adu else (PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT)
+        # 1,200 sqft is the conservative statewide detached-ADU default; local
+        # ordinances may be less restrictive. ``adu_max_sqft`` lets a verified
+        # jurisdiction-specific workflow raise that ceiling without silently
+        # discarding the user's selected area.
+        adu_cap = int((getattr(spec, 'fine_details', None) or {}).get('adu_max_sqft', ADU_MAX_SQFT))
+        adu_cap = max(150, min(adu_cap, PLATFORM_MAX_SFR_SQFT))
+        platform_cap = adu_cap if is_adu else (PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT)
         if raw_area > 0:
             capped = raw_area
             if user_max:
@@ -100,14 +108,22 @@ class GenerationOrchestrator:
         self.progress_cb(5, "Fetching site context and infrastructure…")
         log.append("Fetching site context from OSM + FEMA (parallel)")
 
-        site_ctx, infra = await asyncio.gather(
-            self.site_svc.build_context(
-                latlon=spec.site.latlon,
-                parcel_polygon=spec.site.parcel_polygon,
-                address=spec.site.address,
-            ),
-            self._safe_infra(spec),
+        site_context_task = self.site_svc.build_context(
+            latlon=spec.site.latlon,
+            parcel_polygon=spec.site.parcel_polygon,
+            address=spec.site.address,
         )
+        if spec.site.latlon is not None:
+            site_ctx, infra = await asyncio.gather(
+                site_context_task,
+                self._safe_infra(spec.site.latlon),
+            )
+        else:
+            # Address-only requests must be geocoded before infrastructure can
+            # be queried.  The old parallel call passed None and later crashed
+            # while reading spec.site.latlon.lat.
+            site_ctx = await site_context_task
+            infra = await self._safe_infra(site_ctx.centroid)
 
         model.site_context = site_ctx
         terrain = site_ctx.terrain or {}
@@ -127,7 +143,7 @@ class GenerationOrchestrator:
         if not has_power:
             model.issues.append(ComplianceIssue(
                 id="UTIL-001",
-                type="warning",
+                type="utility",
                 severity="warning",
                 message="No utility power infrastructure (poles or lines) detected within 200m. "
                         "Verify electrical service availability before permitting.",
@@ -151,8 +167,9 @@ class GenerationOrchestrator:
 
         # Extract neighbor buildings — exclude the building being replaced (the one at site center)
         all_buildings = infra.get("buildings", [])
-        site_lat = spec.site.latlon.lat
-        site_lon = spec.site.latlon.lon
+        resolved_site = spec.site.latlon or site_ctx.centroid
+        site_lat = resolved_site.lat
+        site_lon = resolved_site.lon
         import math as _math
 
         def _dist_to_site(b):
@@ -249,6 +266,11 @@ class GenerationOrchestrator:
         )
         model.massing_options = massing_options
         model.levels = levels
+        if not massing_options:
+            raise RuntimeError("Massing generation returned no buildable options")
+        if not 0 <= massing_choice < len(massing_options):
+            log.append(f"Massing choice {massing_choice} unavailable; using Option A")
+            massing_choice = 0
         model.chosen_massing_index = massing_choice
         chosen = massing_options[massing_choice]
         log.append(f"Chosen massing: Option {chosen['label']} — {chosen['name']}")
@@ -286,7 +308,7 @@ class GenerationOrchestrator:
             try:
                 coords = power_conn.get("geometry", {}).get("coordinates", [])
                 if len(coords) == 2:
-                    _lat, _lon = spec.site.latlon.lat, spec.site.latlon.lon
+                    _lat, _lon = resolved_site.lat, resolved_site.lon
                     import math as _m2
                     _dlon = coords[1][0] - _lon
                     _dlat = coords[1][1] - _lat
@@ -297,12 +319,20 @@ class GenerationOrchestrator:
                     power_conn["dz_m"] = round(-_dlat * _mpp_lat, 1)  # Z = south (negative lat)
             except Exception:
                 pass
-        mep_elements = self.mep_router.route(rooms, walls, levels, spec, power_connection=power_conn)
+        mep_elements = self.mep_router.route(
+            rooms, walls, levels, spec,
+            power_connection=power_conn,
+            archetype=archetype,
+        )
         model.mep_elements = mep_elements
         plumbing = len([e for e in mep_elements if e.system == "plumbing"])
         electrical = len([e for e in mep_elements if e.system == "electrical"])
         hvac = len([e for e in mep_elements if e.system == "hvac"])
-        log.append(f"MEP: {plumbing} plumbing | {electrical} electrical | {hvac} HVAC elements")
+        fire = len([e for e in mep_elements if e.system == "fire"])
+        log.append(
+            f"MEP: {plumbing} plumbing | {electrical} electrical | "
+            f"{hvac} HVAC | {fire} fire-protection elements"
+        )
 
         # Step 6b: Structural engineering
         self.progress_cb(76, "Computing structural members…")
@@ -663,10 +693,10 @@ class GenerationOrchestrator:
 
         return meshes, wall_splits
 
-    async def _safe_infra(self, spec: ProjectSpec) -> dict:
+    async def _safe_infra(self, latlon) -> dict:
         """Fetch nearby infrastructure, return empty dict on failure."""
         try:
-            return await self.site_svc.get_nearby_infrastructure(spec.site.latlon, radius_m=200)
+            return await self.site_svc.get_nearby_infrastructure(latlon, radius_m=200)
         except Exception:
             return {}
 

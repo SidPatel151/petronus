@@ -13,6 +13,12 @@ const SEV_BG: Record<string, string> = {
   info: 'rgba(0,229,255,0.08)',
 };
 
+const SEV_ICON: Record<string, string> = {
+  error: 'x',
+  warning: '!',
+  info: 'i',
+};
+
 export default function IssuesPanel() {
   const { buildingModel, setSelectedIssue, selectedIssueId } = useAppStore();
 
@@ -25,6 +31,7 @@ export default function IssuesPanel() {
   const issues = buildingModel.issues || [];
   const errors = issues.filter((i: any) => i.severity === 'error');
   const warnings = issues.filter((i: any) => i.severity === 'warning');
+  const infos = issues.filter((i: any) => i.severity === 'info');
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -39,10 +46,8 @@ export default function IssuesPanel() {
           <div className="text-[10px] font-mono text-[var(--text-secondary)]">Warnings</div>
         </div>
         <div className="flex-1 bg-[var(--surface-3)] rounded-lg p-2 text-center">
-          <div className="text-lg font-display font-bold text-[var(--accent-green)]">
-            {issues.length === 0 ? '✓' : issues.length}
-          </div>
-          <div className="text-[10px] font-mono text-[var(--text-secondary)]">Total</div>
+          <div className="text-lg font-display font-bold text-[var(--accent-cyan)]">{infos.length}</div>
+          <div className="text-[10px] font-mono text-[var(--text-secondary)]">Info</div>
         </div>
       </div>
 
@@ -61,13 +66,13 @@ export default function IssuesPanel() {
                 onClick={() => setSelectedIssue(issue.id === selectedIssueId ? null : issue.id)}
                 className="w-full text-left rounded-lg p-3 transition-all border"
                 style={{
-                  background: selectedIssueId === issue.id ? SEV_BG[issue.severity] : 'var(--surface-2)',
-                  borderColor: selectedIssueId === issue.id ? SEV_COLOR[issue.severity] : 'var(--border)',
+                  background: selectedIssueId === issue.id ? (SEV_BG[issue.severity] || SEV_BG.info) : 'var(--surface-2)',
+                  borderColor: selectedIssueId === issue.id ? (SEV_COLOR[issue.severity] || SEV_COLOR.info) : 'var(--border)',
                 }}
               >
                 <div className="flex items-start gap-2">
-                  <span className="text-xs font-mono mt-0.5" style={{ color: SEV_COLOR[issue.severity] }}>
-                    {issue.severity === 'error' ? '✗' : '⚠'}
+                  <span className="text-xs font-mono font-bold mt-0.5" style={{ color: SEV_COLOR[issue.severity] || SEV_COLOR.info }}>
+                    {SEV_ICON[issue.severity] || SEV_ICON.info}
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-mono text-[var(--text-primary)] leading-relaxed">

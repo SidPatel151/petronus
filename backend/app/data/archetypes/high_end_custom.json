@@ -94,7 +94,7 @@
     "fixed": false,
     "instant_hot_water_recirculation_loop": true,
     "greywater_system_optional": true,
-    "note": "Unlike production homes, wet walls may be distributed throughout the plan to achieve optimal room placement. Hot water recirculation loop is mandatory to eliminate wait times at distant fixtures. Greywater recycling system routes shower/sink grey waste to landscape irrigation cistern."
+    "note": "Unlike production homes, wet walls may be distributed throughout the plan to achieve optimal room placement. Evaluate demand-controlled hot-water recirculation from developed length, energy/water performance, and owner goals. Treat greywater reuse as an optional system requiring local health/plumbing review."
   },
 
   "staircase": {
@@ -129,7 +129,7 @@
     "radiant_note": "Radiant hydronic floor heating is primary heating source. Water tubes embedded in slab or topping slab circulate from dedicated boiler in mechanical room. Each room is a separate zone with individual thermostatic control.",
     "cooling": "concealed_ducted_heat_pump_or_fan_coil_units",
     "ducted_central_allowed": true,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "screened_side_yard_or_mechanical_yard",
     "outdoor_unit_screening_required": true,
@@ -255,17 +255,17 @@
   },
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
-    "solar_required": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "fully_electric_design_default": true,
+    "solar_scope": "verify_2025_energy_code_exceptions_and_local_requirements",
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "seismic_design_category": "D",
-    "fire_sprinklers": "nfpa_13_required",
+    "fire_sprinklers": "required_for_new_dwelling_verify_nfpa_13d_or_other_applicable_standard_with_ahj",
     "greywater_permit_required": "if_installed",
     "large_service_compliance": "pge_service_planning_required_for_400a_plus"
   },

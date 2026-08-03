@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from app.models.schemas import GenerateRequest, JobStatus, ProjectSpec, SiteInput, LatLon
 from app.services.orchestrator import GenerationOrchestrator
 from app.api.projects import get_projects_store
@@ -10,11 +10,23 @@ router = APIRouter()
 # In-memory job store
 _jobs: dict = {}
 
+
+def _validated_massing_choice(choice: int | None) -> int:
+    """Normalize the default choice and reject indexes the generator cannot produce."""
+    resolved = 0 if choice is None else choice
+    if resolved not in (0, 1, 2):
+        raise HTTPException(
+            status_code=422,
+            detail="massing_choice must be one of 0 (A), 1 (B), or 2 (C)",
+        )
+    return resolved
+
 @router.post("/", response_model=JobStatus)
 async def start_generation(body: GenerateRequest, background_tasks: BackgroundTasks):
     projects = get_projects_store()
     if body.project_id not in projects:
         raise HTTPException(status_code=404, detail="Project not found")
+    massing_choice = _validated_massing_choice(body.massing_choice)
 
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
@@ -31,7 +43,7 @@ async def start_generation(body: GenerateRequest, background_tasks: BackgroundTa
         job_id,
         body.project_id,
         projects[body.project_id]["spec"],
-        body.massing_choice or 0,
+        massing_choice,
     )
 
     return JobStatus(**_jobs[job_id])
@@ -43,7 +55,10 @@ async def get_job_status(job_id: str):
     return JobStatus(**_jobs[job_id])
 
 @router.post("/quick")
-async def quick_generate(spec: ProjectSpec):
+async def quick_generate(
+    spec: ProjectSpec,
+    massing_choice: int = Query(default=0, ge=0, le=2),
+):
     """One-shot generate without project creation — good for demo"""
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
@@ -58,7 +73,7 @@ async def quick_generate(spec: ProjectSpec):
 
     try:
         orch = GenerationOrchestrator(progress_cb=progress)
-        model = await orch.run(spec)
+        model = await orch.run(spec, massing_choice)
         _jobs[job_id]["status"] = "done"
         _jobs[job_id]["result"] = model.dict()
         return _jobs[job_id]

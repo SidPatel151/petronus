@@ -16,8 +16,8 @@ export const api = {
     API.get('/api/site/geocode', { params: { address } }).then(r => r.data),
   createProject: (name: string, spec: any) =>
     API.post('/api/projects/', { name, spec }).then(r => r.data),
-  quickGenerate: (spec: any) =>
-    API.post('/api/generate/quick', spec).then(r => r.data),
+  quickGenerate: (spec: any, massingChoice = 0) =>
+    API.post('/api/generate/quick', spec, { params: { massing_choice: massingChoice } }).then(r => r.data),
   getJobStatus: (jobId: string) =>
     API.get(`/api/generate/status/${jobId}`).then(r => r.data),
   exportJson: (projectId: string) =>

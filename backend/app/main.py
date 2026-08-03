@@ -5,7 +5,7 @@ from app.api import projects, site, generate, exports, chat
 
 app = FastAPI(
     title="Petronus API",
-    description="Automated BIM generation for California multi-family residential",
+    description="Automated preliminary BIM generation for California residential buildings",
     version="0.1.0",
 )
 

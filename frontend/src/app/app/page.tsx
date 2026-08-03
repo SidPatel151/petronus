@@ -68,9 +68,10 @@ function AppContent() {
     setSaving(true);
     try {
       const addr = (selectedSite as any)?.address || '';
-      // Strip large render arrays before sending — backend re-strips too, but this keeps the request small
-      const { meshes: _m, mep_elements: _me, structural_members: _sm, columns: _c, ...slimModel } = buildingModel as any;
-      await api.saveProject(saveName.trim(), addr, spec, slimModel);
+      // Persist the complete generated model so reopening a project restores the
+      // same architecture, structure, MEP, issues, and render geometry.
+      const savedSpec = (buildingModel as any).spec || spec;
+      await api.saveProject(saveName.trim(), addr, savedSpec, buildingModel);
       setSaveModal(false);
       setSaveName('');
       setSavedToast(true);

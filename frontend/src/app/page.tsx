@@ -929,8 +929,8 @@ function TerminalBlock() {
     { text: '  ↳ Routing MEP systems…',                 color: '#6a6460', delay: 4100 },
     { text: '  ✓ 12 plumbing · 18 electrical · 9 HVAC', color: '#7db896', delay: 4600 },
     { text: '  ↳ Running compliance checks…',           color: '#6a6460', delay: 5000 },
-    { text: '  ✓ 0 errors · 2 warnings · CBC 2022',    color: '#7db896', delay: 5500 },
-    { text: '  ✓ Model ready  [27.4s]',                 color: '#c4a882', delay: 6000 },
+    { text: '  ✓ Preliminary checks · 2 review items · CA 2025', color: '#7db896', delay: 5500 },
+    { text: '  ✓ Concept model ready  [27.4s]',         color: '#c4a882', delay: 6000 },
   ];
   const [visCount, setVisCount] = useState(0);
   useEffect(() => {

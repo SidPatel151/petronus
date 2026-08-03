@@ -111,7 +111,8 @@ SFR_SQFT_RANGES: dict[int, tuple[int, int]] = {
     5: (2500, 4200),
 }
 
-# ADU cap per CA law (HCD, post-2020 AB-68 / AB-881)
+# Conservative statewide detached-ADU default. A local ordinance may adopt a
+# less restrictive maximum, so callers can override this in project details.
 ADU_MAX_SQFT = 1200
 
 # Priority → fractional position within sqft range (0.0 = min, 1.0 = max)
@@ -121,14 +122,14 @@ PRIORITY_SQFT_POSITION: dict[str, float] = {
 }
 
 CALIFORNIA_CODE_REFERENCES: list[str] = [
-    "Part 3: California Electrical Code (CEC)",
-    "Part 4: California Mechanical Code (CMC)",
-    "Part 5: California Plumbing Code (CPC)",
-    "Part 6: California Energy Code",
-    "International Building Code (IBC)",
-    "National Electrical Code (NEC)",
-    "International Mechanical Code (IMC)",
-    "ICC/MBI 1210 Standard",
+    "2025 California Building Standards Code (Title 24), effective January 1, 2026",
+    "Part 2 California Building Code and Part 2.5 California Residential Code",
+    "Part 3 California Electrical Code",
+    "Part 4 California Mechanical Code",
+    "Part 5 California Plumbing Code",
+    "Part 6 California Energy Code",
+    "Parts 9 and 11 California Fire and Green Building Standards Codes",
+    "Applicable local amendments, zoning, fire-authority, and utility requirements",
 ]
 
 

@@ -1,7 +1,6 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
-import api from '@/lib/api';
 
 // ── Parcel geometry helpers ────────────────────────────────────────────
 
@@ -170,7 +169,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function ProjectWizard() {
-  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, setBuildingModel, clickedBuilding, drawnParcel, setDrawnParcel, buildingModel } = useAppStore();
+  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, generateBuilding, clickedBuilding, drawnParcel, setDrawnParcel, buildingModel } = useAppStore();
 
   // Use drawn parcel area when available — more accurate than OSM parcel
   const parcelAreaSqft = useMemo(() =>
@@ -334,8 +333,7 @@ export default function ProjectWizard() {
       },
     };
     try {
-      const result = await api.quickGenerate(fullSpec);
-      if (result.result) setBuildingModel(result.result);
+      await generateBuilding(fullSpec, 0);
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       const msg = Array.isArray(detail)

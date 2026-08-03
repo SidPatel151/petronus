@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import api from './api';
 
 export type LayerKey = 'architecture' | 'floors' | 'structure' | 'roof' | 'plumbing' | 'electrical' | 'hvac' | 'fire' | 'fixtures' | 'issues' | 'neighbors' | 'power_grid';
 
@@ -26,6 +27,7 @@ interface AppState {
   jobProgress: number;
   jobStep: string;
   buildingModel: BuildingModel | null;
+  generationSpec: any | null;
   activeLayers: Record<LayerKey, boolean>;
   selectedMassing: number;
   selectedIssueId: string | null;
@@ -41,6 +43,7 @@ interface AppState {
   setJobId: (id: string | null) => void;
   setJobStatus: (s: string, p: number, step: string) => void;
   setBuildingModel: (m: BuildingModel | null) => void;
+  generateBuilding: (generationSpec: any, massingChoice?: number) => Promise<BuildingModel>;
   toggleLayer: (layer: LayerKey) => void;
   setSelectedMassing: (idx: number) => void;
   setSelectedIssue: (id: string | null) => void;
@@ -50,7 +53,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedSite: null, siteContext: null, infrastructure: null, neighborConstraints: null, feasibilityData: null,
   clickedBuilding: null, drawnParcel: null, chatMessages: [],
   spec: { stories: 2, floor_to_floor_height_ft: 10, structural_system: 'wood', hvac_preference: 'mini_split', parking_strategy: 'ignore', priority: 'cost' },
-  jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null,
+  jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null, generationSpec: null,
   activeLayers: { architecture: true, floors: true, structure: false, roof: true, plumbing: true, electrical: true, hvac: true, fire: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
   selectedMassing: 0, selectedIssueId: null,
   setSelectedSite: (site) => set({ selectedSite: site }),
@@ -64,7 +67,44 @@ export const useAppStore = create<AppState>((set) => ({
   updateSpec: (partial) => set((s) => ({ spec: { ...s.spec, ...partial } })),
   setJobId: (id) => set({ jobId: id }),
   setJobStatus: (jobStatus, jobProgress, jobStep) => set({ jobStatus, jobProgress, jobStep }),
-  setBuildingModel: (m) => set({ buildingModel: m, selectedMassing: m?.chosen_massing_index ?? 0 }),
+  setBuildingModel: (m) => set({
+    buildingModel: m,
+    generationSpec: m?.spec ?? null,
+    selectedMassing: m?.chosen_massing_index ?? 0,
+  }),
+  generateBuilding: async (generationSpec, massingChoice = 0) => {
+    if (!Number.isInteger(massingChoice) || massingChoice < 0 || massingChoice > 2) {
+      throw new Error('Massing choice must be option A, B, or C.');
+    }
+
+    set({
+      jobStatus: 'running',
+      jobProgress: 0,
+      jobStep: massingChoice === 0 ? 'Generating building' : `Regenerating massing option ${String.fromCharCode(65 + massingChoice)}`,
+    });
+
+    try {
+      const response = await api.quickGenerate(generationSpec, massingChoice);
+      const model = response?.result as BuildingModel | undefined;
+      if (!model) {
+        throw new Error(response?.error || 'Generation did not return a building model.');
+      }
+
+      const committedChoice = model.chosen_massing_index ?? massingChoice;
+      set({
+        buildingModel: model,
+        generationSpec: model.spec ?? generationSpec,
+        selectedMassing: committedChoice,
+        jobStatus: 'done',
+        jobProgress: 100,
+        jobStep: 'Done',
+      });
+      return model;
+    } catch (error) {
+      set({ jobStatus: 'failed', jobProgress: 0, jobStep: 'Generation failed' });
+      throw error;
+    }
+  },
   toggleLayer: (layer) => set((s) => ({ activeLayers: { ...s.activeLayers, [layer]: !s.activeLayers[layer] } })),
   setSelectedMassing: (idx) => set({ selectedMassing: idx }),
   setSelectedIssue: (id) => set({ selectedIssueId: id }),

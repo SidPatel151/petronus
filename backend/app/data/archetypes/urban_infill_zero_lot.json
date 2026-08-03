@@ -129,7 +129,7 @@
     "roof_mount_required": true,
     "ground_mount_prohibition": "CRITICAL: No side yard space exists for ground-mounted condensers. Do not place any HVAC outdoor equipment at grade. Default to roof-mounted units, slim-line side-discharge heat pumps in mechanical alcoves, or rooftop mini-split condensers.",
     "ducted_central_allowed": false,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "rooftop_mechanical_alcove",
     "refrigerant_line_routing": "through_interior_wall_chases_to_roof",
@@ -215,8 +215,8 @@
     },
     "fire_sprinklers": {
       "required": true,
-      "applicable_rule": "SF requires sprinklers for new construction >2 stories. Oakland requires per local amendment.",
-      "system": "nfpa_13d_or_13"
+      "applicable_rule": "New residential construction requires an occupancy-specific sprinkler review; do not infer applicability from story count.",
+      "system": "verify_nfpa_13d_13r_or_13_with_ahj"
     },
     "induction_cooktop": true
   },
@@ -231,17 +231,17 @@
   },
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
-    "solar_required": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "fully_electric_design_default": true,
+    "solar_scope": "verify_2025_energy_code_exceptions_and_local_requirements",
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "seismic_retrofit_likely": false,
-    "fire_sprinklers": "required_for_new_construction_over_2_stories",
+    "fire_sprinklers": "required_for_new_residential_verify_applicable_nfpa_standard_with_ahj",
     "stormwater_management": "on_site_retention_required",
     "underground_service": "typically_required_by_local_utility",
     "lot_coverage_check": "verify_sf_district_or_berkeley_r2_coverage_limits"
@@ -267,7 +267,7 @@
     "Underground utility service required: new builds cannot use overhead drop — plan conduit route from street vault through exterior wall to panel location.",
     "Stormwater management required: zero permeable ground surface means on-site cistern, sump, or slow-release retention system is needed.",
     "No side wall penetrations if party walls present — ERV/HRV, HVAC, and utility penetrations go front or rear only.",
-    "Fire sprinklers required for new construction >2 stories in SF and Oakland (local amendment).",
+    "Verify sprinkler applicability, adopted design standard, water supply, and local amendments with the project AHJ; do not infer applicability from story count alone.",
     "Soft story risk at open ground-floor garage — structural moment frame or shear walls required.",
     "Seismic design category D — full shear wall design despite narrow lot width.",
     "Roof real estate must serve: solar PV + HVAC condensers + ERV terminations + possible roof deck — generate roof plan early.",

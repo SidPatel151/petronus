@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, List, Dict, Any, Literal
 
 # All enums live in constants.py — import and re-export for backward compat
 from app.constants import (
@@ -41,11 +41,17 @@ class SiteContext(BaseModel):
 # ── Project Spec ───────────────────────────────────────────────────────────
 
 class ProjectSpec(BaseModel):
-    # Fixed for demo
-    region_country: str = "US"
-    region_state: str = "CA"
-    occupancy: str = "MultiFamilyResidential"
+    # This preflight currently implements California residential scope only.
+    region_country: Literal["US"] = "US"
+    region_state: Literal["CA"] = "CA"
+    occupancy: Optional[Literal[
+        "SingleFamilyResidential", "MultiFamilyResidential"
+    ]] = None
     permit_set: bool = False
+    # Code edition used for deterministic preflight checks.  California's
+    # 2025 Title 24 cycle applies to permit applications filed in 2026-2028.
+    code_cycle: Literal["2025"] = "2025"
+    jurisdiction_city: Optional[str] = None
 
     # Site
     site: SiteInput
@@ -77,6 +83,26 @@ class ProjectSpec(BaseModel):
     # keys: walls, roof, floors, windows, foundation, interior_walls
     # values: "wood"|"concrete"|"brick"|"metal"|"glass"|"stone"|"stucco"|"ai"
     fine_details: Optional[Dict[str, Any]] = None
+    # ADU sprinkler applicability depends on the primary dwelling.  ``None``
+    # means unknown and keeps sprinklers enabled as a conservative design
+    # default without claiming that the law universally requires them.
+    primary_dwelling_sprinklered: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def align_residential_occupancy(self) -> "ProjectSpec":
+        expected = (
+            "MultiFamilyResidential"
+            if self.building_use == BuildingUse.multi_family
+            else "SingleFamilyResidential"
+        )
+        if self.occupancy is None:
+            self.occupancy = expected
+        elif self.occupancy != expected:
+            raise ValueError(
+                f"occupancy {self.occupancy!r} conflicts with building_use "
+                f"{self.building_use.value!r}; expected {expected!r}"
+            )
+        return self
 
     # Height & limit overrides from the wizard
     max_height_ft: Optional[float] = None
@@ -169,7 +195,7 @@ class ComplianceIssue(BaseModel):
     severity: str        # error, warning, info
     message: str
     fix_suggestion: str
-    elements_involved: List[str] = []
+    elements_involved: List[str] = Field(default_factory=list)
     location: Optional[BBox] = None
     citation: Optional[str] = None
 
@@ -177,19 +203,23 @@ class BuildingModel(BaseModel):
     project_id: str
     spec: ProjectSpec
     site_context: Optional[SiteContext] = None
-    levels: List[Level] = []
-    massing_options: List[Dict[str, Any]] = []
+    levels: List[Level] = Field(default_factory=list)
+    massing_options: List[Dict[str, Any]] = Field(default_factory=list)
     chosen_massing_index: int = 0
-    rooms: List[Room] = []
-    walls: List[Wall] = []
-    columns: List[Column] = []
-    structural_members: List[StructuralMember] = []
-    mep_elements: List[MEPElement] = []
-    meshes: List[Dict[str, Any]] = []
+    rooms: List[Room] = Field(default_factory=list)
+    walls: List[Wall] = Field(default_factory=list)
+    columns: List[Column] = Field(default_factory=list)
+    structural_members: List[StructuralMember] = Field(default_factory=list)
+    mep_elements: List[MEPElement] = Field(default_factory=list)
+    meshes: List[Dict[str, Any]] = Field(default_factory=list)
     neighbor_style: Optional[Dict[str, Any]] = None
     design_brief: Optional[Dict[str, Any]] = None
-    issues: List[ComplianceIssue] = []
-    generation_log: List[str] = []
+    issues: List[ComplianceIssue] = Field(default_factory=list)
+    generation_log: List[str] = Field(default_factory=list)
+    # Machine-readable audit result: counts, checked rules, code cycle, and
+    # permit-review limitations.  This prevents "no issues" from being
+    # mistaken for a stamped construction-document approval.
+    compliance_summary: Dict[str, Any] = Field(default_factory=dict)
 
 # ── API response models ────────────────────────────────────────────────────
 
@@ -206,7 +236,7 @@ class ProjectResponse(BaseModel):
 
 class GenerateRequest(BaseModel):
     project_id: str
-    massing_choice: Optional[int] = None  # 0=A,1=B,2=C
+    massing_choice: Optional[int] = Field(default=None, ge=0, le=2)  # 0=A,1=B,2=C
 
 class JobStatus(BaseModel):
     job_id: str

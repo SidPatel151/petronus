@@ -53,21 +53,15 @@ export default function AIChat() {
         setRegenerating(true);
 
         // Apply patch to spec
-        const { shape_hint, ...specChanges } = spec_patch;
+        const specChanges = spec_patch;
         updateSpec(specChanges);
 
-        // Build full spec with patches applied
+        // Preserve the complete current project (building use, bedrooms,
+        // bathrooms, code cycle, fine details, limits, etc.) while applying
+        // only the server-validated patch. Rebuilding a partial object here
+        // previously turned SFR/ADU chats back into the multi-family default.
         const fullSpec = {
-          region_country: 'US', region_state: 'CA',
-          occupancy: 'MultiFamilyResidential', permit_set: false,
-          stories: spec.stories || 2,
-          floor_to_floor_height_ft: spec.floor_to_floor_height_ft || 10.0,
-          structural_system: spec.structural_system || 'wood',
-          hvac_preference: spec.hvac_preference || 'mini_split',
-          parking_strategy: spec.parking_strategy || 'ignore',
-          priority: spec.priority || 'cost',
-          target_gross_area_sqft: spec.target_gross_area_sqft || 8000,
-          unit_count: spec.unit_count || null,
+          ...spec,
           ...specChanges,
           site: {
             latlon: { lat: selectedSite.lat, lon: selectedSite.lon },

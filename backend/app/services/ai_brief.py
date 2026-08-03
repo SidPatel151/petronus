@@ -58,19 +58,16 @@ async def get_design_brief(
         units = spec_dict.get("unit_count") or "unspecified"
 
         code_reference_list = "\n".join(f"- {c}" for c in CALIFORNIA_CODE_REFERENCES)
-        prompt = f"""You are an expert California residential architect and structural engineer. Given this site and its neighbors, output a concise JSON design brief for a new multi-family building.
+        prompt = f"""You are a California residential conceptual-design assistant. Given this site and its neighbors, output a concise JSON massing brief for a new residential building. Do not claim that the result is engineered, code-verified, permit-ready, or approved.
 
-COMPLIANCE CODES TO FOLLOW STRICTLY:
+CURRENT PRELIMINARY CODE CONTEXT (applicability and local amendments require licensed/AHJ review):
 {code_reference_list}
 
-STRUCTURAL & SEISMIC REQUIREMENTS (CRITICAL):
-- Seismic Design Category (SDC): {site_ctx_dict.get('seismic_category', 'D')}
-- All buildings must resist lateral forces per ASCE 7-22 and IBC Section 1613
-- In SDC D+: Special ductile detailing required; soft stories forbidden
-- Foundation must accommodate liquefaction risk per IBC 1817
-- All MEP >2.5in diameter must have seismic bracing per ASCE 7 Chapter 13
-- Equipment >100 lbs must be anchored; piping requires support every 8-12 ft
-- Ductwork requires diagonal strut bracing; floor diaphragms must be continuous
+STRUCTURAL & SEISMIC SCREENING INPUTS:
+- Unverified preliminary Seismic Design Category (SDC): {site_ctx_dict.get('seismic_category', 'D')}
+- Preserve a continuous conceptual lateral-load path and avoid obvious soft/weak-story configurations
+- Flag geotechnical, liquefaction, anchorage, bracing, diaphragm, and equipment-support design for project-specific engineering
+- Do not invent member sizes, foundation capacity, or prescriptive seismic requirements
 
 SITE:
 - Parcel: {parcel_sqft:.0f} sqft
@@ -119,9 +116,7 @@ Respond with ONLY valid JSON, no markdown, no explanation:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
-        brief = json.loads(raw)
-        brief["source"] = "claude"
-        return brief
+        return _normalize_brief(json.loads(raw), spec_dict, neighbor_analysis)
 
     except Exception as e:
         fallback = _default_brief(spec_dict, neighbor_analysis)
@@ -133,6 +128,10 @@ def _default_brief(spec_dict: Dict, nav: Dict) -> Dict[str, Any]:
     """Rule-based fallback when Claude is unavailable."""
     mat = nav.get("dominant_material", "stucco")
     shape = nav.get("dominant_shape", "rectangle")
+    if shape not in {"rectangle", "l_shape", "bar", "u_shape", "stepped"}:
+        shape = "rectangle"
+    if mat not in {"stucco", "brick", "concrete", "wood", "steel"}:
+        mat = "stucco"
     avg_w = nav.get("avg_width_m", 12)
     avg_d = nav.get("avg_depth_m", 14)
     has_bal = nav.get("has_balconies", False)
@@ -150,4 +149,48 @@ def _default_brief(spec_dict: Dict, nav: Dict) -> Dict[str, Any]:
         "penthouse_setback": spec_dict.get("stories", 2) >= 3,
         "rationale": "Rule-based default from neighbor analysis",
         "source": "fallback",
+    }
+
+
+def _normalize_brief(brief: Any, spec_dict: Dict, nav: Dict) -> Dict[str, Any]:
+    """Constrain provider output so malformed AI values cannot break generation."""
+    if not isinstance(brief, dict):
+        raise ValueError("Design brief response must be a JSON object")
+    default = _default_brief(spec_dict, nav)
+
+    def choice(key: str, allowed: set[str]) -> str:
+        value = str(brief.get(key, default[key])).lower()
+        return value if value in allowed else default[key]
+
+    def number(key: str, low: float, high: float) -> float:
+        try:
+            value = float(brief.get(key, default[key]))
+        except (TypeError, ValueError):
+            value = float(default[key])
+        return max(low, min(high, value))
+
+    def boolean(key: str) -> bool:
+        value = brief.get(key, default[key])
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes"}
+        return bool(value)
+
+    return {
+        "shape": choice("shape", {"rectangle", "l_shape", "bar", "u_shape", "stepped"}),
+        "width_m": number("width_m", 4.0, 80.0),
+        "depth_m": number("depth_m", 4.0, 80.0),
+        "window_ratio": number("window_ratio", 0.10, 0.70),
+        "balcony_depth_m": number("balcony_depth_m", 0.0, 3.0),
+        "balcony_every_n_floors": int(number("balcony_every_n_floors", 0, 10)),
+        "facade_material": choice(
+            "facade_material", {"stucco", "brick", "concrete", "wood", "steel"}
+        ),
+        "horizontal_bands": boolean("horizontal_bands"),
+        "roof_type": choice("roof_type", {"flat", "parapet", "gabled", "shed"}),
+        "ground_floor_height_boost_m": number("ground_floor_height_boost_m", 0.0, 1.5),
+        "penthouse_setback": boolean("penthouse_setback"),
+        "rationale": str(brief.get("rationale", default["rationale"]))[:300],
+        "source": "claude",
     }

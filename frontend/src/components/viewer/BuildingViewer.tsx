@@ -93,8 +93,28 @@ const COLORS: Record<string, string> = {
   plumbing: '#3b82f6', electrical: '#f59e0b', hvac: '#10b981', fire: '#ef4444',
   fixture: '#60a5fa', panel: '#fbbf24', mini_split_head: '#34d399',
   issue_error: '#ef4444', issue_warning: '#f59e0b',
+  issue_info: '#00e5ff',
   neighbor: '#2d3748', neighbor_existing: '#7c3aed',
 };
+
+const MEP_FIXTURE_TYPES = new Set([
+  'toilet', 'sink', 'shower', 'outlet', 'exhaust_fan', 'kitchen_sink',
+  'range_hood', 'washer_connection', 'washer_hookup', 'light_switch',
+  'return_grille',
+]);
+
+const LIFE_SAFETY_TYPES = new Set([
+  'sprinkler', 'fire_alarm', 'carbon_monoxide_detector', 'co_detector',
+]);
+
+function bboxMidpoint(minValue: any, maxValue: any, fallback: number) {
+  const hasMin = Number.isFinite(minValue);
+  const hasMax = Number.isFinite(maxValue);
+  if (hasMin && hasMax) return (minValue + maxValue) / 2;
+  if (hasMin) return minValue;
+  if (hasMax) return maxValue;
+  return fallback;
+}
 
 const MATERIAL_COLORS: Record<string, string> = {
   wood:     '#8B6914',
@@ -508,7 +528,7 @@ function MEPPoint({ el }: { el: any }) {
       </group>
     );
   }
-  if (type === 'sink') {
+  if (type === 'sink' || type === 'kitchen_sink') {
     return (
       <group position={[x, y, z]}>
         <mesh position={[0, 0.82, 0]}><boxGeometry args={[0.55, 0.07, 0.42]} /><meshStandardMaterial color="#d0d8e0" roughness={0.15} metalness={0.1} /></mesh>
@@ -566,6 +586,90 @@ function MEPPoint({ el }: { el: any }) {
         <boxGeometry args={[0.25, 0.06, 0.25]} />
         <meshStandardMaterial color="#334155" roughness={0.7} />
       </mesh>
+    );
+  }
+  if (type === 'return_grille') {
+    const width = Math.max(0.25, ((el.width_in as number) || 12) * 0.0254);
+    const depth = Math.max(0.15, ((el.height_in as number) || 6) * 0.0254);
+    return (
+      <group position={[x, y, z]}>
+        <mesh>
+          <boxGeometry args={[width, 0.035, depth]} />
+          <meshStandardMaterial color="#cbd5e1" roughness={0.55} metalness={0.35} />
+        </mesh>
+        {[-0.3, -0.1, 0.1, 0.3].map((offset) => (
+          <mesh key={offset} position={[0, -0.023, offset * depth]}>
+            <boxGeometry args={[width * 0.78, 0.012, 0.012]} />
+            <meshStandardMaterial color="#475569" roughness={0.65} metalness={0.25} />
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+  if (type === 'whole_house_ventilator' || type === 'erv' || type === 'hrv') {
+    const width = Math.max(0.4, ((el.width_in as number) || 18) * 0.0254);
+    const height = Math.max(0.25, ((el.height_in as number) || 10) * 0.0254);
+    return (
+      <group position={[x, y, z]}>
+        <mesh>
+          <boxGeometry args={[width, height, 0.34]} />
+          <meshStandardMaterial color="#64748b" roughness={0.45} metalness={0.45} />
+        </mesh>
+        <mesh position={[-width / 2 - 0.055, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.11, 12]} />
+          <meshStandardMaterial color={COLORS.hvac} roughness={0.5} metalness={0.3} />
+        </mesh>
+        <mesh position={[width / 2 + 0.055, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.07, 0.07, 0.11, 12]} />
+          <meshStandardMaterial color={COLORS.hvac} roughness={0.5} metalness={0.3} />
+        </mesh>
+      </group>
+    );
+  }
+  if (type === 'washer_connection' || type === 'washer_hookup') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh>
+          <boxGeometry args={[0.34, 0.24, 0.045]} />
+          <meshStandardMaterial color="#e2e8f0" roughness={0.65} />
+        </mesh>
+        <mesh position={[-0.09, 0.025, 0.035]}>
+          <sphereGeometry args={[0.035, 10, 10]} />
+          <meshStandardMaterial color="#3b82f6" roughness={0.45} />
+        </mesh>
+        <mesh position={[0.09, 0.025, 0.035]}>
+          <sphereGeometry args={[0.035, 10, 10]} />
+          <meshStandardMaterial color="#ef4444" roughness={0.45} />
+        </mesh>
+      </group>
+    );
+  }
+  if (type === 'light_switch') {
+    return (
+      <group position={[x, y, z]}>
+        <mesh>
+          <boxGeometry args={[0.11, 0.18, 0.025]} />
+          <meshStandardMaterial color="#f1f5f9" roughness={0.65} />
+        </mesh>
+        <mesh position={[0, 0.015, 0.02]} rotation={[0.25, 0, 0]}>
+          <boxGeometry args={[0.025, 0.07, 0.018]} />
+          <meshStandardMaterial color="#cbd5e1" roughness={0.55} />
+        </mesh>
+      </group>
+    );
+  }
+  if (type === 'carbon_monoxide_detector' || type === 'co_detector') {
+    return (
+      <group position={[x, y, z]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh>
+          <cylinderGeometry args={[0.11, 0.11, 0.045, 16]} />
+          <meshStandardMaterial color="#f8fafc" roughness={0.6} />
+        </mesh>
+        <mesh position={[0, 0.026, 0]}>
+          <sphereGeometry args={[0.012, 8, 8]} />
+          <meshStandardMaterial color="#22c55e" emissive="#15803d" emissiveIntensity={0.5} />
+        </mesh>
+      </group>
     );
   }
   // ── Furniture ───────────────────────────────────────────────────────
@@ -1174,7 +1278,7 @@ function PowerGridLine({ connection, siteCenter }: { connection: any; siteCenter
 
 // ── Main scene ─────────────────────────────────────────────────────────
 function Scene() {
-  const { buildingModel, activeLayers, selectedMassing, selectedSite, infrastructure, neighborConstraints, spec, siteContext, drawnParcel } = useAppStore();
+  const { buildingModel, activeLayers, selectedSite, infrastructure, neighborConstraints, spec, siteContext, drawnParcel } = useAppStore();
   const siteCenter: [number, number] = selectedSite ? [selectedSite.lon, selectedSite.lat] : [0, 0];
 
   // When a model is generated, hide the OSM building we're replacing.
@@ -1221,7 +1325,9 @@ function Scene() {
     ? buildingModel.levels[0].height_ft * 0.3048
     : 3.0;
   const FLOOR_H = floorH;
-  const massingIndex = Math.max(0, Math.min(selectedMassing ?? buildingModel?.chosen_massing_index ?? 0, (buildingModel?.massing_options?.length ?? 1) - 1));
+  // Only render the massing whose dependent geometry was generated. The picker
+  // stages a different option until the backend returns a coherent replacement.
+  const massingIndex = Math.max(0, Math.min(buildingModel?.chosen_massing_index ?? 0, (buildingModel?.massing_options?.length ?? 1) - 1));
 
   // Resolve wall texture: material_overrides.walls > design_brief > arch_style default > neighbor_style
   const wallOverride = (spec as any)?.material_overrides?.walls ?? '';
@@ -1343,11 +1449,11 @@ function Scene() {
           }
           {/* MEP: pipes, ducts, conduit, fixtures — fire system on its own 'fire' layer */}
           {buildingModel.mep_elements.map((el: any) => {
-            // utility_lateral exits the building toward the power pole — hide it from 3D view
-            if (el.type === 'utility_lateral' || el.type === 'rooftop_unit') return null;
-            const FIXTURE_TYPES = ['toilet','sink','shower','outlet','fire_alarm','sprinkler','exhaust_fan','kitchen_sink','range_hood'];
-            const isFireFixture = ['sprinkler', 'fire_alarm'].includes(el.type);
-            const isFixture = FIXTURE_TYPES.includes(el.type);
+            // Rooftop equipment is represented by the architectural roof model;
+            // utility laterals remain visible as their generated electrical run.
+            if (el.type === 'rooftop_unit') return null;
+            const isFireFixture = LIFE_SAFETY_TYPES.has(el.type);
+            const isFixture = MEP_FIXTURE_TYPES.has(el.type);
             if (el.system === 'fire' || isFireFixture) {
               if (!activeLayers['fire']) return null;
               return el.end ? <MEPLine key={el.id} el={el} /> : <MEPPoint key={el.id} el={el} />;
@@ -1396,10 +1502,14 @@ function Scene() {
           {activeLayers['issues'] && buildingModel.issues.map((issue: any) => {
             if (!issue.location) return null;
             const { min_x, max_x, min_y, max_y, min_z, max_z } = issue.location;
-            const cx = ((min_x || 0) + (max_x || 0)) / 2 || 0;
-            const cy = ((min_z || 0) + (max_z || 0)) / 2 || 3;
-            const cz = ((min_y || 0) + (max_y || 0)) / 2 || 0;
-            const color = issue.severity === 'error' ? COLORS.issue_error : COLORS.issue_warning;
+            const cx = bboxMidpoint(min_x, max_x, 0);
+            const cy = bboxMidpoint(min_y, max_y, 3);
+            const cz = bboxMidpoint(min_z, max_z, 0);
+            const color = issue.severity === 'error'
+              ? COLORS.issue_error
+              : issue.severity === 'info'
+                ? COLORS.issue_info
+                : COLORS.issue_warning;
             return (
               <mesh key={issue.id} position={[cx, cy, cz]}>
                 <sphereGeometry args={[0.5, 12, 12]} />
@@ -1651,6 +1761,15 @@ export default function BuildingViewer() {
           || (buildingModel as any)?.design_brief?.shape
           || '';
         const matHint  = (buildingModel as any)?.neighbor_style?.dominant_material || '';
+        const issueCounts = (buildingModel.issues || []).reduce(
+          (counts: Record<'error' | 'warning' | 'info', number>, issue: any) => {
+            if (issue.severity === 'error') counts.error += 1;
+            else if (issue.severity === 'warning') counts.warning += 1;
+            else if (issue.severity === 'info') counts.info += 1;
+            return counts;
+          },
+          { error: 0, warning: 0, info: 0 },
+        );
 
         return (
           <div className="absolute top-4 left-4 panel p-3 animate-fade-in" style={{ minWidth: '180px' }}>
@@ -1697,10 +1816,15 @@ export default function BuildingViewer() {
               {buildingModel.issues?.length > 0 && (
                 <div className="mt-1 pt-1 border-t border-[var(--border)] flex items-center gap-1.5">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                    style={{ background: buildingModel.issues.some((i: any) => i.severity === 'error') ? 'var(--accent-red)' : 'var(--accent-amber)' }} />
+                    style={{
+                      background: issueCounts.error > 0
+                        ? 'var(--accent-red)'
+                        : issueCounts.warning > 0
+                          ? 'var(--accent-amber)'
+                          : 'var(--accent-cyan)',
+                    }} />
                   <span className="text-[10px] font-mono text-[var(--text-secondary)]">
-                    {buildingModel.issues.filter((i: any) => i.severity === 'error').length} errors,{' '}
-                    {buildingModel.issues.filter((i: any) => i.severity === 'warning').length} warnings
+                    {issueCounts.error} errors, {issueCounts.warning} warnings, {issueCounts.info} info
                   </span>
                 </div>
               )}

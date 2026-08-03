@@ -23,7 +23,7 @@
       "accent": "#c8a87a",
       "window_frame": "#1a1a1a"
     },
-    "note": "CA ADU law (AB-68/AB-881) caps at 1,200 sqft and 2 stories. Contemporary box with large front/rear glazing is dominant CA aesthetic. Fully electric (Title 24 Part 6). Independent entrance is legally required."
+    "note": "Use 1,200 sqft and 2 stories as conservative detached-ADU defaults until current local objective size and height standards are supplied. California law permits less restrictive local ordinances. Verify the 2025 Energy Code compliance path, utility configuration, and independent access for the actual project."
   },
 
   "lot": {
@@ -39,17 +39,17 @@
     "separate_address_required": false,
     "independent_entrance_required": true,
     "shared_utilities_allowed": true,
-    "note": "CA law allows ADUs within 800 sqft with 4ft side/rear setbacks. Larger ADUs follow underlying zoning setbacks."
+    "note": "California's statewide ADU framework generally limits required side/rear setbacks for new ADUs to no more than 4ft. The separate protected-unit rule preserves at least an 800 sqft ADU despite certain other objective standards; verify the current local ordinance."
   },
 
   "ca_legal_limits": {
-    "max_sqft": 1200,
-    "max_stories": 2,
-    "max_height_ft": 18,
+    "state_default_detached_max_sqft": 1200,
+    "generator_default_max_stories": 2,
+    "local_size_and_height_verification_required": true,
     "independent_entrance": true,
-    "citation": "CA Health & Safety Code §65852.2 (AB-68/AB-881, 2020)",
+    "citation": "California Government Code §§ 66314 and 66325 (verify current local ordinance)",
     "owner_occupancy_required": false,
-    "setback_exemption_sqft": 800
+    "protected_unit_size_sqft": 800
   },
 
   "structure": {
@@ -258,7 +258,7 @@
     "strategy": "mini_split",
     "ducted_central_allowed": false,
     "units_per_story": 1,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "rear_yard_ground_mount",
     "refrigerant_line_routing": "through_exterior_wall_chase",
@@ -304,7 +304,7 @@
       "min_surrounding_volume_ft3": 450,
       "min_room_dimension_ft": 7,
       "condensate_drain_required": true,
-      "note": "CA Title 24 mandates HPWH for new ADUs. 40gal is adequate for up to 2BR. Requires 450 ft³ surrounding air — in a compact ADU, an open utility closet with louver door counts."
+      "note": "Verify the 2025 Energy Code water-heating compliance path and size the selected HPWH for the calculated demand. Air-volume, ducting, condensate, and clearance requirements are product-specific; do not assume 450 ft³ is universal."
     }
   },
 
@@ -315,15 +315,15 @@
         "type": "sub_panel",
         "amps": 60,
         "fed_from": "main_house_panel",
-        "feeder_wire": "4/0 Al SER cable",
-        "note": "ADU ≤600 sqft: 60A sub-panel fed from existing house main. Verify house main has headroom (typically 200A house leaves ~100A available)."
+        "feeder_wire": "size_from_CEC_load_calculation_and_equipment_ratings",
+        "note": "A shared sub-panel may be feasible only after a CEC load calculation, feeder sizing, utility rules, and existing-service capacity are verified; floor area alone does not decide it."
       },
       "over_threshold": {
         "type": "new_service_drop",
         "amps": 200,
         "meter_required": true,
         "utility_coordination": true,
-        "note": "ADU >600 sqft: POCO requires dedicated meter and service drop. Coordinate with utility 4–12 weeks ahead."
+        "note": "A dedicated meter/service is a utility- and project-specific option, not an automatic floor-area rule. Confirm service capacity, metering policy, and lead time with the serving utility."
       }
     },
     "panel_location": "exterior_accessible_or_garage_wall",
@@ -338,11 +338,11 @@
       "amps": 40,
       "location": "exterior_weather_proof_outlet_or_garage",
       "circuit_dedicated": true,
-      "note": "CA Energy Code Sec. 150.1 — new detached ADU must have EV-ready circuit."
+      "note": "Verify the applicable 2025 CALGreen/Energy Code EV infrastructure scope, parking configuration, exceptions, load management, and local amendments."
     },
     "solar": {
       "pv_required_by_ca": true,
-      "note": "CA Title 24 2022 requires solar on new ADUs. Flat/shed roof: mount flush or low-tilt. Coordinate with utility interconnect.",
+      "note": "Verify the applicable 2025 Energy Code PV/battery compliance path and exceptions. Coordinate roof layout, structural loads, fire access, shading, and utility interconnection.",
       "roof_area_target_sqft": 120,
       "inverter_location": "exterior_wall_or_sub_panel_adjacent"
     },
@@ -373,33 +373,33 @@
   },
 
   "known_constraints_summary": [
-    "CA law: max 1,200 sqft, 2 stories, 4ft side/rear setbacks — non-negotiable",
+    "Use 1,200 sqft, 2 stories, and 4ft side/rear setbacks only as conservative defaults; verify current local objective standards and any state-law pathways",
     "Independent exterior entrance required — cannot pass through primary dwelling",
-    "Heat pump water heater required (CA Title 24) — needs 450 ft³ surrounding air",
-    "All wet rooms must stack vertically on a single DWV stack — no horizontal offsets in gravity drain",
+    "Verify the 2025 Energy Code water-heating path and the selected equipment's air, condensate, and clearance requirements",
+    "Cluster wet rooms where practical, then size and slope the complete DWV/vent system from actual fixture-unit and developed-length calculations",
     "Sewer lateral: 4in PVC at 2.1% slope — verify connection to street main or existing stub",
-    "EV-ready circuit required (CA Energy Code) — 240V/40A dedicated circuit",
-    "Solar PV required for new construction ADUs (Title 24 2022)",
-    "ADU ≤600 sqft: 60A sub-panel from house main. ADU >600 sqft: new service drop with utility coordination",
-    "Mini-split only — slab construction has no plenum space for duct trunks",
+    "Verify EV infrastructure scope, rating, load management, parking layout, exceptions, and local amendments",
+    "Verify the 2025 Energy Code PV/battery compliance path and applicable exceptions",
+    "Choose shared versus dedicated electrical service only after a CEC load calculation and serving-utility review",
+    "Select mini-split or ducted heat-pump distribution from load calculations, envelope, acoustics, and available routing space",
     "Outdoor mini-split unit must be 36in from property line (local zoning typical)",
-    "Stair at 3.5ft wide max, 80in headroom min — fit stair before finalizing wet wall location",
+    "Fit a code-cycle- and occupancy-specific stair geometry, landings, guards, handrails, and headroom before finalizing wet-wall locations",
     "Kitchen island (2BR plan) needs 4ft clearance on all sides — adjust footprint before generating"
   ],
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
-    "solar_required": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "fully_electric_design_default": true,
+    "solar_scope": "verify_2025_energy_code_exceptions_and_local_requirements",
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "fire_sprinklers": "required_if_primary_unit_has_sprinklers",
     "egress_window_required": true,
     "egress_window_min_sqft": 5.7,
-    "adu_specific_citation": "CA Health & Safety Code §65852.2 — AB-68 (2020)"
+    "adu_specific_citation": "California Government Code §§ 66314-66325; verify current local ADU ordinance"
   }
 }

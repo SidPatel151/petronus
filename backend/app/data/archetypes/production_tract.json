@@ -118,7 +118,7 @@
     "shortest_duct_runs": true,
     "central_equipment_location": true,
     "ducted_central_allowed": true,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "side_yard",
     "air_handler_location": "central_attic",
@@ -217,17 +217,17 @@
   },
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
-    "solar_required": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "fully_electric_design_default": true,
+    "solar_scope": "verify_2025_energy_code_exceptions_and_local_requirements",
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "seismic_design_category": "D",
-    "fire_sprinklers": "required_if_over_local_threshold"
+    "fire_sprinklers": "required_for_new_dwelling_verify_nfpa_13d_and_local_amendments"
   },
 
   "massing_hints": {

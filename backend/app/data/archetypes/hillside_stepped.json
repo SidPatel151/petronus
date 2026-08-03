@@ -22,7 +22,7 @@
       "accent": "#8b7355",
       "window_frame": "#1a1a1a"
     },
-    "note": "Hillside stepped homes are defined by their split-level relationship to steep terrain. WUI fire zone requirements drive facade and vent material choices. Multi-zone HVAC is mandatory given large vertical separations between levels."
+    "note": "Hillside stepped homes are defined by their split-level relationship to steep terrain. Verify mapped WUI applicability before selecting facade and vent assemblies. Evaluate multi-zone HVAC from room-by-room loads, vertical separation, controls, and distribution constraints."
   },
 
   "lot": {
@@ -104,7 +104,7 @@
     "location": "rear_center_of_each_wet_level",
     "fixed": false,
     "ejector_pump_required_if_below_sewer": true,
-    "ejector_pump_note": "The generator MUST compare the finished floor elevation of each bathroom to the street sewer main invert elevation. Any bathroom FFE more than 8in below sewer main invert requires a sewage ejector pump and pit — this is non-negotiable per CBC plumbing code.",
+    "ejector_pump_note": "Compare fixture drain elevations, developed length, required slope, backwater conditions, and the approved sewer connection/invert. Provide listed pumping equipment only where compliant gravity drainage cannot be achieved; do not use an assumed 8in trigger.",
     "vertical_stack_across_levels": true,
     "note": "Route DWV stack vertically from lowest level up through roof. Each level connects to stack via sloped branch. Ejector pump at below-grade bathrooms discharges upward to stack above sewer main elevation."
   },
@@ -134,7 +134,7 @@
     "zones_per_level": 1,
     "reason": "Large vertical separation between levels and different sun/wind exposure at each level creates distinct thermal zones. A single air handler cannot properly condition all levels.",
     "ducted_central_allowed": false,
-    "heat_pump_required": true,
+    "heat_pump_design_default": true,
     "gas_allowed": false,
     "outdoor_unit_location": "street_level_pad_or_roof",
     "outdoor_unit_wui_note": "Outdoor units must be ember-resistant if in WUI zone — specify non-combustible surrounds and clear vegetation 10ft from unit.",
@@ -238,15 +238,15 @@
   },
 
   "california_compliance": {
-    "cbc_edition": "2022",
+    "cbc_edition": "2025",
     "title_24": true,
-    "fully_electric": true,
+    "fully_electric_design_default": true,
     "solar_ready": true,
-    "battery_ready": true,
-    "heat_pump_hvac": true,
-    "heat_pump_water_heater": true,
-    "induction_cooktop": true,
-    "ev_charging_required": true,
+    "battery_readiness_scope": "verify_2025_energy_code_and_project_compliance_path",
+    "heat_pump_hvac_design_default": true,
+    "heat_pump_water_heater_design_default": true,
+    "induction_cooktop_design_default": true,
+    "ev_scope": "verify_2025_calgreen_energy_code_and_local_requirements",
     "seismic_retrofit_likely": true,
     "wui_compliance": true,
     "nfpa_wui": true,
@@ -273,7 +273,7 @@
   },
 
   "known_constraints_summary": [
-    "EJECTOR PUMP CHECK: Compare every bathroom FFE to sewer main invert — any bathroom below sewer elevation requires ejector pump. This is a mandatory pre-design calculation.",
+    "DRAINAGE CHECK: Compare fixture outlet elevations and required slopes with the verified sewer connection/invert; identify any fixtures that cannot drain by gravity and design listed pumping/backwater protection as applicable.",
     "Multi-zone HVAC required — one zone per level minimum. Single air handler cannot serve all split levels.",
     "Voltage drop calculation required for service feeder — pole or vault may be 50-150ft from main panel, often at different elevation.",
     "WUI zone: all exterior vents must be ember-resistant (Class A), glazing must be fire-rated, roofing must be Class A. No wood siding without fire-resistant coating.",

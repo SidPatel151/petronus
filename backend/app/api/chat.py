@@ -1,82 +1,51 @@
-"""
-AI Chat endpoint — talks to Claude, detects building modification requests,
-and returns both a reply and an optional spec_patch to trigger regeneration.
-"""
+"""AI chat endpoint with constrained, regeneration-safe spec patches."""
 import asyncio
 import json
+import logging
+from typing import Any, Dict, List, Literal, Optional
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
 
-from app.constants import CALIFORNIA_CODE_REFERENCES
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are Petronus AI, an expert California residential architect, structural engineer, and MEP coordinator built into a BIM tool.
 
-You are deeply knowledgeable about California Building Code (CBC), CEC/CMC/CPC, Title 24 Energy Code, IBC, and ASCE 7 seismic design.
+SYSTEM_PROMPT = """You are Petronus AI, a California residential building-design assistant inside a conceptual BIM tool. You help users understand and modify a generated design, but you are not a licensed architect or engineer and must never describe this model as permit-approved or construction-ready.
 
-CORE COMPLIANCE CODES (NON-NEGOTIABLE):
-- CEC (California Electrical Code): Article 210 outlets, dedicated circuits, GFCI protection, bonding
-- CMC (California Mechanical Code): Sections 601-305 ductwork insulation (R-8), ventilation (0.35 CFM/sqft), access clearance (30in)
-- CPC (California Plumbing Code): Sections 418-608 trap seals (2in, <10ft from vent), cleanouts (100ft max), backflow prevention
-- Title 24 Energy Code: HVAC SEER≥16/AFUE≥95%, envelope R-19/R-30/U-0.30, solar-ready roof, cool roof SRI≥75
-- IBC Sections 1613, 1817, 2305: Lateral force resistance, foundation design, shear wall continuity, moment frame ductility
-- ASCE 7-22 Seismic: Equipment anchoring (>100 lbs), pipe support spacing (8-12ft), ductwork strut bracing, soft story prohibition
+CODE CONTEXT:
+- Use the 2025 California Building Standards Code (Title 24) for applications filed during the 2026-2028 cycle unless the supplied project states another adopted cycle.
+- Distinguish the California Residential Code from the California Building Code and distinguish NFPA 13D, NFPA 13R, and NFPA 13 based on occupancy and scope.
+- California codes have local amendments. Treat AHJ requirements, utility rules, site conditions, product listings, and licensed-professional calculations as unresolved unless the supplied model documents them.
+- Do not invent section numbers, universal thresholds, energy values, or seismic rules. Cite a section only when you are confident it applies to the stated occupancy, code cycle, and condition. Otherwise identify the subject and say it needs AHJ or professional verification.
+- Automated compliance results are deterministic preflight evidence, not proof that every applicable provision was checked.
 
-EARTHQUAKE SAFETY (CRITICAL IN CALIFORNIA):
-- Seismic Design Category (SDC) governs all lateral design: A < B < C < D < E < F
-- No soft stories allowed: first story lateral strength must be ≥80% of upper stories
-- All suspended MEP >2.5in diameter require seismic bracing (sway braces)
-- Ductwork requires diagonal strut bracing in SDC C+
-- Floor diaphragms must be continuous and tied to lateral system
-- Piping: light (<21 lbs/ft) ≤12ft spacing, heavy ≥21 lbs/ft) ≤8ft spacing
-- Connections must be detailed for ductility per ASCE 7 Chapter 13
+SAFETY PRIORITIES:
+- Call out unresolved egress, accessibility, fire/life-safety, structural, geotechnical, flood, utility, electrical-load, HVAC-load, plumbing-pressure, hydraulic, and seismic work when relevant.
+- Never claim a structural member, foundation, MEP size, brace, or connection is adequate without the required calculation and site inputs.
+- When proposing a change, explain which downstream systems need regeneration or professional verification.
 
-STRUCTURAL REQUIREMENTS:
-- Wood frame: require proper hold-downs and shear wall blocking
-- Steel: intermediate or special moment frames required in SDC D+; check beam-column connections
-- Concrete: ductile reinforcement detailing per ACI 318; shear walls must be continuous
-- Foundations: design for bearing capacity AND lateral loads; account for liquefaction potential
-
-VALID SPEC FIELDS you can change:
-- stories: int (1-10)
-- floor_to_floor_height_ft: float (8-14)
+VALID SPEC FIELDS you may change:
+- stories: integer 1-3
+- floor_to_floor_height_ft: number 8-14
 - structural_system: "wood" | "steel" | "concrete"
-- priority: "cost" | "time" | "space" | "light"
-- target_gross_area_sqft: float
-- unit_count: int
+- priority: "cost" | "time" | "space" | "light" | "energy"
+- target_gross_area_sqft: positive number
+- unit_count: positive integer
 - hvac_preference: "mini_split" | "rooftop"
-- shape_hint: "rectangle" | "l_shape" | "bar"
 
-ALWAYS respond with valid JSON in this exact format:
+Always return valid JSON exactly in this shape:
 {
-  "reply": "your conversational response here",
+  "reply": "your concise conversational response",
   "spec_patch": {}
 }
 
-If the user wants to modify the building include changed fields in spec_patch, otherwise leave it as {}.
-
-When answering compliance questions, cite specific code sections.
-When recommending changes, explain the structural or safety reasoning.
-Always mention seismic implications for California sites.
-
-Examples:
-- "make it 3 stories" → spec_patch: {"stories": 3} (but verify soft story risk)
-- "use steel framing" → spec_patch: {"structural_system": "steel"} (note: requires ductile connections in SDC D+)
-- "make it L-shaped" → spec_patch: {"shape_hint": "l_shape"} (careful: complex shapes increase seismic force concentration)
-- "I need 8 units" → spec_patch: {"unit_count": 8}
-- "prioritize natural light" → spec_patch: {"priority": "light"}
-- "what's the seismic risk?" → spec_patch: {} (provide detailed seismic info & mitigation strategies)
-- "add more outlets?" → Respond: "CEC Article 210 requires max 6ft spacing in living areas; I'd recommend..."
-
-Be concise. When applying changes, briefly explain what changed and why it suits this site.
-Prioritize safety and code compliance over cost or speed.
-No markdown, no bullet points — plain conversational text only."""
+Include only supported fields that the user explicitly requested in spec_patch. For a question, use an empty patch. Explain material safety or coordination consequences without making approval claims. Use plain conversational text inside reply, with no markdown."""
 
 
 class ChatMessage(BaseModel):
-    role: str
+    role: Literal["user", "assistant"]
     content: str
 
 
@@ -87,71 +56,137 @@ class ChatRequest(BaseModel):
     clicked_building: Optional[Dict[str, Any]] = None
 
 
+def _sanitize_spec_patch(value: Any) -> Dict[str, Any]:
+    """Allow only fields and values accepted by ProjectSpec/the current UI."""
+    if not isinstance(value, dict):
+        return {}
+    patch: Dict[str, Any] = {}
+    enum_values = {
+        "structural_system": {"wood", "steel", "concrete"},
+        "priority": {"cost", "time", "space", "light", "energy"},
+        "hvac_preference": {"mini_split", "rooftop"},
+    }
+    for field, allowed in enum_values.items():
+        if value.get(field) in allowed:
+            patch[field] = value[field]
+
+    stories = value.get("stories")
+    if isinstance(stories, int) and not isinstance(stories, bool) and 1 <= stories <= 3:
+        patch["stories"] = stories
+    units = value.get("unit_count")
+    if isinstance(units, int) and not isinstance(units, bool) and 1 <= units <= 100:
+        patch["unit_count"] = units
+    for field, low, high in (
+        ("floor_to_floor_height_ft", 8.0, 14.0),
+        ("target_gross_area_sqft", 100.0, 50_000.0),
+    ):
+        candidate = value.get(field)
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+            number = float(candidate)
+            if low <= number <= high:
+                patch[field] = number
+    return patch
+
+
 @router.post("/")
 async def chat(body: ChatRequest):
     from app.core.config import settings
-    api_key = settings.ANTHROPIC_API_KEY
-    if not api_key:
-        return {"reply": "No API key configured. Add ANTHROPIC_API_KEY to your .env file.", "spec_patch": {}}
 
-    import anthropic
+    if not settings.ANTHROPIC_API_KEY:
+        return {
+            "reply": "AI chat is not configured. Add ANTHROPIC_API_KEY to backend/.env and restart the API.",
+            "spec_patch": {},
+        }
 
-    ctx_parts = [SYSTEM_PROMPT]
-
+    context = [SYSTEM_PROMPT]
     if body.site_context:
-        sc = body.site_context
-        area = sc.get('area_sqft', 0)
-        ctx_parts.append(f"\nSITE: {area:.0f} sqft | Flood: {sc.get('flood_zone', 'X')} | Seismic SDC {sc.get('seismic_category', 'D')} | Wind {sc.get('wind_speed_mph', '?')} mph")
-        seismic = sc.get('hazard_detail', {}).get('seismic', {})
-        if seismic.get('note'):
-            ctx_parts.append(f"Seismic: {seismic['note']}")
-        weather = sc.get('hazard_detail', {}).get('current_weather', {})
-        if weather.get('temp_f'):
-            ctx_parts.append(f"Weather: {weather['temp_f']}°F, {weather.get('description', '')}")
+        site = body.site_context
+        context.append(
+            f"SITE: {float(site.get('area_sqft') or 0):.0f} sqft | "
+            f"Flood: {site.get('flood_zone') or 'unknown'} | "
+            f"Seismic SDC: {site.get('seismic_category') or 'unknown'} | "
+            f"Wind: {site.get('wind_speed_mph') or 'unknown'} mph"
+        )
+        hazards = site.get("hazard_detail") or {}
+        seismic = hazards.get("seismic") or {}
+        if seismic.get("note"):
+            context.append(f"Recorded seismic note: {seismic['note']}")
+        weather = hazards.get("current_weather") or {}
+        if weather.get("temp_f") is not None:
+            context.append(
+                f"Observed weather: {weather['temp_f']} F, "
+                f"{weather.get('description') or 'description unavailable'}"
+            )
 
     if body.building_model:
-        bm = body.building_model
-        spec = bm.get('spec', {}) or {}
-        ctx_parts.append(
-            f"\nCURRENT BUILDING: {len(bm.get('levels', []))} floors | {len(bm.get('rooms', []))} rooms | "
-            f"{len(bm.get('mep_elements', []))} MEP | spec: stories={spec.get('stories','?')}, "
-            f"system={spec.get('structural_system','?')}, priority={spec.get('priority','?')}, "
-            f"area={spec.get('target_gross_area_sqft','?')} sqft"
+        building = body.building_model
+        spec = building.get("spec") or {}
+        context.append(
+            f"CURRENT BUILDING: {len(building.get('levels') or [])} floors | "
+            f"{len(building.get('rooms') or [])} rooms | "
+            f"{len(building.get('mep_elements') or [])} MEP elements | "
+            f"use={spec.get('building_use') or 'unknown'}, "
+            f"stories={spec.get('stories') or 'unknown'}, "
+            f"structure={spec.get('structural_system') or 'unknown'}, "
+            f"area={spec.get('target_gross_area_sqft') or 'unknown'} sqft, "
+            f"code_cycle={spec.get('code_cycle') or 'unknown'}"
         )
-        errors = [i for i in bm.get('issues', []) if i.get('severity') == 'error']
+        errors = [
+            issue for issue in (building.get("issues") or [])
+            if isinstance(issue, dict) and issue.get("severity") == "error"
+        ]
         if errors:
-            ctx_parts.append(f"Compliance errors: {'; '.join(i.get('message','') for i in errors[:3])}")
-        ns = bm.get('neighbor_style', {})
-        if ns:
-            ctx_parts.append(f"Neighbors: {ns.get('dominant_material','?')} material, avg {ns.get('avg_neighbor_height_m','?')}m")
+            context.append(
+                "Current preflight errors: "
+                + "; ".join(str(issue.get("message") or "") for issue in errors[:3])
+            )
 
     if body.clicked_building:
-        props = body.clicked_building.get('properties', {})
-        ctx_parts.append(
-            f"\nCLICKED BUILDING: {props.get('building','?')} | "
-            f"{props.get('building:levels','?')} stories | "
-            f"{props.get('building:material','unknown')} | {props.get('height_m','?')}m"
+        properties = body.clicked_building.get("properties") or {}
+        context.append(
+            f"CLICKED CONTEXT BUILDING: type={properties.get('building') or 'unknown'} | "
+            f"stories={properties.get('building:levels') or 'unknown'} | "
+            f"material={properties.get('building:material') or 'unknown'} | "
+            f"height_m={properties.get('height_m') or 'unknown'}"
         )
 
-    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    messages = [message.model_dump() for message in body.messages]
+    if not messages:
+        return {"reply": "Ask a question or describe the change you want.", "spec_patch": {}}
 
-    client = anthropic.Anthropic(api_key=api_key)
-    response = await asyncio.to_thread(
-        client.messages.create,
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
-        system="\n".join(ctx_parts),
-        messages=messages,
-    )
+    try:
+        import anthropic
 
-    raw = response.content[0].text.strip()
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = await asyncio.to_thread(
+            client.messages.create,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=700,
+            system="\n".join(context),
+            messages=messages,
+        )
+        raw = next(
+            (block.text for block in response.content if getattr(block, "text", None)),
+            "",
+        ).strip()
+    except Exception:
+        logger.exception("AI chat provider call failed")
+        return {
+            "reply": "The AI service is temporarily unavailable. Your building model was not changed.",
+            "spec_patch": {},
+        }
 
     try:
         if raw.startswith("```"):
             raw = raw.split("```", 2)[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
+            if raw.lstrip().startswith("json"):
+                raw = raw.lstrip()[4:]
         data = json.loads(raw)
-        return {"reply": data.get("reply", raw), "spec_patch": data.get("spec_patch", {})}
-    except Exception:
-        return {"reply": raw, "spec_patch": {}}
+        if not isinstance(data, dict):
+            raise ValueError("AI response must be a JSON object")
+        return {
+            "reply": str(data.get("reply") or "I could not form a response."),
+            "spec_patch": _sanitize_spec_patch(data.get("spec_patch")),
+        }
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {"reply": raw or "I could not form a response.", "spec_patch": {}}
