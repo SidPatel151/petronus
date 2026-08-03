@@ -1,12 +1,15 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useAppStore } from '@/lib/store';
 import ProjectWizard from '@/components/ui/ProjectWizard';
 import IssuesPanel from '@/components/ui/IssuesPanel';
 import MassingPicker from '@/components/ui/MassingPicker';
 import AIChat from '@/components/ui/AIChat';
+import api from '@/lib/api';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // Dynamic imports to avoid SSR issues with Three.js / MapLibre
 const SiteMap = dynamic(() => import('@/components/map/SiteMap'), { ssr: false });
@@ -15,15 +18,69 @@ const BuildingViewer = dynamic(() => import('@/components/viewer/BuildingViewer'
 type Tab = 'map' | '3d';
 type RightTab = 'setup' | 'massing' | 'issues' | 'ai';
 
-export default function HomePage() {
+function AppContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mainTab, setMainTab] = useState<Tab>('map');
   const [rightTab, setRightTab] = useState<RightTab>('setup');
+  const [saveModal, setSaveModal] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
   const {
-    buildingModel, selectedSite,
+    buildingModel, selectedSite, spec,
     setBuildingModel, setSelectedSite, setSiteContext,
     setInfrastructure, setNeighborConstraints, setFeasibilityData, setDrawnParcel,
+    updateSpec,
   } = useAppStore();
+
+  // Load project from ?load=ID query param (coming from dashboard)
+  useEffect(() => {
+    const loadId = searchParams.get('load');
+    if (!loadId) return;
+    setLoadingProject(true);
+    fetch(`${API_BASE}/api/projects/${loadId}`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(project => {
+        if (project.spec) updateSpec(project.spec);
+        if (project.building_model) {
+          setBuildingModel(project.building_model);
+          const centroid = project.building_model?.site_context?.centroid;
+          if (centroid) {
+            setSelectedSite({
+              lat: centroid[1] ?? centroid.lat,
+              lon: centroid[0] ?? centroid.lon,
+              address: project.name || '',
+            } as any);
+          }
+          setMainTab('3d');
+          setRightTab('issues');
+        }
+      })
+      .catch(e => console.error('Failed to load project', e))
+      .finally(() => setLoadingProject(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async () => {
+    if (!buildingModel || !saveName.trim()) return;
+    setSaving(true);
+    try {
+      const addr = (selectedSite as any)?.address || '';
+      // Strip large render arrays before sending — backend re-strips too, but this keeps the request small
+      const { meshes: _m, mep_elements: _me, structural_members: _sm, columns: _c, ...slimModel } = buildingModel as any;
+      await api.saveProject(saveName.trim(), addr, spec, slimModel);
+      setSaveModal(false);
+      setSaveName('');
+      setSavedToast(true);
+      setTimeout(() => setSavedToast(false), 2500);
+    } catch (e) {
+      console.error('Save failed', e);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleNewSite = () => {
     setBuildingModel(null);
@@ -53,6 +110,16 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col h-screen bg-[var(--surface-0)]">
+      {loadingProject && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99999,
+          background: 'rgba(7,11,16,0.85)', backdropFilter: 'blur(8px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16,
+        }}>
+          <div style={{ width: 40, height: 40, border: '3px solid rgba(0,229,255,0.2)', borderTopColor: '#00e5ff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#00e5ff', letterSpacing: '2px' }}>LOADING PROJECT…</div>
+        </div>
+      )}
 
       {/* Top bar */}
       <header className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-[var(--border)] bg-[var(--surface-1)]">
@@ -103,6 +170,14 @@ export default function HomePage() {
                 style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)', background: 'var(--surface-2)' }}
               >
                 ↺ Redesign
+              </button>
+              <button
+                onClick={() => { setSaveName(''); setSaveModal(true); }}
+                title="Save this project"
+                className="text-xs font-mono px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--accent-green)', color: 'var(--accent-green)', background: 'var(--surface-2)' }}
+              >
+                ↓ Save
               </button>
               <button
                 onClick={handleNewSite}
@@ -204,6 +279,71 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+
+      {/* ── Save Project Modal ─────────────────────────────────────────────── */}
+      {saveModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setSaveModal(false)}>
+          <div style={{
+            background: '#0d1117', border: '1px solid rgba(0,255,136,0.25)',
+            borderRadius: 16, padding: '28px 32px', width: 380, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontFamily: 'monospace', fontSize: 10, letterSpacing: '3px',
+              textTransform: 'uppercase', color: '#00ff88', opacity: .7, marginBottom: 16 }}>
+              Save Project
+            </div>
+            <input
+              autoFocus
+              placeholder="Project name…"
+              value={saveName}
+              onChange={e => setSaveName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setSaveModal(false); }}
+              style={{
+                width: '100%', background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8,
+                padding: '10px 14px', color: '#f0f0f8', fontFamily: 'DM Sans,sans-serif',
+                fontSize: 14, marginBottom: 20, boxSizing: 'border-box', outline: 'none',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setSaveModal(false)} style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, fontFamily: 'monospace', fontSize: 12,
+                background: 'transparent', border: '1px solid rgba(255,255,255,0.08)',
+                color: '#4a4a66', cursor: 'pointer',
+              }}>Cancel</button>
+              <button onClick={handleSave} disabled={!saveName.trim() || saving} style={{
+                flex: 2, padding: '10px 0', borderRadius: 8, fontFamily: 'monospace', fontSize: 12,
+                background: saveName.trim() ? 'rgba(0,255,136,0.15)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${saveName.trim() ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                color: saveName.trim() ? '#00ff88' : '#3a3a5a', cursor: saveName.trim() ? 'pointer' : 'default',
+              }}>{saving ? 'Saving…' : 'Save Project'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Saved toast ───────────────────────────────────────────────────── */}
+      {savedToast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 9999,
+          background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)',
+          borderRadius: 10, padding: '10px 20px',
+          fontFamily: 'monospace', fontSize: 12, color: '#00ff88',
+        }}>
+          Project saved
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense>
+      <AppContent />
+    </Suspense>
   );
 }

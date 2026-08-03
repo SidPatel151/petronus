@@ -132,3 +132,7 @@ html:not(.app-page), body:not(.app-page) {
   50%       { opacity: 0.6; }
 }
 .animate-pulse-slow { animation: animate-pulse-slow 3s ease-in-out infinite; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

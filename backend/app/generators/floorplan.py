@@ -350,7 +350,7 @@ SFR_UPPER_LARGE: Dict[int, List[Dict]] = {
 }
 
 # Threshold: floor plate above this uses expanded large-house programs
-LARGE_HOUSE_THRESHOLD_M2 = 150.0  # ~1615 sqft per floor
+LARGE_HOUSE_THRESHOLD_M2 = 80.0  # ~860 sqft per floor
 
 # For multi-story SFR: floor 0 is public, floor 1+ is private (bedrooms)
 SFR_GROUND_ROWS = {  # standard — keyed by bedrooms
@@ -430,16 +430,20 @@ class FloorplanGenerator:
             cs = fp_interior_mf.intersection(raw_stair)
             if hasattr(cs, 'geoms'):
                 cs = max(cs.geoms, key=lambda g: g.area)
-            stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]] if (not cs.is_empty and hasattr(cs, 'exterior')) else [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
+            if not cs.is_empty and hasattr(cs, 'exterior'):
+                stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            else:
+                stair_poly = None   # outside footprint — omit
         except Exception:
-            stair_poly = [[c[0], c[1]] for c in raw_stair.exterior.coords[:-1]]
-        rooms.append(Room(
-            id=f"stair_{lvl}",
-            type="stair",
-            polygon=stair_poly,
-            level=lvl,
-            area_sqft=STAIR_W_M * STAIR_D_M * 10.764,
-        ))
+            stair_poly = None
+        if stair_poly:
+            rooms.append(Room(
+                id=f"stair_{lvl}",
+                type="stair",
+                polygon=stair_poly,
+                level=lvl,
+                area_sqft=STAIR_W_M * STAIR_D_M * 10.764,
+            ))
 
         corr_y = miny + STAIR_D_M
         raw_corr = Polygon([
@@ -468,12 +472,9 @@ class FloorplanGenerator:
         unit_idx = 0
         cursor_x = minx
 
-        # Collect all room rects (stair, corridor, unit shells, sub-rooms) for
-        # unified wall generation — each shared edge emitted exactly once.
-        stair_b = Polygon(stair_poly).bounds
-        all_rects: List[Tuple[float, float, float, float]] = [
-            (stair_b[0], stair_b[1], stair_b[2], stair_b[3]),
-        ]
+        # Collect room rects for unified wall generation (stair excluded — it's an
+        # open shaft, not a walled room; corridor/unit edges define its boundaries).
+        all_rects: List[Tuple[float, float, float, float]] = []
         corr_b = Polygon(corridor_poly).bounds
         all_rects.append((corr_b[0], corr_b[1], corr_b[2], corr_b[3]))
 
@@ -629,7 +630,7 @@ class FloorplanGenerator:
         return walls
 
     def _layout_victorian_ground(
-        self, footprint, bounds, w, d, level: Level
+        self, footprint, bounds, w, d, level: Level, all_levels: List[Level]
     ) -> Tuple[List[Room], List[Wall]]:
         """Ground floor of a Victorian narrow-lot: garage (front 60%) + utility rear (40%).
         Wet wall anchor and panel location are placed in the rear utility zone per archetype spec."""
@@ -695,6 +696,54 @@ class FloorplanGenerator:
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
+
+        # Stair — only for multi-story buildings
+        n_floors = len(all_levels)
+        if n_floors > 1:
+            maxx_sfr = bounds[2]
+            stair_w_sfr = min(w * 0.15, 1.5)
+            stair_d_sfr = min(d * 0.28, 3.5)
+            sr_x0 = maxx_sfr - stair_w_sfr
+            sr_y0 = miny + (d - stair_d_sfr) / 2
+            raw_sfr_stair = Polygon([
+                [sr_x0, sr_y0], [maxx_sfr, sr_y0],
+                [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+            ])
+            sfr_stair_poly = None
+            try:
+                cs = fp_interior.intersection(raw_sfr_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            except Exception:
+                pass
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
+
         return rooms, walls
 
     def _emit_interior_walls(
@@ -787,6 +836,190 @@ class FloorplanGenerator:
             ))
         return walls
 
+    # ── Hillside street-level ground floor ───────────────────────────────────
+    def _layout_hillside_ground(
+        self, footprint, bounds, w, d, level: Level,
+        all_levels: List[Level],
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Street level of a hillside stepped house: garage (front) + entry + mudroom + utility.
+        Generates 4 rooms so the ground floor is not nearly empty."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny = bounds[0], bounds[1]
+        fp_interior = footprint.buffer(-FP_INSET)
+
+        def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
+            cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            try:
+                clipped = fp_interior.intersection(cell)
+                if hasattr(clipped, 'geoms'):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                    return
+                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                rooms.append(Room(
+                    id=f"hs_{rtype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rtype, unit_id="house", polygon=poly, level=lvl,
+                    area_sqft=clipped.area * 10.764,
+                ))
+            except Exception:
+                pass
+
+        # Garage: front 40% of depth
+        garage_d = d * 0.40
+        _clip_room(minx, miny, minx + w, miny + garage_d, "garage")
+
+        # Service zone: back 60% split into entry(40%), mudroom(30%), utility(30%)
+        svc_y0 = miny + garage_d
+        svc_y1 = miny + d
+        entry_x1 = minx + w * 0.40
+        mud_x1   = minx + w * 0.70
+        _clip_room(minx,     svc_y0, entry_x1, svc_y1, "foyer")
+        _clip_room(entry_x1, svc_y0, mud_x1,   svc_y1, "mudroom")
+        _clip_room(mud_x1,   svc_y0, minx + w, svc_y1, "utility")
+
+        room_rects: List[Tuple[float, float, float, float]] = [
+            (minx, miny,   minx + w,  miny + garage_d),
+            (minx, svc_y0, entry_x1,  svc_y1),
+            (entry_x1, svc_y0, mud_x1, svc_y1),
+            (mud_x1, svc_y0, minx + w, svc_y1),
+        ]
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
+
+        # Stair — only for multi-story
+        n_floors = len(all_levels) if all_levels else 1
+        if n_floors > 1:
+            stair_w = min(w * 0.15, 1.5)
+            stair_d_s = min(d * 0.28, 3.5)
+            sr_x0 = (minx + w) - stair_w
+            sr_y0 = miny + (d - stair_d_s) / 2
+            raw_stair = Polygon([
+                [sr_x0, sr_y0], [sr_x0 + stair_w, sr_y0],
+                [sr_x0 + stair_w, sr_y0 + stair_d_s], [sr_x0, sr_y0 + stair_d_s],
+            ])
+            try:
+                cs = fp_interior.intersection(raw_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    rooms.append(Room(
+                        id=f"hs_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type="stair", unit_id="house",
+                        polygon=[[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]],
+                        level=lvl, area_sqft=stair_w * stair_d_s * 10.764,
+                    ))
+            except Exception:
+                pass
+
+        return rooms, walls
+
+    # ── Garage-on-grade ground floor (Urban Infill / Production Tract) ─────────
+    def _layout_garage_ground(
+        self, footprint, bounds, w, d, level: Level, archetype_id: str,
+        all_levels: List[Level] = None,
+    ) -> Tuple[List[Room], List[Wall]]:
+        """Ground floor with front-facing attached garage + entry zone behind it."""
+        rooms: List[Room] = []
+        walls: List[Wall] = []
+        lvl = level.index
+        minx, miny = bounds[0], bounds[1]
+        fp_interior = footprint.buffer(-FP_INSET)
+
+        # Garage takes the front 40% of the depth; entry+utility gets the back 60%.
+        garage_depth_frac = 0.40
+        garage_d = d * garage_depth_frac
+        entry_d  = d * (1.0 - garage_depth_frac)
+
+        def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
+            cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            try:
+                clipped = fp_interior.intersection(cell)
+                if hasattr(clipped, 'geoms'):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
+                    return
+                poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                cb = clipped.bounds
+                rooms.append(Room(
+                    id=f"sfr_{rtype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rtype, unit_id="house", polygon=poly, level=lvl,
+                    area_sqft=clipped.area * 10.764,
+                ))
+            except Exception:
+                pass
+
+        # Garage (front)
+        _clip_room(minx, miny, minx + w, miny + garage_d, "garage")
+
+        # Entry + utility behind garage
+        entry_w = w * 0.55
+        utility_w = w - entry_w
+        entry_y0 = miny + garage_d
+        entry_y1 = miny + d
+        _clip_room(minx,           entry_y0, minx + entry_w,   entry_y1, "foyer")
+        _clip_room(minx + entry_w, entry_y0, minx + entry_w + utility_w, entry_y1, "utility")
+
+        # Collect room rects for wall generation
+        room_rects: List[Tuple[float, float, float, float]] = [
+            (minx, miny, minx + w, miny + garage_d),
+            (minx, miny + garage_d, minx + entry_w, miny + d),
+            (minx + entry_w, miny + garage_d, minx + w, miny + d),
+        ]
+        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
+        walls.extend(self._place_exterior_walls(footprint, level))
+
+        # Stair — only for multi-story buildings
+        n_floors = len(all_levels) if all_levels is not None else 1
+        if n_floors > 1:
+            maxx_sfr = minx + w
+            miny_local = bounds[1]
+            stair_w_sfr = min(w * 0.15, 1.5)
+            stair_d_sfr = min(d * 0.28, 3.5)
+            sr_x0 = maxx_sfr - stair_w_sfr
+            sr_y0 = miny_local + (d - stair_d_sfr) / 2
+            raw_sfr_stair = Polygon([
+                [sr_x0, sr_y0], [maxx_sfr, sr_y0],
+                [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+            ])
+            sfr_stair_poly = None
+            try:
+                cs = fp_interior.intersection(raw_sfr_stair)
+                if hasattr(cs, 'geoms'):
+                    cs = max(cs.geoms, key=lambda g: g.area)
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                    sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+            except Exception:
+                pass
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny_local
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
+
+        return rooms, walls
+
     # ── Single-family residential layout ─────────────────────────────────────
     def _layout_sfr_floor(
         self, footprint, bounds, w, d, level: Level,
@@ -803,34 +1036,59 @@ class FloorplanGenerator:
         # ── Archetype overrides ───────────────────────────────────────────────
         archetype_id = (archetype or {}).get('id', '')
         if archetype_id == 'victorian_narrow_lot' and lvl == 0:
-            return self._layout_victorian_ground(footprint, bounds, w, d, level)
+            return self._layout_victorian_ground(footprint, bounds, w, d, level, all_levels)
         if archetype_id == 'adu_compact':
             return self._layout_adu_floor(footprint, bounds, w, d, level, all_levels, bedrooms, archetype)
+        # Hillside street level: richer 4-room ground (garage+entry+mudroom+utility)
+        if archetype_id == 'hillside_stepped' and lvl == 0:
+            return self._layout_hillside_ground(footprint, bounds, w, d, level, all_levels)
+        # Archetypes with ground-level garage (Urban Infill, Production Tract, etc.)
+        _garage_at_grade = (archetype or {}).get('massing_hints', {}).get('garage_at_grade', False)
+        if _garage_at_grade and lvl == 0:
+            return self._layout_garage_ground(footprint, bounds, w, d, level, archetype_id, all_levels)
 
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
 
-        # Select which row program to use for this floor
+        _is_victorian = archetype_id == 'victorian_narrow_lot'
+
+        # Select which row program to use for this floor.
+        # Core rule: bedrooms can appear on ANY upper floor — the strict
+        # "ground=public, upper=private" split is only enforced for large houses
+        # where the expanded programs already mix things correctly.
         if n_floors == 1:
             if use_large:
-                # Single-story large: combine ground + upper programs
+                # Single story large: all public spaces + all bedrooms on one floor
                 ground = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
-                upper = SFR_UPPER_LARGE.get(br, [])
+                upper  = SFR_UPPER_LARGE.get(br, [])
                 combined = ground + upper
                 total = sum(r["row_frac_d"] for r in combined)
                 row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in combined]
             else:
                 row_program = SFR_PROGRAMS[br]
+
         elif lvl == 0:
+            # Ground floor: public living spaces (kitchen, living, dining)
             if use_large:
                 row_program = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
             else:
                 row_program = SFR_GROUND_ROWS[br]
             total = sum(r["row_frac_d"] for r in row_program)
             row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
+
         else:
+            # Upper floors for ALL archetypes:
+            # - Large floor plate → SFR_UPPER_LARGE (bedrooms + bonus/loft/media)
+            # - Small 2-story → full SFR_PROGRAMS so bedrooms + living share the floor
+            # - Small 3-story → SFR_UPPER_ROWS (bedrooms focused, floor is compact)
+            # Victorian floor 1 also uses full SFR_PROGRAMS so it mirrors real Victorian
+            # layouts where a guest bedroom sits on the main living floor.
             if use_large:
                 row_program = SFR_UPPER_LARGE.get(br, SFR_UPPER_ROWS[br])
+            elif n_floors == 2 or _is_victorian:
+                # Two-story or Victorian: upper floor gets the FULL per-bedroom program
+                # (living + kitchen + bedrooms) so rooms are not artificially segregated.
+                row_program = list(SFR_PROGRAMS.get(br, SFR_PROGRAMS[3]))
             else:
                 row_program = SFR_UPPER_ROWS[br]
             total = sum(r["row_frac_d"] for r in row_program)
@@ -877,39 +1135,42 @@ class FloorplanGenerator:
             x_cursor = minx
             for rdef, rw in zip(row["rooms"], adj_widths):
                 rx0, rx1 = x_cursor, x_cursor + rw
-                cell_cx = (rx0 + rx1) / 2
-                cell_cz = (row_y0 + row_y1) / 2
-                if fp_interior.contains(Point(cell_cx, cell_cz)):
-                    # Clip room polygon to fp_interior so it never extends
-                    # outside the exterior walls — critical for L/U shapes and
-                    # any room on the perimeter whose rectangle overshoots.
-                    cell_shape = Polygon([
-                        [rx0, row_y0], [rx1, row_y0],
-                        [rx1, row_y1], [rx0, row_y1],
-                    ])
-                    try:
-                        clipped = fp_interior.intersection(cell_shape)
-                        if hasattr(clipped, 'geoms'):
-                            clipped = max(clipped.geoms, key=lambda g: g.area)
-                        if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
-                            x_cursor += rw
-                            continue
-                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                        cb = clipped.bounds
-                        area = clipped.area * 10.764
-                    except Exception:
-                        poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                        cb = (rx0, row_y0, rx1, row_y1)
-                        area = rw * row_d * 10.764
+                row_area = rw * row_d
+                cell_shape = Polygon([
+                    [rx0, row_y0], [rx1, row_y0],
+                    [rx1, row_y1], [rx0, row_y1],
+                ])
+                try:
+                    clipped = fp_interior.intersection(cell_shape)
+                    if hasattr(clipped, 'geoms'):
+                        clipped = max(clipped.geoms, key=lambda g: g.area)
+                    # Accept if clipped area ≥ 25% of the cell so partial rooms
+                    # near L/U cut corners still get placed instead of leaving gaps.
+                    if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < max(0.5, row_area * 0.25):
+                        x_cursor += rw
+                        continue
+                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                    cb = clipped.bounds
+                    area = clipped.area * 10.764
+                except Exception:
+                    # Fallback: full rectangle — only if center is inside
+                    cell_cx = (rx0 + rx1) / 2
+                    cell_cz = (row_y0 + row_y1) / 2
+                    if not fp_interior.contains(Point(cell_cx, cell_cz)):
+                        x_cursor += rw
+                        continue
+                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                    cb = (rx0, row_y0, rx1, row_y1)
+                    area = row_area * 10.764
 
-                    rooms.append(Room(
-                        id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                        type=rdef["type"],
-                        unit_id="house",
-                        polygon=poly, level=lvl,
-                        area_sqft=area,
-                    ))
-                    room_rects.append((cb[0], cb[1], cb[2], cb[3]))
+                rooms.append(Room(
+                    id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rdef["type"],
+                    unit_id="house",
+                    polygon=poly, level=lvl,
+                    area_sqft=area,
+                ))
+                room_rects.append((cb[0], cb[1], cb[2], cb[3]))
                 x_cursor += rw
             y_cursor += row_d
 
@@ -926,24 +1187,40 @@ class FloorplanGenerator:
                 [sr_x0, sr_y0], [maxx_sfr, sr_y0],
                 [maxx_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
             ])
+            sfr_stair_poly = None
             try:
                 cs = fp_interior.intersection(raw_sfr_stair)
                 if hasattr(cs, 'geoms'):
                     cs = max(cs.geoms, key=lambda g: g.area)
-                if not cs.is_empty and hasattr(cs, 'exterior'):
+                if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
                     sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
-                else:
-                    sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
             except Exception:
-                sfr_stair_poly = [[c[0], c[1]] for c in raw_sfr_stair.exterior.coords[:-1]]
-            rooms.append(Room(
-                id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
-                type="stair",
-                unit_id="house",
-                polygon=sfr_stair_poly,
-                level=lvl,
-                area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
-            ))
+                pass   # clip failed — try fallback below
+            if not sfr_stair_poly:
+                # Fallback: center-back position
+                sr_x0 = minx + (w - stair_w_sfr) / 2
+                sr_y0 = miny
+                raw_sfr_stair = Polygon([
+                    [sr_x0, sr_y0], [sr_x0 + stair_w_sfr, sr_y0],
+                    [sr_x0 + stair_w_sfr, sr_y0 + stair_d_sfr], [sr_x0, sr_y0 + stair_d_sfr],
+                ])
+                try:
+                    cs = fp_interior.intersection(raw_sfr_stair)
+                    if hasattr(cs, 'geoms'):
+                        cs = max(cs.geoms, key=lambda g: g.area)
+                    if not cs.is_empty and hasattr(cs, 'exterior') and cs.area >= 0.05:
+                        sfr_stair_poly = [[c[0], c[1]] for c in list(cs.exterior.coords)[:-1]]
+                except Exception:
+                    pass
+            if sfr_stair_poly:
+                rooms.append(Room(
+                    id=f"sfr_stair_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type="stair",
+                    unit_id="house",
+                    polygon=sfr_stair_poly,
+                    level=lvl,
+                    area_sqft=stair_w_sfr * stair_d_sfr * 10.764,
+                ))
 
         # Phase 3: emit one interior wall per unique shared edge, skip exterior edges
         self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
@@ -1027,7 +1304,7 @@ class FloorplanGenerator:
     def _layout_adu_floor(
         self, footprint, bounds, w, d, level: Level,
         all_levels: List[Level], bedrooms: int,
-        archetype: Optional[Dict[str, Any]] = None,  # noqa: ARG002
+        archetype: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Room], List[Wall]]:
         """ADU room layout: compact rectangle programs from adu_compact.json blueprints."""
         rooms: List[Room] = []
@@ -1063,35 +1340,38 @@ class FloorplanGenerator:
             for rdef in row["rooms"]:
                 rw = w * rdef["frac_w"]
                 rx0, rx1 = x_cursor, x_cursor + rw
-                cell_cx = (rx0 + rx1) / 2
-                cell_cy = (row_y0 + row_y1) / 2
-                if fp_interior.contains(Point(cell_cx, cell_cy)):
-                    cell_shape = Polygon([
-                        [rx0, row_y0], [rx1, row_y0],
-                        [rx1, row_y1], [rx0, row_y1],
-                    ])
-                    try:
-                        clipped = fp_interior.intersection(cell_shape)
-                        if hasattr(clipped, 'geoms'):
-                            clipped = max(clipped.geoms, key=lambda g: g.area)
-                        if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < 0.5:
-                            x_cursor += rw
-                            continue
-                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                        cb = clipped.bounds
-                        area = clipped.area * 10.764
-                    except Exception:
-                        poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                        cb = (rx0, row_y0, rx1, row_y1)
-                        area = rw * row_d * 10.764
-                    rooms.append(Room(
-                        id=f"adu_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                        type=rdef["type"],
-                        unit_id="adu",
-                        polygon=poly, level=lvl,
-                        area_sqft=area,
-                    ))
-                    room_rects.append((cb[0], cb[1], cb[2], cb[3]))
+                row_area = rw * row_d
+                cell_shape = Polygon([
+                    [rx0, row_y0], [rx1, row_y0],
+                    [rx1, row_y1], [rx0, row_y1],
+                ])
+                try:
+                    clipped = fp_interior.intersection(cell_shape)
+                    if hasattr(clipped, 'geoms'):
+                        clipped = max(clipped.geoms, key=lambda g: g.area)
+                    if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < max(0.5, row_area * 0.25):
+                        x_cursor += rw
+                        continue
+                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                    cb = clipped.bounds
+                    area = clipped.area * 10.764
+                except Exception:
+                    cell_cx = (rx0 + rx1) / 2
+                    cell_cy = (row_y0 + row_y1) / 2
+                    if not fp_interior.contains(Point(cell_cx, cell_cy)):
+                        x_cursor += rw
+                        continue
+                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
+                    cb = (rx0, row_y0, rx1, row_y1)
+                    area = row_area * 10.764
+                rooms.append(Room(
+                    id=f"adu_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
+                    type=rdef["type"],
+                    unit_id="adu",
+                    polygon=poly, level=lvl,
+                    area_sqft=area,
+                ))
+                room_rects.append((cb[0], cb[1], cb[2], cb[3]))
                 x_cursor += rw
             y_cursor += row_d
 

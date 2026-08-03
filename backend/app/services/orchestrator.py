@@ -5,7 +5,7 @@ Ties together all generators in sequence, emitting progress events.
 import uuid
 import asyncio
 from typing import Callable, Optional
-from app.models.schemas import BuildingModel, ProjectSpec, GenerateRequest
+from app.models.schemas import BuildingModel, ProjectSpec, GenerateRequest, Wall
 from app.services.site_context import SiteContextService
 from app.services.ai_brief import get_design_brief
 from app.generators.massing import MassingGenerator
@@ -234,11 +234,18 @@ class GenerationOrchestrator:
         # Step 3: Massing with neighbor awareness
         self.progress_cb(30, "Generating massing options…")
         log.append("Generating 3 massing options with neighbor context")
+        # Archetype arch_style (set in design_brief by apply_archetype_to_design_brief)
+        # takes priority over user's raw style choice so the massing generator
+        # receives e.g. 'classic_gabled' for Victorian, not whatever the user typed.
+        _massing_style = (
+            (design_brief.get('arch_style') if design_brief else None)
+            or getattr(spec, 'style', None)
+        )
         massing_options, levels = self.massing_gen.generate(
             spec, site_ctx,
             neighbor_buildings=neighbor_buildings,
             design_brief=design_brief,
-            style=getattr(spec, 'style', None),
+            style=_massing_style,
         )
         model.massing_options = massing_options
         model.levels = levels
@@ -261,7 +268,11 @@ class GenerationOrchestrator:
         model.neighbor_style = neighbor_style
         model.design_brief = design_brief
         stair_meshes = self._generate_stair_meshes(rooms, levels, spec)
-        door_meshes  = self._generate_interior_door_meshes(rooms, walls, levels, spec)
+        door_meshes, wall_splits = self._generate_interior_door_meshes(rooms, walls, levels, spec)
+        # Replace door-bearing walls with left+right segments to create visual openings
+        if wall_splits:
+            model.walls = [seg for w in walls
+                           for seg in (wall_splits.get(w.id) or [w])]
         model.meshes = facade_meshes + stair_meshes + door_meshes  # type: ignore
         log.append(f"Facade: {len(facade_meshes)} detail meshes + {len(door_meshes)} interior doors")
 
@@ -470,11 +481,17 @@ class GenerationOrchestrator:
             return inside
 
         meshes: list = []
+        wall_splits: dict = {}   # wall.id → [Wall_left, Wall_right] replacement segments
         int_walls = [w for w in walls if not w.is_exterior]
         level_indices = sorted(set(r.level for r in rooms))
 
         for lvl_idx in level_indices:
-            lvl_rooms = [r for r in rooms if r.level == lvl_idx]
+            # Sort ascending by area so specific sub-rooms are PIP-tested before
+            # enclosing shell rooms (e.g. unit shells in MF buildings).
+            lvl_rooms = sorted(
+                [r for r in rooms if r.level == lvl_idx],
+                key=lambda r: r.area_sqft,
+            )
             y_base = level_elevations.get(lvl_idx, lvl_idx * floor_h_m)
 
             if len(lvl_rooms) < 2:
@@ -483,8 +500,14 @@ class GenerationOrchestrator:
             lvl_int_walls = [w for w in int_walls if w.level == lvl_idx]
 
             # ── Step 1: map each interior wall to its two adjacent rooms ──────
-            # Offset midpoint ±15 cm along wall normal, PIP-test into every room.
-            wall_to_rooms: dict = {}   # wall.id → (room_id_a, room_id_b, wall)
+            # Probe ±35 cm along the wall normal so we reliably land inside each
+            # room rather than on its edge.  Sort rooms smallest-first so the PIP
+            # test hits the most specific (sub-)room before any enclosing shell.
+            wall_to_rooms: dict = {}
+            _sorted_rooms = sorted(lvl_rooms, key=lambda r: r.area_sqft)
+            _room_area    = {r.id: r.area_sqft for r in lvl_rooms}
+            MIN_ROOM_SQFT = 10.0   # ignore tiny clipping slivers
+
             for wall in lvl_int_walls:
                 s, e = wall.start, wall.end
                 dx = e[0] - s[0]
@@ -495,19 +518,23 @@ class GenerationOrchestrator:
                 nx, nz = -dz / wl, dx / wl
                 mx = (s[0] + e[0]) / 2
                 mz = (s[1] + e[1]) / 2
-                OFFSET = 0.15
+                OFFSET = 0.35   # was 0.15 — deeper probe avoids landing on polygon edge
 
                 sides: list = []
                 for sign in (-1, 1):
                     tx, tz = mx + nx * OFFSET * sign, mz + nz * OFFSET * sign
                     hit = None
-                    for room in lvl_rooms:
-                        if room.polygon and _pip(tx, tz, room.polygon):
+                    for room in _sorted_rooms:
+                        if (room.polygon
+                                and _room_area.get(room.id, 0) >= MIN_ROOM_SQFT
+                                and _pip(tx, tz, room.polygon)):
                             hit = room.id
                             break
                     sides.append(hit)
 
-                if sides[0] and sides[1] and sides[0] != sides[1]:
+                if (sides[0] and sides[1] and sides[0] != sides[1]
+                        and _room_area.get(sides[0], 0) >= MIN_ROOM_SQFT
+                        and _room_area.get(sides[1], 0) >= MIN_ROOM_SQFT):
                     wall_to_rooms[wall.id] = (sides[0], sides[1], wall)
 
             # ── Step 2: build room adjacency graph ────────────────────────────
@@ -524,35 +551,32 @@ class GenerationOrchestrator:
                 # Fallback: start from the largest room on this level
                 open_ids = [max(lvl_rooms, key=lambda r: r.area_sqft).id]
 
+            # door_granted[room_id] = True once that room has been given one door.
+            # Acts as the per-room weight: False = no door yet, True = door placed.
+            door_granted: dict = {}
             reachable: set = set(open_ids)
             queue: list = list(open_ids)
             door_walls: list = []
 
             while queue:
                 cur_id = queue.pop(0)
-                cur_type = room_by_id[cur_id].type if cur_id in room_by_id else ''
-                cur_open = cur_type in OPEN_TYPES
 
                 for nbr_id, wall in room_nbrs.get(cur_id, []):
                     if nbr_id in reachable:
-                        continue
+                        continue  # already accessible — no second door ever
+
                     reachable.add(nbr_id)
                     queue.append(nbr_id)
 
                     nbr_room = room_by_id.get(nbr_id)
-                    if nbr_room is None:
-                        continue
+                    if nbr_room is None or nbr_room.type in NO_DOOR_TYPES:
+                        continue  # stair/attic — open passage, no door
 
-                    # No door for stairs/attic (always open passages)
-                    if nbr_room.type in NO_DOOR_TYPES:
-                        continue
-
-                    nbr_open = nbr_room.type in OPEN_TYPES
-
-                    # Door only if destination is a closed room.
-                    # Open → open (living→corridor) = no door.
-                    if not (cur_open and nbr_open):
+                    # Place exactly ONE door the first time we reach a closed room.
+                    # Open rooms (corridor, living, hallway…) need no door.
+                    if nbr_room.type not in OPEN_TYPES and not door_granted.get(nbr_id):
                         door_walls.append(wall)
+                        door_granted[nbr_id] = True
 
             # ── Step 4: generate door mesh for each recorded wall ──────────────
             for wall in door_walls:
@@ -564,10 +588,8 @@ class GenerationOrchestrator:
                     continue
 
                 ux, uz = dx / wl, dz / wl
-                # Wall normal — used to offset door ±5mm so it's visible from both rooms
                 nx_d = -dz / wl
                 nz_d =  dx / wl
-                FOF  = 0.005  # 5 mm face offset
 
                 cx = (s[0] + e[0]) / 2
                 cz = (s[1] + e[1]) / 2
@@ -578,7 +600,40 @@ class GenerationOrchestrator:
                 door_h = 2.05
                 hw = door_w / 2
 
-                # Thin box: front face at +FOF, back face at -FOF — avoids z-fighting with wall
+                # ── Split wall into left + right segments around door opening ──
+                MIN_SEG = 0.12
+                split_lx = cx - ux * hw
+                split_lz = cz - uz * hw
+                split_rx = cx + ux * hw
+                split_rz = cz + uz * hw
+                seg_len  = wl / 2 - hw   # symmetric on both sides
+                segs = []
+                if seg_len > MIN_SEG:
+                    segs.append(Wall(
+                        id=f"{wall.id}_L",
+                        start=list(s),
+                        end=[split_lx, split_lz],
+                        height_ft=wall.height_ft,
+                        level=wall.level,
+                        is_exterior=False,
+                        is_shear=wall.is_shear,
+                    ))
+                    segs.append(Wall(
+                        id=f"{wall.id}_R",
+                        start=[split_rx, split_rz],
+                        end=list(e),
+                        height_ft=wall.height_ft,
+                        level=wall.level,
+                        is_exterior=False,
+                        is_shear=wall.is_shear,
+                    ))
+                if segs:
+                    wall_splits[wall.id] = segs
+
+                # Door panel sits 5mm proud of each wall face.
+                # Interior walls are 0.2m thick (0.1m half-thickness) so
+                # FOF = 0.105 places door face just outside both wall surfaces.
+                FOF = 0.105
                 verts = [
                     [cx - ux*hw + nx_d*FOF, y_base,           cz - uz*hw + nz_d*FOF],  # 0
                     [cx + ux*hw + nx_d*FOF, y_base,           cz + uz*hw + nz_d*FOF],  # 1
@@ -606,7 +661,7 @@ class GenerationOrchestrator:
                     "color": "#8b6f47",
                 })
 
-        return meshes
+        return meshes, wall_splits
 
     async def _safe_infra(self, spec: ProjectSpec) -> dict:
         """Fetch nearby infrastructure, return empty dict on failure."""
