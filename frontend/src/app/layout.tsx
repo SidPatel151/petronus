@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Petronus — Automated Building Design for California',
-  description: 'Generate complete MEP building models for CA multi-family residential',
+  description: 'Generate coordinated architectural and MEP concept models for California residential projects',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

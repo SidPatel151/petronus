@@ -213,7 +213,7 @@ export default function SettingsPage() {
               <Section title="Notifications" accent="#7c3aed">
                 <Toggle label="Generation complete" sub="Notify when a model finishes generating"
                   value={notifs.generation_complete} onChange={v => setNotifs(n => ({ ...n, generation_complete: v }))} />
-                <Toggle label="Compliance warnings" sub="Alert on CBC errors or flood zone flags"
+                <Toggle label="Preflight findings" sub="Alert on preliminary code or flood-zone findings"
                   value={notifs.compliance_warnings} onChange={v => setNotifs(n => ({ ...n, compliance_warnings: v }))} />
                 <Toggle label="Weekly summary" sub="Projects generated, checks run, avg time"
                   value={notifs.weekly_summary} onChange={v => setNotifs(n => ({ ...n, weekly_summary: v }))} />

@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 
@@ -47,10 +49,15 @@ class ProjectSpec(BaseModel):
     occupancy: Optional[Literal[
         "SingleFamilyResidential", "MultiFamilyResidential"
     ]] = None
+    construction_scope: Literal[
+        "new_construction", "addition", "alteration"
+    ] = "new_construction"
     permit_set: bool = False
-    # Code edition used for deterministic preflight checks.  California's
-    # 2025 Title 24 cycle applies to permit applications filed in 2026-2028.
-    code_cycle: Literal["2025"] = "2025"
+    # California code-cycle selection is controlled by the permit application
+    # filing date.  With no filing date, use the current 2025 cycle and do not
+    # infer grandfathering into an earlier edition.
+    permit_application_date: Optional[date] = None
+    code_cycle: Literal["2022", "2025"] = "2025"
     jurisdiction_city: Optional[str] = None
 
     # Site
@@ -83,10 +90,52 @@ class ProjectSpec(BaseModel):
     # keys: walls, roof, floors, windows, foundation, interior_walls
     # values: "wood"|"concrete"|"brick"|"metal"|"glass"|"stone"|"stucco"|"ai"
     fine_details: Optional[Dict[str, Any]] = None
-    # ADU sprinkler applicability depends on the primary dwelling.  ``None``
-    # means unknown and keeps sprinklers enabled as a conservative design
-    # default without claiming that the law universally requires them.
-    primary_dwelling_sprinklered: Optional[bool] = None
+    # ADU sprinkler applicability depends on the legal requirement for the
+    # primary dwelling, not merely whether sprinklers happen to be installed.
+    primary_dwelling_sprinkler_requirement: Literal[
+        "required", "not_required", "unknown"
+    ] = "unknown"
+    primary_dwelling_sprinkler_determination_source: Optional[str] = None
+    # Deprecated input retained only so older saved projects still deserialize.
+    # It must not be used as a legal determination of sprinkler applicability.
+    primary_dwelling_sprinklered: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Deprecated compatibility field. Use "
+            "primary_dwelling_sprinkler_requirement and its determination source."
+        ),
+        json_schema_extra={"deprecated": True},
+    )
+
+    @model_validator(mode="after")
+    def validate_code_cycle_for_filing_date(self) -> "ProjectSpec":
+        supported_start = date(2023, 1, 1)
+        cycle_boundary = date(2026, 1, 1)
+        supported_end = date(2028, 12, 31)
+        if self.permit_application_date is None:
+            if self.code_cycle != "2025":
+                raise ValueError(
+                    "code_cycle '2022' requires a permit_application_date "
+                    "before 2026-01-01; without a filing date, use the current "
+                    "2025 cycle"
+                )
+            return self
+
+        if not supported_start <= self.permit_application_date <= supported_end:
+            raise ValueError(
+                "permit_application_date is outside the supported California "
+                "code-cycle filing window of 2023-01-01 through 2028-12-31"
+            )
+
+        expected_cycle = (
+            "2025" if self.permit_application_date >= cycle_boundary else "2022"
+        )
+        if self.code_cycle != expected_cycle:
+            raise ValueError(
+                f"permit_application_date {self.permit_application_date.isoformat()} "
+                f"requires California code_cycle {expected_cycle!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def align_residential_occupancy(self) -> "ProjectSpec":

@@ -13,6 +13,7 @@ preflight, not a substitute for an AHJ review or a licensed design professional.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -55,7 +56,7 @@ RULES: Dict[str, Dict[str, str]] = {
         "citation": "2025 California Energy Code (Title 24, Part 6)",
     },
     "CBC-FIRE-LIFE-SAFETY": {
-        "citation": "2025 California Residential Code R313-R315; California Building Code Section 903 and adopted NFPA standard as applicable",
+        "citation": "2025 California Residential Code R309-R311; California Building Code Section 903 and adopted NFPA standard as applicable",
     },
     "CBC-STRUCTURAL": {
         "citation": "2025 California Building Code (Title 24, Part 2), Chapters 16-23",
@@ -117,21 +118,45 @@ ELECTRICAL_ROOMS: Set[str] = {
     "bedroom", "living", "family_room", "dining", "kitchen", "bathroom",
     "office", "loft", "media_room", "bonus_room", "laundry", "utility",
     "mechanical", "garage", "foyer", "mudroom", "corridor", "hall", "hallway",
-    "unit",
+    "unit", "walk_in_closet", "library", "gym",
 }
 OUTLET_ROOMS: Set[str] = {
     "bedroom", "living", "family_room", "dining", "kitchen", "office",
     "loft", "media_room", "bonus_room", "bathroom", "laundry", "garage",
+    "library", "gym",
 }
 CONDITIONED_ROOMS: Set[str] = {
     "bedroom", "living", "family_room", "dining", "kitchen", "office",
-    "loft", "media_room", "bonus_room", "unit",
+    "loft", "media_room", "bonus_room", "unit", "library", "gym",
 }
 WET_ROOMS: Set[str] = {"bathroom", "kitchen", "laundry"}
 SPRINKLER_ROOMS: Set[str] = {
     "bedroom", "living", "family_room", "dining", "kitchen", "office",
     "loft", "media_room", "bonus_room", "bathroom", "laundry", "utility",
-    "mechanical", "garage", "unit",
+    "mechanical", "garage", "unit", "walk_in_closet", "library", "gym",
+}
+
+# Room types whose MEP applicability is intentionally classified by this
+# preflight.  An unfamiliar program name must not silently fall between the
+# electrical, plumbing and HVAC coverage sets.
+KNOWN_ROOM_TYPES: Set[str] = (
+    ELECTRICAL_ROOMS
+    | OUTLET_ROOMS
+    | CONDITIONED_ROOMS
+    | WET_ROOMS
+    | SPRINKLER_ROOMS
+    | NON_PROGRAM_ROOMS
+    | {
+        "stair", "pantry", "closet", "storage", "entry", "open_to_below",
+        "walk_in_closet", "library", "gym", "balcony", "patio", "porch", "deck",
+    }
+)
+
+PLUMBING_COLD_TYPES: Set[str] = {"cold_supply", "cold_water_riser"}
+PLUMBING_HOT_TYPES: Set[str] = {"hot_supply", "hot_water_riser"}
+PLUMBING_VENT_TYPES: Set[str] = {"vent", "vent_branch", "vent_stack", "plumbing_vent", "soil_stack"}
+CO_ALARM_TYPES: Set[str] = {
+    "carbon_monoxide_alarm", "carbon_monoxide_detector", "co_alarm", "co_detector",
 }
 
 
@@ -181,7 +206,7 @@ class ComplianceEngine:
             status = "failed"
         elif counts["warning"]:
             status = "needs_attention"
-        elif check_counts["unverified"]:
+        elif check_counts["unverified"] or check_counts["advisory"]:
             status = "unverified"
         else:
             status = "preflight_passed"
@@ -435,6 +460,77 @@ class ComplianceEngine:
                 return float(value)
         return None
 
+    @staticmethod
+    def _valid_climate_zone(value: Any) -> bool:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return False
+        return numeric.is_integer() and 1 <= int(numeric) <= 16
+
+    @staticmethod
+    def _valid_energy_method(value: Any) -> bool:
+        normalized = str(value or "").strip().lower().replace("-", "_")
+        return normalized in {"prescriptive", "performance", "performance_compliance"}
+
+    @staticmethod
+    def _valid_energy_form_reference(value: Any) -> bool:
+        # Registration/existence is checked externally.  This only rejects
+        # placeholders and malformed identifiers such as ``CF1R-TEST``.
+        return bool(re.fullmatch(
+            r"CF[123]R-[A-Z0-9]{2,}(?:-[A-Z0-9]{2,})+(?:-[A-Z])?",
+            str(value or "").strip().upper(),
+        ))
+
+    @classmethod
+    def _is_smoke_alarm(cls, element: MEPElement) -> bool:
+        if element.type in {"smoke_alarm", "smoke_detector"}:
+            return True
+        if element.type != "fire_alarm":
+            return False
+        metadata = cls._metadata(element)
+        detector = str(metadata.get("detector", metadata.get("detector_type", ""))).lower()
+        # A generic fire-alarm marker is not a dwelling smoke alarm.  A modeled
+        # fire-alarm device counts only when it identifies its smoke-detection
+        # function and documents the expected dwelling interconnection/power.
+        return (
+            "smoke" in detector
+            and cls._bool_metadata(metadata, "interconnected") is True
+            and (
+                cls._bool_metadata(metadata, "hardwired") is True
+                or cls._bool_metadata(metadata, "listed") is True
+            )
+        )
+
+    @classmethod
+    def _alarm_documentation_gaps(
+        cls,
+        element: MEPElement,
+        listing_standard: str,
+        *,
+        require_building_power: bool,
+    ) -> List[str]:
+        """Return permit-evidence fields missing from a modeled alarm device."""
+        metadata = cls._metadata(element)
+        gaps: List[str] = []
+        documented_standard = str(
+            metadata.get("listing_standard")
+            or metadata.get("listing_reference")
+            or ""
+        ).upper()
+        if cls._bool_metadata(metadata, "listed") is not True:
+            gaps.append("listed-product evidence")
+        if listing_standard.upper() not in documented_standard:
+            gaps.append(f"{listing_standard} standard/reference")
+        if cls._bool_metadata(metadata, "interconnected") is not True:
+            gaps.append("interconnection")
+        if require_building_power:
+            if cls._bool_metadata(metadata, "hardwired") is not True:
+                gaps.append("building-wiring power")
+            if cls._bool_metadata(metadata, "battery_backup") is not True:
+                gaps.append("battery backup")
+        return gaps
+
     def _modeled_floor_area_sqft(self, model: BuildingModel) -> float:
         rooms = self._leaf_rooms(model)
         by_level: Dict[int, List[Polygon]] = defaultdict(list)
@@ -451,25 +547,50 @@ class ComplianceEngine:
     # ------------------------------------------------------------------
 
     def _check_code_scope(self, model: BuildingModel) -> List[ComplianceIssue]:
+        issues: List[ComplianceIssue] = []
         requested_cycle = str(getattr(model.spec, "code_cycle", CODE_CYCLE))
         state = str(getattr(model.spec, "region_state", "CA"))
         country = str(getattr(model.spec, "region_country", "US"))
         if requested_cycle != CODE_CYCLE or state != "CA" or country != "US":
-            return [self._issue(
+            issues.append(self._issue(
                 "SCOPE-2025",
                 "info",
                 f"Requested scope {country}/{state}, cycle {requested_cycle}, is not implemented; no code pass can be issued.",
                 "Use the California 2025 residential workflow or add a validated ruleset for the requested jurisdiction and cycle.",
                 citation_key="SCOPE-2025",
                 status="unverified",
-            )]
-        return [self._issue(
-            "SCOPE-2025",
+            ))
+        else:
+            self._pass("SCOPE-2025", f"Preflight rules are scoped to the {CODE_CYCLE_LABEL}.")
+
+        construction_scope = str(
+            getattr(getattr(model.spec, "construction_scope", "new_construction"), "value",
+                    getattr(model.spec, "construction_scope", "new_construction"))
+        ).lower()
+        if construction_scope in {"new", "new_build", "new_construction"}:
+            self._pass("SCOPE-CONSTRUCTION", "New-construction rule applicability is selected.")
+        else:
+            issues.append(self._issue(
+                "SCOPE-CONSTRUCTION",
+                "info",
+                f"Construction scope {construction_scope!r} needs alteration/addition-specific applicability analysis; new-dwelling assumptions cannot be treated as a pass.",
+                "Load a validated ruleset for the existing-building, addition, or alteration scope.",
+                citation_key="SCOPE-2025",
+                status="unverified",
+            ))
+
+        # A city name is not a ruleset.  Until adopted amendments have been
+        # loaded from an authoritative source and versioned, local compliance
+        # remains unresolved for every project.
+        issues.append(self._issue(
+            "SCOPE-LOCAL-AMENDMENTS",
             "info",
-            f"Preflight evaluated against the {CODE_CYCLE_LABEL}; local amendments and permit-stage calculations remain subject to AHJ review.",
-            "Confirm the locally adopted amendments before permit submission.",
+            "No validated local-AHJ amendment ruleset is loaded; jurisdiction_city is descriptive metadata only.",
+            "Load and version the applicable city/county amendments and AHJ interpretations before permit use.",
             citation_key="SCOPE-2025",
-        )]
+            status="unverified",
+        ))
+        return issues
 
     def _check_stories(self, model: BuildingModel) -> List[ComplianceIssue]:
         issues: List[ComplianceIssue] = []
@@ -524,7 +645,7 @@ class ComplianceEngine:
             self._record("CBC-CORRIDOR-WIDTH", "not_applicable", "No modeled corridor rooms.")
             return issues
 
-        failures: List[Tuple[Room, float]] = []
+        failures: List[Tuple[Room, float, str]] = []
         unverifiable: List[Room] = []
         for corridor in corridors:
             polygon = self._room_polygon(corridor)
@@ -536,17 +657,35 @@ class ComplianceEngine:
             spans = [LineString([coords[i], coords[i + 1]]).length for i in range(4)]
             width = min((span for span in spans if span > 1e-6), default=0.0)
             if width < minimum_m:
-                failures.append((corridor, width))
+                failures.append((corridor, width, "overall width"))
+                continue
+
+            # A bounding rectangle cannot see a narrow neck inside an otherwise
+            # wide hourglass-shaped corridor.  Eroding by half the required
+            # clear width removes every location that cannot contain the
+            # required clearance disc; a split erosion exposes an internal
+            # pinch point that interrupts the corridor's usable center path.
+            eroded = polygon.buffer(-minimum_m / 2.0, join_style=2)
+            eroded_parts = (
+                [part for part in getattr(eroded, "geoms", []) if part.area > 1e-6]
+                if eroded.geom_type == "MultiPolygon"
+                else ([] if eroded.is_empty else [eroded])
+            )
+            if not eroded_parts or len(eroded_parts) > 1:
+                failures.append((corridor, minimum_m, "internal pinch point"))
 
         if failures:
-            details = ", ".join(f"{room.id}={width / 0.3048:.2f}ft" for room, width in failures)
+            details = ", ".join(
+                f"{room.id} ({reason}{f'={width / 0.3048:.2f}ft' if reason == 'overall width' else ''})"
+                for room, width, reason in failures
+            )
             issues.append(self._issue(
                 "CBC-CORRIDOR-WIDTH",
                 "error",
                 f"Modeled corridor clear width is below the {minimum_in:.0f}in residential baseline: {details}.",
                 "Widen the listed corridor geometry and rerun compliance.",
                 citation_key="CBC-CORRIDOR-WIDTH",
-                elements=[room.id for room, _ in failures],
+                elements=[room.id for room, _, _ in failures],
             ))
         elif not unverifiable:
             self._pass(
@@ -627,14 +766,38 @@ class ComplianceEngine:
                 citation_key="FLOOD-REVIEW",
                 status="unverified",
             )]
-        if model.site_context and model.site_context.flood_flag:
-            return [self._issue(
-                "FLOOD-REVIEW",
-                "info",
-                f"Site context reports flood zone {model.site_context.flood_zone}; the conceptual model does not contain a design flood elevation comparison.",
-                "Obtain the applicable flood elevation and document floor/equipment elevations before permit.",
-                citation_key="FLOOD-REVIEW",
-            )]
+        flood_zone = str(model.site_context.flood_zone or "").strip().upper()
+        mapped_hazard = bool(model.site_context.flood_flag) or flood_zone.startswith(("A", "V"))
+        if mapped_hazard:
+            flood_evidence = dict((model.design_brief or {}).get("flood", {}) or {})
+            design_flood = self._numeric_metadata(
+                flood_evidence, "design_flood_elevation_ft", "base_flood_elevation_ft",
+            )
+            lowest_floor = self._numeric_metadata(
+                flood_evidence, "lowest_floor_elevation_ft", "design_floor_elevation_ft",
+            )
+            freeboard = self._numeric_metadata(flood_evidence, "required_freeboard_ft")
+            source = flood_evidence.get("determination_source") or flood_evidence.get("map_panel_reference")
+            if design_flood is None or lowest_floor is None or freeboard is None or not source:
+                return [self._issue(
+                    "FLOOD-REVIEW",
+                    "info",
+                    f"Site context reports mapped flood hazard {flood_zone}; authoritative elevation/freeboard comparison evidence is incomplete.",
+                    "Attach the map/determination source, design flood elevation, required freeboard, and lowest-floor/equipment elevation comparison.",
+                    citation_key="FLOOD-REVIEW",
+                    status="unverified",
+                )]
+            required_elevation = design_flood + freeboard
+            if lowest_floor + 1e-6 < required_elevation:
+                return [self._issue(
+                    "FLOOD-REVIEW",
+                    "error",
+                    f"Lowest floor elevation {lowest_floor:.2f}ft is below the documented {required_elevation:.2f}ft flood-design elevation including freeboard.",
+                    "Raise/protect the floor and equipment elevations and rerun the floodplain design comparison.",
+                    citation_key="FLOOD-REVIEW",
+                )]
+            self._pass("FLOOD-REVIEW", f"Documented lowest floor elevation meets the mapped flood elevation plus freeboard for zone {flood_zone}.")
+            return []
         self._pass("FLOOD-REVIEW", "Site context does not flag a mapped special flood hazard.")
         return []
 
@@ -643,7 +806,17 @@ class ComplianceEngine:
         total_sqft = self._modeled_floor_area_sqft(model)
         fine = model.spec.fine_details or {}
         configured_area_limit = float(fine.get("adu_max_sqft", ADU_MAX_SQFT))
-        if total_sqft > configured_area_limit + 1.0:
+        area_source = str(fine.get("adu_max_sqft_source", "")).strip()
+        if configured_area_limit > ADU_MAX_SQFT and not area_source:
+            issues.append(self._issue(
+                "ADU-AREA-LOCAL-STANDARD",
+                "info",
+                f"Configured ADU area limit {configured_area_limit:,.0f} sqft exceeds the statewide default without a cited local less-restrictive ordinance.",
+                "Attach adu_max_sqft_source from the applicable adopted local ordinance.",
+                citation_key="ADU-AREA",
+                status="unverified",
+            ))
+        elif total_sqft > configured_area_limit + 1.0:
             issues.append(self._issue(
                 "ADU-AREA",
                 "error",
@@ -651,10 +824,23 @@ class ComplianceEngine:
                 "Reduce the modeled floor area or set adu_max_sqft from a verified local ordinance that permits a larger unit.",
                 citation_key="ADU-AREA",
             ))
-        else:
+        elif configured_area_limit <= ADU_MAX_SQFT or area_source:
             self._pass("ADU-AREA", f"Modeled ADU area is {total_sqft:,.0f} sqft (configured limit {configured_area_limit:,.0f} sqft).")
-        configured_story_limit = model.spec.max_floors or 2
-        if model.spec.stories > configured_story_limit:
+
+        configured_story_limit = model.spec.max_floors
+        height_source = str(
+            fine.get("adu_height_standard_source", fine.get("adu_story_limit_source", ""))
+        ).strip()
+        if configured_story_limit is None or not height_source:
+            issues.append(self._issue(
+                "ADU-HEIGHT-LOCAL-STANDARD",
+                "info",
+                "ADU height/story applicability cannot be verified without a sourced local objective standard; no universal two-story limit is assumed.",
+                "Attach max_floors/max_height_ft and adu_height_standard_source from the applicable local ordinance.",
+                citation_key="ADU-AREA",
+                status="unverified",
+            ))
+        elif model.spec.stories > configured_story_limit:
             issues.append(self._issue(
                 "ADU-STORIES",
                 "error",
@@ -663,7 +849,43 @@ class ComplianceEngine:
                 citation_key="ADU-AREA",
             ))
         else:
-            self._pass("ADU-STORIES", f"ADU has {model.spec.stories} stories.")
+            self._pass("ADU-STORIES", f"ADU has {model.spec.stories} stories against the sourced {configured_story_limit}-story local standard.")
+
+        setback = fine.get("adu_setback_evidence")
+        if not isinstance(setback, dict) or not setback.get("source"):
+            issues.append(self._issue(
+                "ADU-SETBACK-EVIDENCE",
+                "info",
+                "Georeferenced ADU side/rear setback or qualifying conversion-path evidence is absent.",
+                "Attach surveyed parcel/building geometry and the applicable setback source, or document the qualifying conversion path.",
+                citation_key="ADU-AREA",
+                status="unverified",
+            ))
+        elif bool(setback.get("conversion_path_verified")):
+            self._pass("ADU-SETBACK-EVIDENCE", "A sourced qualifying conversion-path determination is documented.")
+        else:
+            side = self._numeric_metadata(setback, "side_setback_ft")
+            rear = self._numeric_metadata(setback, "rear_setback_ft")
+            required = self._numeric_metadata(setback, "required_setback_ft")
+            if side is None or rear is None or required is None or not setback.get("georeferenced"):
+                issues.append(self._issue(
+                    "ADU-SETBACK-EVIDENCE",
+                    "info",
+                    "ADU setback metadata lacks georeferenced side/rear measurements and the applicable required setback.",
+                    "Attach georeferenced side_setback_ft, rear_setback_ft, required_setback_ft, and source.",
+                    citation_key="ADU-AREA",
+                    status="unverified",
+                ))
+            elif min(side, rear) + 1e-6 < required:
+                issues.append(self._issue(
+                    "ADU-SETBACK",
+                    "error",
+                    f"Documented ADU side/rear setback ({side:.2f}ft/{rear:.2f}ft) is below the sourced {required:.2f}ft requirement.",
+                    "Revise the siting or document a qualifying conversion/exception path.",
+                    citation_key="ADU-AREA",
+                ))
+            else:
+                self._pass("ADU-SETBACK", "Georeferenced side/rear setbacks meet the documented local requirement.")
         return issues
 
     # ------------------------------------------------------------------
@@ -673,6 +895,17 @@ class ComplianceEngine:
     def _check_mep_room_coverage(self, model: BuildingModel) -> List[ComplianceIssue]:
         issues: List[ComplianceIssue] = []
         rooms = self._leaf_rooms(model)
+
+        unknown_rooms = [room for room in rooms if room.type not in KNOWN_ROOM_TYPES]
+        if unknown_rooms:
+            issues.append(self._issue(
+                "MEP-ROOM-TYPE-SCOPE",
+                "error",
+                f"Unknown room types have no validated MEP applicability mapping: {self._room_list_text(unknown_rooms)}.",
+                "Map each room type to electrical, plumbing, HVAC, exhaust, alarm, and sprinkler requirements before compliance evaluation.",
+                citation_key="SCOPE-2025",
+                elements=self._room_ids(unknown_rooms),
+            ))
 
         electrical_rooms = [room for room in rooms if room.type in ELECTRICAL_ROOMS]
         missing_electrical = [
@@ -893,11 +1126,14 @@ class ComplianceEngine:
             )
 
         excessive_spacing: List[MEPElement] = []
+        missing_spacing_evidence: List[MEPElement] = []
         for outlet in [element for element in electrical if element.type in OUTLET_TYPES]:
             metadata = self._metadata(outlet)
             maximum = self._numeric_metadata(metadata, "max_spacing_ft", "design_spacing_ft")
             threshold = 4.0 if metadata.get("countertop") else 12.0
-            if maximum is not None and maximum > threshold + 1e-6:
+            if maximum is None:
+                missing_spacing_evidence.append(outlet)
+            elif maximum > threshold + 1e-6:
                 excessive_spacing.append(outlet)
         if excessive_spacing:
             issues.append(self._issue(
@@ -908,7 +1144,17 @@ class ComplianceEngine:
                 citation_key="CEC-ELECTRICAL",
                 elements=[element.id for element in excessive_spacing],
             ))
-        elif any(self._numeric_metadata(self._metadata(element), "max_spacing_ft", "design_spacing_ft") is not None for element in electrical if element.type in OUTLET_TYPES):
+        if missing_spacing_evidence:
+            issues.append(self._issue(
+                "CEC-RECEPTACLE-SPACING-DOCUMENTATION",
+                "info",
+                f"{len(missing_spacing_evidence)} receptacle(s) lack wall-segment/countertop spacing evidence.",
+                "Store max_spacing_ft/design_spacing_ft from an opening-aware wall-segment layout calculation.",
+                citation_key="CEC-ELECTRICAL",
+                elements=[element.id for element in missing_spacing_evidence],
+                status="unverified",
+            ))
+        elif not excessive_spacing and any(element.type in OUTLET_TYPES for element in electrical):
             self._pass("CEC-RECEPTACLE-SPACING-METADATA", "Documented receptacle spacing does not exceed the configured screening thresholds.")
 
         wet_outlets: List[MEPElement] = []
@@ -1020,9 +1266,52 @@ class ComplianceEngine:
                     elements=self._room_ids(missing_exhaust),
                 ))
             else:
-                self._pass("CMC-LOCAL-EXHAUST", f"Local exhaust terminals found in all {len(exhaust_rooms)} applicable rooms.")
+                self._pass("CMC-LOCAL-EXHAUST-PRESENCE", f"Local exhaust terminals found in all {len(exhaust_rooms)} applicable rooms.")
 
             unique_exhaust = list({element.id: element for element in modeled_exhaust}.values())
+            exhaust_below_required: List[MEPElement] = []
+            exhaust_unverified: List[MEPElement] = []
+            for element in unique_exhaust:
+                metadata = self._metadata(element)
+                actual = self._numeric_metadata(
+                    metadata, "actual_exhaust_cfm", "capacity_cfm", "airflow_cfm",
+                )
+                required = self._numeric_metadata(metadata, "required_exhaust_cfm")
+                calculation_reference = (
+                    metadata.get("exhaust_calculation_reference")
+                    or metadata.get("calculation_reference")
+                    or metadata.get("design_airflow_source")
+                )
+                calculation_verified = self._bool_metadata(metadata, "calculation_verified")
+                if actual is not None and required is not None and actual + 1e-6 < required:
+                    exhaust_below_required.append(element)
+                elif (
+                    actual is None or required is None or required <= 0
+                    or not calculation_reference or calculation_verified is not True
+                ):
+                    exhaust_unverified.append(element)
+            if exhaust_below_required:
+                issues.append(self._issue(
+                    "CMC-LOCAL-EXHAUST-AIRFLOW",
+                    "error",
+                    f"{len(exhaust_below_required)} local-exhaust terminal(s) have actual airflow below the documented required airflow.",
+                    "Increase exhaust airflow to the calculated requirement and update commissioning evidence.",
+                    citation_key="CMC-MECHANICAL",
+                    elements=[element.id for element in exhaust_below_required],
+                ))
+            if exhaust_unverified:
+                issues.append(self._issue(
+                    "CMC-LOCAL-EXHAUST-CALCULATION",
+                    "info",
+                    f"{len(exhaust_unverified)} local-exhaust terminal(s) lack verified actual/required CFM calculation evidence.",
+                    "Document actual_exhaust_cfm/capacity_cfm, required_exhaust_cfm, a calculation reference, and calculation_verified=true.",
+                    citation_key="CMC-MECHANICAL",
+                    elements=[element.id for element in exhaust_unverified],
+                    status="unverified",
+                ))
+            elif unique_exhaust and not exhaust_below_required:
+                self._pass("CMC-LOCAL-EXHAUST-AIRFLOW", "Verified local-exhaust airflow meets the documented calculated requirements.")
+
             explicit_indoor_discharge = [
                 element for element in unique_exhaust
                 if self._bool_metadata(self._metadata(element), "terminates_outdoors", "discharges_outdoors") is False
@@ -1053,23 +1342,86 @@ class ComplianceEngine:
             elif unique_exhaust and not explicit_indoor_discharge:
                 self._pass("CMC-EXHAUST-DISCHARGE", "All modeled local-exhaust terminals affirmatively document outdoor discharge.")
         else:
-            self._record("CMC-LOCAL-EXHAUST", "not_applicable", "User disabled generated local-exhaust elements; applicability requires design review.")
+            alternative = (getattr(model.spec, "fine_details", None) or {}).get("local_exhaust_alternative")
+            alternative_verified = (
+                isinstance(alternative, dict)
+                and self._bool_metadata(alternative, "verified", "approved") is True
+                and bool(alternative.get("reference") or alternative.get("determination_source"))
+            )
+            if alternative_verified:
+                self._pass("CMC-LOCAL-EXHAUST", "A referenced, verified local-exhaust alternative is documented.")
+            else:
+                issues.append(self._issue(
+                    "CMC-LOCAL-EXHAUST-DISABLED",
+                    "info",
+                    "Kitchen/bathroom local exhaust was disabled without referenced evidence of a compliant alternative.",
+                    "Enable local exhaust or attach a verified alternative design and determination source.",
+                    citation_key="CMC-MECHANICAL",
+                    status="unverified",
+                ))
 
         ventilation = [element for element in hvac if element.type in HVAC_VENTILATION_TYPES]
-        has_oa_metadata = any(
-            (self._numeric_metadata(self._metadata(element), "outdoor_air_cfm", "fresh_air_cfm") or 0) > 0
-            for element in hvac
-        )
-        if conditioned and not ventilation and not has_oa_metadata:
+        ventilation_evidence: List[Tuple[MEPElement, float, float]] = []
+        ventilation_incomplete: List[MEPElement] = []
+        for element in ventilation:
+            metadata = self._metadata(element)
+            actual = self._numeric_metadata(
+                metadata, "actual_outdoor_air_cfm", "outdoor_air_cfm", "fresh_air_cfm", "airflow_cfm",
+            )
+            required = self._numeric_metadata(
+                metadata, "required_outdoor_air_cfm", "required_fresh_air_cfm", "required_airflow_cfm",
+            )
+            calculation = (
+                metadata.get("ventilation_calculation_id")
+                or metadata.get("ventilation_calculation_reference")
+                or metadata.get("calculation_reference")
+                or metadata.get("design_airflow_source")
+            )
+            calculation_verified = self._bool_metadata(metadata, "calculation_verified")
+            if (
+                actual is None or required is None or required <= 0
+                or not calculation or calculation_verified is not True
+            ):
+                ventilation_incomplete.append(element)
+            else:
+                ventilation_evidence.append((element, actual, required))
+
+        if conditioned and not ventilation:
             issues.append(self._issue(
                 "CMC-WHOLE-BUILDING-VENTILATION",
-                "warning",
-                "No whole-building/outdoor-air ventilation element or airflow metadata is modeled.",
-                "Add a compliant ventilation system and document outdoor_air_cfm/fresh_air_cfm.",
+                "error",
+                "No whole-building/outdoor-air ventilation system is modeled for conditioned dwelling space.",
+                "Add the ventilation system and document calculated actual/required outdoor airflow.",
                 citation_key="CMC-MECHANICAL",
             ))
-        else:
-            self._pass("CMC-WHOLE-BUILDING-VENTILATION", "Whole-building ventilation evidence is present.")
+        elif conditioned and ventilation_incomplete:
+            issues.append(self._issue(
+                "CMC-WHOLE-BUILDING-VENTILATION-DOCUMENTATION",
+                "info",
+                f"{len(ventilation_incomplete)} ventilation element(s) lack actual airflow, required airflow, or calculation evidence.",
+                "Populate actual and required outdoor-air CFM plus a ventilation calculation reference.",
+                citation_key="CMC-MECHANICAL",
+                elements=[element.id for element in ventilation_incomplete],
+                status="unverified",
+            ))
+        if conditioned and ventilation_evidence:
+            below_required = [
+                element for element, actual, required in ventilation_evidence
+                if actual + 1e-6 < required
+            ]
+            if below_required:
+                issues.append(self._issue(
+                    "CMC-WHOLE-BUILDING-VENTILATION-AIRFLOW",
+                    "error",
+                    f"{len(below_required)} ventilation element(s) have documented airflow below the calculated requirement.",
+                    "Increase airflow to the calculated requirement and update commissioning evidence.",
+                    citation_key="CMC-MECHANICAL",
+                    elements=[element.id for element in below_required],
+                ))
+            elif not ventilation_incomplete:
+                self._pass("CMC-WHOLE-BUILDING-VENTILATION", "Actual ventilation airflow meets documented calculated requirements.")
+        elif not conditioned:
+            self._record("CMC-WHOLE-BUILDING-VENTILATION", "not_applicable", "No conditioned dwelling rooms are modeled.")
 
         ductwork = [
             element for element in hvac
@@ -1085,9 +1437,9 @@ class ComplianceEngine:
             metadata = self._metadata(duct)
             actual = self._numeric_metadata(metadata, "duct_r_value", "insulation_r_value")
             required = self._numeric_metadata(metadata, "required_duct_r_value")
-            if actual is None:
+            if actual is None or required is None or required <= 0:
                 missing_duct_r.append(duct)
-            elif required is not None and actual < required:
+            elif actual < required:
                 failed_duct_r.append(duct)
         if failed_duct_r:
             issues.append(self._issue(
@@ -1102,8 +1454,8 @@ class ComplianceEngine:
             issues.append(self._issue(
                 "CMC-DUCT-INSULATION-DOCUMENTATION",
                 "info",
-                f"{len(missing_duct_r)} duct element(s) do not include duct_r_value metadata; location-specific insulation cannot be verified.",
-                "Add duct location and insulation R-value metadata in the permit model.",
+                f"{len(missing_duct_r)} duct element(s) lack both actual and required location-specific insulation R-value evidence.",
+                "Add duct_r_value and required_duct_r_value metadata based on the modeled duct location.",
                 citation_key="CMC-MECHANICAL",
                 elements=[duct.id for duct in missing_duct_r],
                 status="unverified",
@@ -1160,35 +1512,64 @@ class ComplianceEngine:
         else:
             self._pass("CPC-FIXTURE-COMPLETENESS", "All modeled wet rooms contain the expected fixture set.")
 
-        missing_supply: List[Room] = []
+        missing_cold: List[Room] = []
+        missing_hot: List[Room] = []
         missing_waste: List[Room] = []
+        missing_vent: List[Room] = []
         for room in [item for item in rooms if item.type in WET_ROOMS]:
             room_supply = self._room_elements(
                 model, room, system="plumbing", types=PLUMBING_SUPPLY_TYPES,
             )
-            connected_supply = [
-                element for element in room_supply
-                if element.end is not None or element.type in {"washer_box"}
+            connected_supply = [element for element in room_supply if element.end is not None]
+            connected_cold = [
+                element for element in connected_supply
+                if element.type in PLUMBING_COLD_TYPES
+                or str(self._metadata(element).get("water_temperature", "")).lower() == "cold"
+                or str(self._metadata(element).get("supply_kind", "")).lower() == "cold"
             ]
-            if not connected_supply:
-                missing_supply.append(room)
+            connected_hot = [
+                element for element in connected_supply
+                if element.type in PLUMBING_HOT_TYPES
+                or str(self._metadata(element).get("water_temperature", "")).lower() == "hot"
+                or str(self._metadata(element).get("supply_kind", "")).lower() == "hot"
+            ]
+            if not connected_cold:
+                missing_cold.append(room)
+            if room.type in {"bathroom", "kitchen", "laundry"} and not connected_hot:
+                missing_hot.append(room)
             room_waste = self._room_elements(
                 model, room, system="plumbing", types=PLUMBING_WASTE_TYPES,
             )
             connected_waste = [element for element in room_waste if element.end is not None]
             if not connected_waste:
                 missing_waste.append(room)
-        if missing_supply:
+            vent_evidence = self._room_elements(
+                model, room, system="plumbing", types=PLUMBING_VENT_TYPES,
+            )
+            has_vent_metadata = any(
+                self._bool_metadata(self._metadata(element), "vented", "vent_connected") is True
+                or bool(self._metadata(element).get("vent_id"))
+                for element in room_waste
+                + self._room_elements(model, room, system="plumbing", types=PLUMBING_FIXTURE_TYPES)
+            )
+            if not vent_evidence and not has_vent_metadata:
+                missing_vent.append(room)
+        if missing_cold or missing_hot:
+            details: List[str] = []
+            if missing_cold:
+                details.append("cold: " + self._room_list_text(missing_cold))
+            if missing_hot:
+                details.append("hot: " + self._room_list_text(missing_hot))
             issues.append(self._issue(
                 "CPC-SUPPLY-COVERAGE",
                 "error",
-                f"No connected water-supply run is modeled in: {self._room_list_text(missing_supply)}.",
-                "Route hot/cold supply as applicable to each fixture group.",
+                "Required connected water supplies are incomplete (" + "; ".join(details) + ").",
+                "Route separately identifiable cold and hot supplies as applicable to each fixture group.",
                 citation_key="CPC-PLUMBING",
-                elements=self._room_ids(missing_supply),
+                elements=self._room_ids(missing_cold + missing_hot),
             ))
         else:
-            self._pass("CPC-SUPPLY-COVERAGE", "Every modeled wet room has a supply branch.")
+            self._pass("CPC-SUPPLY-COVERAGE", "Every modeled wet room has connected cold and applicable hot-water supply evidence.")
         if missing_waste:
             issues.append(self._issue(
                 "CPC-WASTE-COVERAGE",
@@ -1200,6 +1581,17 @@ class ComplianceEngine:
             ))
         else:
             self._pass("CPC-WASTE-COVERAGE", "Every modeled wet room has a waste/drain path.")
+        if missing_vent:
+            issues.append(self._issue(
+                "CPC-VENT-COVERAGE",
+                "error",
+                f"No room-specific plumbing vent connection/evidence is modeled in: {self._room_list_text(missing_vent)}.",
+                "Connect each trapped fixture group to a modeled vent path and document vented/vent_id evidence.",
+                citation_key="CPC-PLUMBING",
+                elements=self._room_ids(missing_vent),
+            ))
+        else:
+            self._pass("CPC-VENT-COVERAGE", "Every modeled wet room has plumbing-vent connection evidence.")
 
         pipe_types = PLUMBING_SUPPLY_TYPES | PLUMBING_WASTE_TYPES | {"vent", "vent_stack", "soil_stack"}
         pipes = [element for element in plumbing if element.type in pipe_types and element.end]
@@ -1216,7 +1608,9 @@ class ComplianceEngine:
         elif pipes:
             self._pass("CPC-PIPE-SIZING-METADATA", "All modeled plumbing pipe runs have a positive diameter.")
 
-        flat_waste: List[MEPElement] = []
+        slope_failures: List[Tuple[MEPElement, str]] = []
+        slope_unverified: List[MEPElement] = []
+        horizontal_waste: List[MEPElement] = []
         for element in plumbing:
             if element.type not in {"waste_branch", "drain", "fixture_drain", "sewer_lateral", "washer_drain"} or not element.end:
                 continue
@@ -1225,28 +1619,54 @@ class ComplianceEngine:
             run = math.hypot(dx, dz)
             if run < 0.05:
                 continue
-            metadata_slope = self._numeric_metadata(self._metadata(element), "slope_pct")
-            geometry_slope = abs(element.end[1] - element.start[1]) / run * 100.0
-            if (metadata_slope if metadata_slope is not None else geometry_slope) <= 0.01:
-                flat_waste.append(element)
-        if flat_waste:
+            horizontal_waste.append(element)
+            metadata = self._metadata(element)
+            metadata_slope = self._numeric_metadata(metadata, "slope_pct", "actual_slope_pct")
+            required_slope = self._numeric_metadata(metadata, "required_slope_pct", "minimum_slope_pct")
+            # Drain direction is start (fixture) to end (stack/sewer).  A
+            # positive signed geometry slope therefore means vertical drop;
+            # using abs() would incorrectly bless an uphill run.
+            geometry_slope = (element.start[1] - element.end[1]) / run * 100.0
+            actual_slope = metadata_slope if metadata_slope is not None else geometry_slope
+            if geometry_slope < -0.01:
+                slope_failures.append((element, "modeled geometry rises toward the drain endpoint"))
+            elif actual_slope <= 0.01:
+                slope_failures.append((element, "actual slope is nonpositive"))
+            elif required_slope is None or required_slope <= 0:
+                slope_unverified.append(element)
+            elif actual_slope + 1e-6 < required_slope:
+                slope_failures.append((element, "actual slope is below the documented requirement"))
+        if slope_failures:
             issues.append(self._issue(
                 "CPC-GRAVITY-DRAIN-SLOPE",
                 "error",
-                f"{len(flat_waste)} horizontal gravity-drain run(s) have zero modeled/documented slope.",
-                "Apply the diameter- and code-specific drainage slope and store slope_pct metadata.",
+                f"{len(slope_failures)} horizontal gravity-drain run(s) are uphill, nonpositive, or below their documented required slope.",
+                "Correct drain direction/slope and store signed slope_pct plus the diameter-specific required_slope_pct.",
                 citation_key="CPC-PLUMBING",
-                elements=[element.id for element in flat_waste],
+                elements=[element.id for element, _ in slope_failures],
             ))
-        else:
-            self._pass("CPC-GRAVITY-DRAIN-SLOPE", "No modeled horizontal gravity drain has zero slope.")
+        if slope_unverified:
+            issues.append(self._issue(
+                "CPC-GRAVITY-DRAIN-SLOPE-DOCUMENTATION",
+                "info",
+                f"{len(slope_unverified)} horizontal gravity-drain run(s) lack a positive documented required slope threshold.",
+                "Store required_slope_pct/minimum_slope_pct from the applicable pipe-size and code calculation.",
+                citation_key="CPC-PLUMBING",
+                elements=[element.id for element in slope_unverified],
+                status="unverified",
+            ))
+        if horizontal_waste and not slope_failures and not slope_unverified:
+            self._pass("CPC-GRAVITY-DRAIN-SLOPE", "Signed actual drain slopes meet their documented positive required thresholds.")
+        elif not horizontal_waste:
+            self._record("CPC-GRAVITY-DRAIN-SLOPE", "not_applicable", "No modeled horizontal gravity-drain runs were found.")
 
         issues.append(self._issue(
             "CPC-PERMIT-DETAILS",
             "info",
-            "Trap seals, individual vent developed length, cleanout access, water pressure, and backflow-device selection are not fully encoded in the conceptual element schema.",
+            "Trap seals, vent developed length/sizing, cleanout access, water pressure, and backflow-device selection are not fully encoded in the conceptual element schema.",
             "Complete fixture-unit calculations and permit-level plumbing details before construction documents.",
             citation_key="CPC-PLUMBING",
+            status="unverified",
         ))
         return issues
 
@@ -1262,10 +1682,37 @@ class ComplianceEngine:
             if element.system == "fire" and element.type in {"sprinkler", "sprinkler_head"}
         ]
         is_adu = getattr(model.spec, "building_use", None) in ("adu", BuildingUse.adu)
-        adu_primary_unsprinklered = (
-            is_adu and getattr(model.spec, "primary_dwelling_sprinklered", None) is False
+        primary_requirement = str(
+            getattr(getattr(model.spec, "primary_dwelling_sprinkler_requirement", None), "value",
+                    getattr(model.spec, "primary_dwelling_sprinkler_requirement", ""))
+            or ""
+        ).lower()
+        primary_determination_source = str(
+            getattr(model.spec, "primary_dwelling_sprinkler_determination_source", "") or ""
+        ).strip()
+        valid_adu_exception = (
+            is_adu
+            and primary_requirement == "not_required"
+            and bool(primary_determination_source)
         )
-        sprinklers_required = not adu_primary_unsprinklered
+        legacy_unsprinklered = is_adu and getattr(model.spec, "primary_dwelling_sprinklered", None) is False
+        construction_scope = str(
+            getattr(getattr(model.spec, "construction_scope", "new_construction"), "value",
+                    getattr(model.spec, "construction_scope", "new_construction"))
+        ).lower()
+        new_construction = construction_scope in {"new", "new_build", "new_construction"}
+
+        if legacy_unsprinklered and not valid_adu_exception:
+            issues.append(self._issue(
+                "FIRE-ADU-SPRINKLER-DETERMINATION",
+                "info",
+                "Legacy primary_dwelling_sprinklered=False does not establish that sprinklers were legally not required for the primary dwelling, so it cannot establish the ADU exception.",
+                "Set primary_dwelling_sprinkler_requirement='not_required' and attach the nonempty AHJ/code determination source.",
+                citation_key="CBC-FIRE-LIFE-SAFETY",
+                status="unverified",
+            ))
+
+        sprinklers_required = new_construction and not valid_adu_exception
 
         if sprinklers_required and not heads:
             issues.append(self._issue(
@@ -1297,18 +1744,58 @@ class ComplianceEngine:
                     elements=involved,
                 ))
             else:
-                self._pass("FIRE-SPRINKLER-COVERAGE", "Every sprinkler-design room meets the generator's conservative notional head-count target.")
-        else:
+                fire_elements = [element for element in model.mep_elements if element.system == "fire"]
+                standards_documented = all(
+                    bool(self._metadata(head).get("design_standard")) for head in heads
+                )
+                listings_documented = all(
+                    self._bool_metadata(self._metadata(head), "listed") is True
+                    or bool(self._metadata(head).get("listing_reference"))
+                    for head in heads
+                )
+                obstruction_review = all(
+                    self._bool_metadata(self._metadata(head), "obstruction_review_complete") is True
+                    for head in heads
+                )
+                hydraulic_evidence = any(
+                    self._bool_metadata(self._metadata(element), "hydraulic_design_complete") is True
+                    and bool(
+                        self._metadata(element).get("hydraulic_calculation_id")
+                        or self._metadata(element).get("hydraulic_design_reference")
+                    )
+                    for element in fire_elements
+                )
+                if standards_documented and listings_documented and obstruction_review and hydraulic_evidence:
+                    self._pass("FIRE-SPRINKLER-COVERAGE", "Head layout, listings, obstruction review, design standard, and hydraulic calculation evidence are documented.")
+                else:
+                    issues.append(self._issue(
+                        "FIRE-SPRINKLER-DESIGN-DOCUMENTATION",
+                        "info",
+                        "Notional sprinkler head count does not verify product listing, obstruction/spacing compliance, adopted design standard, or hydraulic performance.",
+                        "Attach listed-head data, completed obstruction/spacing review, design standard, and referenced hydraulic calculations.",
+                        citation_key="CBC-FIRE-LIFE-SAFETY",
+                        elements=[head.id for head in heads],
+                        status="unverified",
+                    ))
+        elif valid_adu_exception:
             self._record(
                 "FIRE-SPRINKLER-APPLICABILITY",
                 "not_applicable",
-                "ADU primary_dwelling_sprinklered=False; the modeled California ADU sprinkler exception was applied.",
+                "A sourced determination states sprinklers were not legally required for the primary dwelling; the modeled California ADU exception was applied.",
             )
+        else:
+            issues.append(self._issue(
+                "FIRE-SPRINKLER-ALTERATION-APPLICABILITY",
+                "info",
+                f"Sprinkler applicability for construction scope {construction_scope!r} requires an existing-building and alteration-scope determination.",
+                "Attach the AHJ/code applicability determination for the alteration or addition.",
+                citation_key="CBC-FIRE-LIFE-SAFETY",
+                status="unverified",
+            ))
 
-        alarm_types = {"fire_alarm", "smoke_alarm", "smoke_detector"}
         alarms = [
             element for element in model.mep_elements
-            if element.type in alarm_types and element.system in {"electrical", "fire"}
+            if element.system in {"electrical", "fire"} and self._is_smoke_alarm(element)
         ]
         if alarms:
             bedrooms = [room for room in rooms if room.type == "bedroom"]
@@ -1320,7 +1807,7 @@ class ComplianceEngine:
                 issues.append(self._issue(
                     "FIRE-SMOKE-ALARM-BEDROOM",
                     "error",
-                    f"No smoke-alarm element is modeled in {len(missing_bedrooms)} bedroom(s): {self._room_list_text(missing_bedrooms)}.",
+                    f"No qualifying smoke alarm/detector is modeled in {len(missing_bedrooms)} bedroom(s): {self._room_list_text(missing_bedrooms)}.",
                     "Add an interconnected smoke alarm in every sleeping room.",
                     citation_key="CBC-FIRE-LIFE-SAFETY",
                     elements=self._room_ids(missing_bedrooms),
@@ -1328,18 +1815,84 @@ class ComplianceEngine:
             else:
                 self._pass("FIRE-SMOKE-ALARM-BEDROOM", f"Smoke alarms are modeled in all {len(bedrooms)} bedrooms.")
 
+            required_sleeping_zones = {
+                (room.level, str(room.unit_id or f"level_{room.level}"))
+                for room in bedrooms
+            }
+            documented_sleeping_zones: Set[Tuple[int, str]] = set()
+            for alarm in alarms:
+                metadata = self._metadata(alarm)
+                is_outside = (
+                    self._bool_metadata(metadata, "outside_sleeping_area") is True
+                    or str(metadata.get("location_type", "")).lower() == "outside_sleeping_area"
+                    or str(metadata.get("location_basis", "")).lower() == "outside_sleeping_area"
+                )
+                if not is_outside:
+                    continue
+                zone_id = metadata.get("sleeping_zone_id") or metadata.get("unit_id")
+                if zone_id is not None:
+                    documented_sleeping_zones.add((alarm.level, str(zone_id)))
+                    continue
+                # Backward-compatible evidence may omit a zone only when the
+                # level contains exactly one sleeping zone; it must never cover
+                # multiple dwelling units on the same floor.
+                level_zones = {
+                    zone for level, zone in required_sleeping_zones
+                    if level == alarm.level
+                }
+                if len(level_zones) == 1:
+                    documented_sleeping_zones.add((alarm.level, next(iter(level_zones))))
+
+            missing_outside_zones = sorted(required_sleeping_zones - documented_sleeping_zones)
+            if missing_outside_zones:
+                issues.append(self._issue(
+                    "FIRE-SMOKE-ALARM-OUTSIDE-SLEEPING",
+                    "error",
+                    "No qualifying smoke alarm is documented outside each sleeping area: "
+                    + ", ".join(f"level {level}/{zone}" for level, zone in missing_outside_zones)
+                    + ".",
+                    "Add an interconnected smoke alarm outside each separate sleeping area and document its location.",
+                    citation_key="CBC-FIRE-LIFE-SAFETY",
+                ))
+            elif bedrooms:
+                self._pass("FIRE-SMOKE-ALARM-OUTSIDE-SLEEPING", "Smoke alarms are documented outside every modeled sleeping zone.")
+
             levels = {room.level for room in rooms}
             missing_alarm_levels = sorted(level for level in levels if not any(alarm.level == level for alarm in alarms))
             if missing_alarm_levels:
                 issues.append(self._issue(
                     "FIRE-SMOKE-ALARM-LEVEL",
                     "warning",
-                    f"No smoke/fire-alarm element is modeled on levels {missing_alarm_levels}.",
+                    f"No qualifying smoke-alarm element is modeled on levels {missing_alarm_levels}.",
                     "Provide required alarms on each story and outside sleeping areas.",
                     citation_key="CBC-FIRE-LIFE-SAFETY",
                 ))
             else:
                 self._pass("FIRE-SMOKE-ALARM-LEVEL", "At least one alarm element is modeled on every occupied level.")
+
+            smoke_documentation_gaps = {
+                alarm.id: self._alarm_documentation_gaps(
+                    alarm,
+                    "UL 217",
+                    require_building_power=new_construction,
+                )
+                for alarm in alarms
+            }
+            smoke_documentation_gaps = {
+                alarm_id: gaps for alarm_id, gaps in smoke_documentation_gaps.items() if gaps
+            }
+            if smoke_documentation_gaps:
+                issues.append(self._issue(
+                    "FIRE-SMOKE-ALARM-DOCUMENTATION",
+                    "info",
+                    f"{len(smoke_documentation_gaps)} smoke alarm(s) lack listing, power, backup-power, or interconnection evidence.",
+                    "Attach UL 217 listing evidence and document required power, battery backup, and interconnection.",
+                    citation_key="CBC-FIRE-LIFE-SAFETY",
+                    elements=list(smoke_documentation_gaps),
+                    status="unverified",
+                ))
+            else:
+                self._pass("FIRE-SMOKE-ALARM-DOCUMENTATION", "Smoke-alarm listing, power, backup-power, and interconnection evidence is documented.")
         else:
             issues.append(self._issue(
                 "FIRE-SMOKE-ALARM-SYSTEM",
@@ -1348,6 +1901,110 @@ class ComplianceEngine:
                 "Add required alarms in sleeping rooms, outside sleeping areas, and on each story; verify power and interconnection requirements.",
                 citation_key="CBC-FIRE-LIFE-SAFETY",
             ))
+
+        fine = getattr(model.spec, "fine_details", None) or {}
+        fuel_fired = any(
+            str(self._metadata(element).get("fuel_type", "")).lower()
+            in {"gas", "natural_gas", "propane", "oil", "fuel_oil", "wood"}
+            for element in model.mep_elements
+        ) or bool(fine.get("fuel_fired_equipment"))
+        fireplace = bool(fine.get("fireplace")) or any(
+            str(mesh.get("element_type", "")).lower() in {"fireplace", "fuel_fired_fireplace"}
+            for mesh in model.meshes
+        )
+        attached_garage = bool(fine.get("attached_garage")) or any(
+            room.type == "garage" for room in rooms
+        )
+        co_required = fuel_fired or fireplace or attached_garage
+        if co_required:
+            co_alarms = [
+                element for element in model.mep_elements
+                if element.type in CO_ALARM_TYPES and element.system in {"electrical", "fire"}
+            ]
+            rooms_by_level: Dict[int, List[Room]] = defaultdict(list)
+            for room in rooms:
+                rooms_by_level[room.level].append(room)
+            required_co_zones: Set[Tuple[int, str]] = set()
+            bedroom_co_zones = {
+                (room.level, str(room.unit_id or f"level_{room.level}"))
+                for room in rooms if room.type == "bedroom"
+            }
+            for level, level_rooms in rooms_by_level.items():
+                unit_ids = {str(room.unit_id) for room in level_rooms if room.unit_id}
+                level_has_bedrooms = any(room.type == "bedroom" for room in level_rooms)
+                if not level_has_bedrooms:
+                    # The generator emits one applicable-story CO zone when an
+                    # occupied story has no sleeping rooms.  This is distinct
+                    # from a sleeping-area placement claim and must retain its
+                    # explicit identifier so it cannot be reused on a bedroom
+                    # story or another level.
+                    required_co_zones.add((level, f"level_{level}_no_sleeping_rooms"))
+                elif unit_ids:
+                    required_co_zones.update((level, unit_id) for unit_id in unit_ids)
+                else:
+                    required_co_zones.add((level, f"level_{level}"))
+
+            documented_co_zones: Set[Tuple[int, str]] = set()
+            for alarm in co_alarms:
+                metadata = self._metadata(alarm)
+                zone_id = metadata.get("sleeping_zone_id") or metadata.get("unit_id")
+                candidate = (alarm.level, str(zone_id)) if zone_id is not None else None
+                if candidate is None:
+                    level_zones = {
+                        zone for level, zone in required_co_zones if level == alarm.level
+                    }
+                    if len(level_zones) == 1:
+                        candidate = (alarm.level, next(iter(level_zones)))
+                if candidate is None:
+                    continue
+                if candidate in bedroom_co_zones:
+                    is_outside = self._bool_metadata(metadata, "outside_sleeping_area") is True
+                    if not is_outside:
+                        continue
+                documented_co_zones.add(candidate)
+
+            missing_co_zones = sorted(required_co_zones - documented_co_zones)
+            if not co_alarms or missing_co_zones:
+                issues.append(self._issue(
+                    "FIRE-CO-ALARM",
+                    "error",
+                    "A fuel-burning source/fireplace/attached garage triggers CO alarms, but listed alarms outside sleeping areas are missing"
+                    + (
+                        " for " + ", ".join(
+                            f"level {level}/{zone}" for level, zone in missing_co_zones
+                        ) + "."
+                        if missing_co_zones else "."
+                    ),
+                    "Add listed CO alarms in every applicable dwelling zone/level and outside each sleeping area.",
+                    citation_key="CBC-FIRE-LIFE-SAFETY",
+                    elements=[alarm.id for alarm in co_alarms],
+                ))
+            else:
+                co_documentation_gaps = {
+                    alarm.id: self._alarm_documentation_gaps(
+                        alarm,
+                        "UL 2034",
+                        require_building_power=new_construction,
+                    )
+                    for alarm in co_alarms
+                }
+                co_documentation_gaps = {
+                    alarm_id: gaps for alarm_id, gaps in co_documentation_gaps.items() if gaps
+                }
+                if co_documentation_gaps:
+                    issues.append(self._issue(
+                        "FIRE-CO-ALARM-DOCUMENTATION",
+                        "info",
+                        f"{len(co_documentation_gaps)} CO alarm(s) lack listing, power, backup-power, or interconnection evidence.",
+                        "Attach UL 2034 listing evidence and document required power, battery backup, and interconnection.",
+                        citation_key="CBC-FIRE-LIFE-SAFETY",
+                        elements=list(co_documentation_gaps),
+                        status="unverified",
+                    ))
+                else:
+                    self._pass("FIRE-CO-ALARM", "Required CO alarm location, listing, power, backup-power, and interconnection evidence is documented.")
+        else:
+            self._record("FIRE-CO-ALARM", "not_applicable", "No modeled fuel-fired equipment, fireplace, or attached garage triggers the CO-alarm check.")
         return issues
 
     # ------------------------------------------------------------------
@@ -1362,7 +2019,8 @@ class ComplianceEngine:
         ]
         explicit_failures: List[MEPElement] = []
         efficiency_shortfalls: List[MEPElement] = []
-        verified: List[MEPElement] = []
+        shaped_evidence: List[MEPElement] = []
+        malformed_evidence: List[MEPElement] = []
         for element in equipment:
             metadata = self._metadata(element)
             compliant = self._bool_metadata(metadata, "title24_compliant", "energy_code_compliant")
@@ -1372,6 +2030,7 @@ class ComplianceEngine:
                 or metadata.get("approved_calculation_id")
             )
             climate_zone = metadata.get("climate_zone")
+            method = metadata.get("compliance_method")
             if compliant is False:
                 explicit_failures.append(element)
                 continue
@@ -1382,10 +2041,13 @@ class ComplianceEngine:
             elif (
                 actual is not None
                 and required is not None
-                and evidence_reference
-                and climate_zone is not None
+                and self._valid_energy_form_reference(evidence_reference)
+                and self._valid_climate_zone(climate_zone)
+                and self._valid_energy_method(method)
             ):
-                verified.append(element)
+                shaped_evidence.append(element)
+            else:
+                malformed_evidence.append(element)
         if explicit_failures or efficiency_shortfalls:
             failed = list({element.id: element for element in explicit_failures + efficiency_shortfalls}.values())
             issues.append(self._issue(
@@ -1396,16 +2058,24 @@ class ComplianceEngine:
                 citation_key="ENERGY-TITLE24",
                 elements=[element.id for element in failed],
             ))
-        elif equipment and len(verified) == len(equipment):
-            self._pass("ENERGY-HVAC-EFFICIENCY", "HVAC equipment includes quantified efficiency, climate-zone, and compliance-reference evidence.")
-        elif equipment:
+        if malformed_evidence:
             issues.append(self._issue(
                 "ENERGY-HVAC-DOCUMENTATION",
                 "info",
-                "HVAC equipment lacks certified efficiency and climate-zone sizing metadata, so 2025 Title 24 performance cannot be verified.",
-                "Attach equipment performance, load calculations, controls, and compliance-form references.",
+                "HVAC evidence is incomplete or malformed; valid evidence needs quantified actual/required efficiency, climate zone 1-16, a recognized compliance method, and a structured CF1R/CF2R/CF3R form identifier.",
+                "Attach certified equipment performance, calculation method, climate zone, and correctly formed compliance-document references.",
                 citation_key="ENERGY-TITLE24",
-                elements=[element.id for element in equipment],
+                elements=[element.id for element in malformed_evidence],
+                status="unverified",
+            ))
+        if shaped_evidence:
+            issues.append(self._issue(
+                "ENERGY-HVAC-EXTERNAL-VERIFICATION",
+                "info",
+                f"{len(shaped_evidence)} HVAC element(s) have structurally valid evidence metadata, but form registration and CEC-approved software results are not externally verified by this engine.",
+                "Verify the registered documents and approved-software output with the authoritative CEC/HERS workflow.",
+                citation_key="ENERGY-TITLE24",
+                elements=[element.id for element in shaped_evidence],
                 status="unverified",
             ))
 
@@ -1427,17 +2097,24 @@ class ComplianceEngine:
             ))
         elif (
             envelope_compliant is True
-            and envelope_reference
-            and envelope_method
-            and envelope_climate_zone is not None
+            and self._valid_energy_form_reference(envelope_reference)
+            and self._valid_energy_method(envelope_method)
+            and self._valid_climate_zone(envelope_climate_zone)
         ):
-            self._pass("ENERGY-ENVELOPE", "Envelope metadata includes climate zone, compliance method, and calculation-form evidence.")
+            issues.append(self._issue(
+                "ENERGY-ENVELOPE-EXTERNAL-VERIFICATION",
+                "info",
+                "Envelope metadata has a valid climate zone, compliance method, and form-reference shape, but registration and approved-software results are not externally verified.",
+                "Verify the registered compliance documents and CEC-approved software output with the authoritative workflow.",
+                citation_key="ENERGY-TITLE24",
+                status="unverified",
+            ))
         else:
             issues.append(self._issue(
                 "ENERGY-ENVELOPE-DOCUMENTATION",
                 "info",
-                "Climate-zone envelope assemblies, fenestration values, PV/solar readiness, ventilation, and compliance forms are not encoded in the conceptual model.",
-                "Complete the 2025 Title 24 prescriptive or performance compliance workflow for the project climate zone.",
+                "Envelope evidence is incomplete or malformed; climate zone must be 1-16, method must be prescriptive/performance, and the compliance form must have a structured CF1R/CF2R/CF3R identifier.",
+                "Complete the 2025 Title 24 workflow and attach correctly structured compliance-document metadata.",
                 citation_key="ENERGY-TITLE24",
                 status="unverified",
             ))

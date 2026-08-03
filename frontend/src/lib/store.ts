@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from './api';
+import api, { type ProjectSpec, type ProjectSpecDraft } from './api';
 
 export type LayerKey = 'architecture' | 'floors' | 'structure' | 'roof' | 'plumbing' | 'electrical' | 'hvac' | 'fire' | 'fixtures' | 'issues' | 'neighbors' | 'power_grid';
 
@@ -9,7 +9,7 @@ export interface BuildingModel {
   chosen_massing_index: number; rooms: any[]; walls: any[];
   columns: any[]; mep_elements: any[]; meshes: any[]; structural_members?: any[];
   issues: any[]; site_context: any; generation_log: string[];
-  neighbor_style?: any; spec?: any;
+  neighbor_style?: any; spec?: ProjectSpec;
 }
 
 interface AppState {
@@ -21,13 +21,13 @@ interface AppState {
   clickedBuilding: any | null;
   drawnParcel: any | null;  // GeoJSON Polygon drawn by user — overrides OSM parcel
   chatMessages: { role: 'user' | 'assistant'; content: string }[];
-  spec: Partial<any>;
+  spec: ProjectSpecDraft;
   jobId: string | null;
   jobStatus: string;
   jobProgress: number;
   jobStep: string;
   buildingModel: BuildingModel | null;
-  generationSpec: any | null;
+  generationSpec: ProjectSpec | null;
   activeLayers: Record<LayerKey, boolean>;
   selectedMassing: number;
   selectedIssueId: string | null;
@@ -39,11 +39,11 @@ interface AppState {
   setClickedBuilding: (b: any | null) => void;
   setDrawnParcel: (p: any | null) => void;
   addChatMessage: (msg: { role: 'user' | 'assistant'; content: string }) => void;
-  updateSpec: (partial: Partial<any>) => void;
+  updateSpec: (partial: ProjectSpecDraft) => void;
   setJobId: (id: string | null) => void;
   setJobStatus: (s: string, p: number, step: string) => void;
   setBuildingModel: (m: BuildingModel | null) => void;
-  generateBuilding: (generationSpec: any, massingChoice?: number) => Promise<BuildingModel>;
+  generateBuilding: (generationSpec: ProjectSpec, massingChoice?: number) => Promise<BuildingModel>;
   toggleLayer: (layer: LayerKey) => void;
   setSelectedMassing: (idx: number) => void;
   setSelectedIssue: (id: string | null) => void;
@@ -52,7 +52,19 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   selectedSite: null, siteContext: null, infrastructure: null, neighborConstraints: null, feasibilityData: null,
   clickedBuilding: null, drawnParcel: null, chatMessages: [],
-  spec: { stories: 2, floor_to_floor_height_ft: 10, structural_system: 'wood', hvac_preference: 'mini_split', parking_strategy: 'ignore', priority: 'cost' },
+  spec: {
+    construction_scope: 'new_construction',
+    permit_application_date: null,
+    code_cycle: '2025',
+    primary_dwelling_sprinkler_requirement: 'unknown',
+    primary_dwelling_sprinkler_determination_source: null,
+    stories: 2,
+    floor_to_floor_height_ft: 10,
+    structural_system: 'wood',
+    hvac_preference: 'mini_split',
+    parking_strategy: 'ignore',
+    priority: 'cost',
+  },
   jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null, generationSpec: null,
   activeLayers: { architecture: true, floors: true, structure: false, roof: true, plumbing: true, electrical: true, hvac: true, fire: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
   selectedMassing: 0, selectedIssueId: null,

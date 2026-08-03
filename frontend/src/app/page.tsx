@@ -644,7 +644,7 @@ export default function LandingPage() {
               <span style={{ color: accentColor }}>Not spreadsheets.</span>
             </h1>
             <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 17, color: t.textMute, lineHeight: 1.75, maxWidth: 480, margin: '0 0 38px' }}>
-              Drop a pin on any California parcel. Petronus generates a complete architectural + MEP building model in under 30 seconds — site analysis, floor plans, plumbing, electrical, HVAC, and code compliance included.
+              Drop a pin on any California parcel. Petronus generates an architectural + MEP concept model in under 30 seconds — including site analysis, floor plans, routed systems, and a multi-code preliminary preflight.
             </p>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <EnterButton onClick={() => router.push('/app')} />
@@ -655,7 +655,7 @@ export default function LandingPage() {
               </SpotlightBtn>
             </div>
             <div style={{ display: 'flex', gap: 36, marginTop: 52 }}>
-              {[['< 30s', 'Generation time'], ['50+', 'Code checks'], ['3', 'Massing options'], ['Full', 'MEP systems']].map(([val, lbl]) => (
+              {[['< 30s', 'Generation time'], ['Multi-code', 'Preflight scope'], ['3', 'Massing options'], ['Routed', 'MEP systems']].map(([val, lbl]) => (
                 <div key={lbl}>
                   <div style={{ fontFamily: 'Space Grotesk,sans-serif', fontWeight: 700, fontSize: 22, color: '#c4a882' }}>{val}</div>
                   <div style={{ fontFamily: 'monospace', fontSize: 9, color: t.textDim, marginTop: 3, letterSpacing: '1px', textTransform: 'uppercase' }}>{lbl}</div>
@@ -714,14 +714,14 @@ export default function LandingPage() {
             <div>
               <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#8fa898', letterSpacing: '4px', textTransform: 'uppercase', marginBottom: 16, opacity: .7 }}>Live Pipeline</div>
               <h2 style={{ fontFamily: 'Space Grotesk,sans-serif', fontWeight: 700, fontSize: 'clamp(24px,3vw,38px)', margin: '0 0 20px', color: textColor }}>Watch the model build itself</h2>
-              <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 15, color: t.textMute, lineHeight: 1.8, margin: '0 0 32px' }}>Every stage streams in real time — site data, massing, rooms, MEP routing, compliance. You see exactly what's happening and why.</p>
+              <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 15, color: t.textMute, lineHeight: 1.8, margin: '0 0 32px' }}>Every stage streams in real time — site data, massing, rooms, MEP routing, and preliminary preflight. You see exactly what's happening and why.</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {[
                   { step: '01', label: 'Site context', detail: 'OSM + FEMA + USGS in parallel', color: '#c4a882' },
                   { step: '02', label: 'Massing', detail: '3 options, scored by priority', color: '#8fa898' },
                   { step: '03', label: 'Floorplan', detail: 'Units clipped to actual footprint', color: '#c4a882' },
                   { step: '04', label: 'MEP routing', detail: 'Plumbing, electrical, HVAC', color: '#d4943a' },
-                  { step: '05', label: 'Compliance', detail: '50+ CA Building Code checks', color: '#8fa898' },
+                  { step: '05', label: 'Preflight', detail: 'California multi-code preliminary review', color: '#8fa898' },
                 ].map(item => (
                   <div key={item.step} style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                     <div style={{ fontFamily: 'monospace', fontSize: 10, color: item.color, opacity: .55, flexShrink: 0, width: 24 }}>{item.step}</div>
@@ -747,7 +747,7 @@ export default function LandingPage() {
           }}>
             {[
               { val: '< 30s', label: 'Full generation', sub: 'from pin to 3D model', color: '#c4a882' },
-              { val: '50+', label: 'Code checks', sub: 'CBC, Title 24, ASCE 7-22', color: '#8fa898' },
+              { val: 'Multi-code', label: 'Preflight', sub: 'CBC · CRC · CEC · Title 24', color: '#8fa898' },
               { val: '3', label: 'Massing options', sub: 'rectangle · L-shape · bar', color: '#c4a882' },
               { val: '100%', label: 'CA-specific', sub: 'built for California parcels', color: '#d4943a' },
             ].map((s, i) => (
@@ -791,7 +791,7 @@ export default function LandingPage() {
             <FadeIn delay={.1}>
               <div style={{ padding: 32, borderRadius: 18, border: '1px solid rgba(196,168,130,0.2)', background: 'rgba(196,168,130,0.025)' }}>
                 <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#c4a882', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: 24, opacity: .8 }}>With Petronus</div>
-                {['Site data fetched instantly from OSM + FEMA', '3 massing options generated in seconds', 'MEP routing runs inside the same pipeline', '50+ CBC checks run at generation time', 'One click → full BIM-ready model', 'Real OSM neighbor buildings in 3D'].map(item => (
+                {['Site data fetched instantly from OSM + FEMA', '3 massing options generated in seconds', 'MEP routing runs inside the same pipeline', 'Multi-code preliminary preflight at generation time', 'One click → coordinated concept model', 'Real OSM neighbor buildings in 3D'].map(item => (
                   <div key={item} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
                     <div style={{ width: 16, height: 16, borderRadius: '50%', border: '1px solid rgba(196,168,130,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <div style={{ width: 5, height: 5, background: '#c4a882', borderRadius: '50%' }} />
@@ -873,14 +873,14 @@ export default function LandingPage() {
                   <PetronusLogo height={24} color="#c4a882" iconOnly={false} />
                 </div>
                 <p style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 14, color: t.textMute, lineHeight: 1.8, maxWidth: 360, margin: '0 0 16px' }}>
-                  Automated BIM platform built for California multi-family residential development. We replace weeks of manual drafting with an AI pipeline that generates code-compliant building models from a parcel pin.
+                  Automated BIM platform built for California residential development. We accelerate early design with concept building models, coordinated MEP routing, and clearly labeled preliminary preflight findings.
                 </p>
               </div>
             </FadeIn>
             <FadeIn delay={.1}>
               <div>
                 <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#c4a882', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: 20, opacity: .6 }}>Platform</div>
-                {['Site Analysis', 'Massing Generator', 'Floorplan Layout', 'MEP Routing', 'Code Compliance', 'Facade Design'].map(l => (
+                {['Site Analysis', 'Massing Generator', 'Floorplan Layout', 'MEP Routing', 'Code Preflight', 'Facade Design'].map(l => (
                   <div key={l} style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 13, color: t.textDim, marginBottom: 10 }}>{l}</div>
                 ))}
               </div>
@@ -888,7 +888,7 @@ export default function LandingPage() {
             <FadeIn delay={.15}>
               <div>
                 <div style={{ fontFamily: 'monospace', fontSize: 9, color: '#8fa898', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: 20, opacity: .6 }}>Built For</div>
-                {['California Residential', 'Multi-family Projects', 'CBC Compliance', 'R-2 Occupancy', 'Title 24', 'ASCE 7-22'].map(l => (
+                {['California Residential', 'Multi-family Projects', 'CBC Preflight', 'R-2 Occupancy', 'Title 24', 'ASCE 7-22'].map(l => (
                   <div key={l} style={{ fontFamily: 'DM Sans,sans-serif', fontSize: 13, color: t.textDim, marginBottom: 10 }}>{l}</div>
                 ))}
               </div>
@@ -928,7 +928,7 @@ function TerminalBlock() {
     { text: '  ✓ 6 units · corridor · stair core',     color: '#7db896', delay: 3700 },
     { text: '  ↳ Routing MEP systems…',                 color: '#6a6460', delay: 4100 },
     { text: '  ✓ 12 plumbing · 18 electrical · 9 HVAC', color: '#7db896', delay: 4600 },
-    { text: '  ↳ Running compliance checks…',           color: '#6a6460', delay: 5000 },
+    { text: '  ↳ Running preliminary preflight…',        color: '#6a6460', delay: 5000 },
     { text: '  ✓ Preliminary checks · 2 review items · CA 2025', color: '#7db896', delay: 5500 },
     { text: '  ✓ Concept model ready  [27.4s]',         color: '#c4a882', delay: 6000 },
   ];
@@ -1085,17 +1085,17 @@ function StepCard({ step, index }: { step: typeof STEPS[0]; index: number }) {
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 const FEATURES = [
-  { iconKey: 'globe'     as const, title: 'Site Intelligence', color: '#c4a882', desc: 'Parcel analysis, FEMA flood zones, USGS seismic data, OSM neighbor constraints, terrain slope, and legal feasibility — all fetched automatically.' },
+  { iconKey: 'globe'     as const, title: 'Site Intelligence', color: '#c4a882', desc: 'Parcel analysis, FEMA flood zones, USGS seismic data, OSM neighbor constraints, terrain slope, and preliminary site-feasibility flags.' },
   { iconKey: 'building'  as const, title: 'Automated Massing', color: '#8fa898', desc: 'Three massing options (rectangle, L-shape, bar) generated from your parcel envelope, scored on cost, compactness, and daylight.' },
-  { iconKey: 'blueprint' as const, title: 'Floor Plan Layout', color: '#c4a882', desc: 'Unit mix, corridor spine, stair core, and sub-room placement packed into the chosen massing — ready for permit review.' },
+  { iconKey: 'blueprint' as const, title: 'Floor Plan Layout', color: '#c4a882', desc: 'Unit mix, corridor spine, stair core, and sub-room placement packed into the chosen massing for design-team review.' },
   { iconKey: 'bolt'      as const, title: 'MEP Routing',       color: '#d4943a', desc: 'Complete plumbing risers and branches, electrical panels and conduit runs, and HVAC duct layouts — all connected and code-aware.' },
   { iconKey: 'facade'    as const, title: 'Facade Design',     color: '#8fa898', desc: 'Windows sized and spaced per floor, dark frames, roof parapet — styled to match surrounding OSM building materials and colors.' },
-  { iconKey: 'shield'    as const, title: 'Code Compliance',   color: '#c4a882', desc: '50+ California Building Code checks run at generation time: egress, fire separation, structural, energy, and accessibility flags.' },
+  { iconKey: 'shield'    as const, title: 'Code Preflight',     color: '#c4a882', desc: 'A multi-code preliminary preflight reports egress, fire-safety, structural, energy, accessibility, and documentation findings without claiming permit approval.' },
 ];
 
 const STEPS = [
   { label: 'Step 01', title: 'Drop a pin', color: '#c4a882', desc: 'Click anywhere on the map to select a parcel. Petronus fetches the site boundary, flood zone, seismic data, neighbor buildings, and terrain elevation automatically.' },
   { label: 'Step 02', title: 'Set parameters', color: '#8fa898', desc: 'Choose stories, unit count, structural system (wood / steel / concrete), HVAC type, and your priority — cost, speed, or daylight.' },
-  { label: 'Step 03', title: 'Generate', color: '#c4a882', desc: 'Hit Generate. In under 30 seconds the full pipeline runs: massing → floorplan → MEP → compliance → facade. All connected, all to scale.' },
-  { label: 'Step 04', title: 'Review & export', color: '#d4943a', desc: 'Orbit the 3D model, toggle MEP layers, review compliance issues, pick your massing option, and export to BIM.' },
+  { label: 'Step 03', title: 'Generate', color: '#c4a882', desc: 'Hit Generate. In under 30 seconds the pipeline runs: massing → floorplan → MEP → preliminary preflight → facade. All connected and modeled to scale.' },
+  { label: 'Step 04', title: 'Review & export', color: '#d4943a', desc: 'Orbit the 3D model, toggle MEP layers, review preflight findings, pick your massing option, and export the concept model.' },
 ];

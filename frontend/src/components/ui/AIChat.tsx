@@ -9,7 +9,7 @@ const SUGGESTIONS = [
   'Optimize for natural daylight',
   'Add 8 residential units',
   'What are the seismic requirements here?',
-  'Explain the compliance issues',
+  'Explain the preliminary preflight findings',
 ];
 
 export default function AIChat() {

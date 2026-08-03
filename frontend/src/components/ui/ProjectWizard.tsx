@@ -1,6 +1,12 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
+import type {
+  CaliforniaCodeCycle,
+  ConstructionScope,
+  PrimaryDwellingSprinklerRequirement,
+  ProjectSpec,
+} from '@/lib/api';
 
 // ── Parcel geometry helpers ────────────────────────────────────────────
 
@@ -125,7 +131,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function NumInput({ value, onChange, placeholder, min, max, step }: {
-  value: number | undefined; onChange: (v: number | undefined) => void;
+  value: number | null | undefined; onChange: (v: number | undefined) => void;
   placeholder?: string; min?: number; max?: number; step?: number;
 }) {
   return (
@@ -279,6 +285,17 @@ export default function ProjectWizard() {
     ? Math.round(parcelAreaSqft * 0.65 / 100) * 100   // single floor footprint × 65% efficiency
     : 8000;
   const effectiveArea = spec.target_gross_area_sqft || derivedArea;
+  const constructionScope = spec.construction_scope ?? 'new_construction';
+  const permitApplicationDate = spec.permit_application_date ?? '';
+  const codeCycle: CaliforniaCodeCycle = permitApplicationDate && permitApplicationDate < '2026-01-01'
+    ? '2022'
+    : '2025';
+
+  const setPermitApplicationDate = (value: string) => {
+    const filingDate = value || null;
+    const filingCycle: CaliforniaCodeCycle = value && value < '2026-01-01' ? '2022' : '2025';
+    updateSpec({ permit_application_date: filingDate, code_cycle: filingCycle });
+  };
 
   const handleGenerate = async () => {
     if (!selectedSite) return;
@@ -296,12 +313,16 @@ export default function ProjectWizard() {
     const bedrooms = (spec as any).bedrooms || (buildingUse === 'single_family' ? 3 : undefined);
     const bathrooms = (spec as any).bathrooms ?? (buildingUse === 'single_family' ? 2 : undefined);
 
-    const fullSpec: any = {
+    const fullSpec: ProjectSpec = {
       region_country: 'US', region_state: 'CA',
       occupancy: buildingUse === 'multi_family' ? 'MultiFamilyResidential' : 'SingleFamilyResidential',
+      construction_scope: constructionScope,
       permit_set: false,
+      permit_application_date: permitApplicationDate || null,
+      code_cycle: codeCycle,
+      jurisdiction_city: spec.jurisdiction_city || null,
       building_use: buildingUse,
-      bedrooms: bedrooms || null,
+      bedrooms: bedrooms ?? null,
       bathrooms: bathrooms || null,
       stories: inferredStories,
       floor_to_floor_height_ft: spec.floor_to_floor_height_ft || 10.0,
@@ -321,6 +342,12 @@ export default function ProjectWizard() {
         ...(clickedMat && !((spec as any).material_overrides?.walls) ? { walls: clickedMat } : {}),
       } : null,
       fine_details: (spec as any).fine_details || null,
+      primary_dwelling_sprinkler_requirement: buildingUse === 'adu'
+        ? (spec.primary_dwelling_sprinkler_requirement ?? 'unknown')
+        : 'unknown',
+      primary_dwelling_sprinkler_determination_source: buildingUse === 'adu'
+        ? (spec.primary_dwelling_sprinkler_determination_source || null)
+        : null,
       max_height_ft: (spec as any).max_height_ft || null,
       max_floors: (spec as any).max_floors || null,
       max_bedrooms: (spec as any).max_bedrooms || null,
@@ -639,6 +666,68 @@ export default function ProjectWizard() {
             <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 italic">{hint}</div>
           ) : null;
         })()}
+      </div>
+
+      {/* Filing inputs determine which California code cycle can be evaluated. */}
+      <div className="panel-section space-y-4">
+        <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Preflight Basis</div>
+        <Field label="Construction Scope">
+          <Select
+            value={constructionScope}
+            onChange={(value) => updateSpec({ construction_scope: value as ConstructionScope })}
+            options={['new_construction', 'addition', 'alteration']}
+          />
+        </Field>
+        <Field label="Permit Application Date (optional)">
+          <input
+            type="date"
+            min="2023-01-01"
+            max="2028-12-31"
+            value={permitApplicationDate}
+            onChange={(event) => setPermitApplicationDate(event.target.value)}
+            className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] transition-colors font-mono"
+          />
+        </Field>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2">
+          <div className="text-[10px] font-mono text-[var(--text-secondary)]">
+            California code cycle: <span className="text-[var(--accent-gold)]">{codeCycle}</span>
+          </div>
+          <div className="text-[9px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
+            Selected from supported 2023–2028 filing dates. With no filing date, the preliminary preflight uses the current 2025 cycle.
+          </div>
+        </div>
+        {((spec as any).building_use || 'multi_family') === 'adu' && (
+          <>
+            <Field label="Primary Dwelling Sprinkler Requirement">
+              <Select
+                value={spec.primary_dwelling_sprinkler_requirement ?? 'unknown'}
+                onChange={(value) => updateSpec({
+                  primary_dwelling_sprinkler_requirement: value as PrimaryDwellingSprinklerRequirement,
+                  primary_dwelling_sprinkler_determination_source: value === 'unknown'
+                    ? null
+                    : spec.primary_dwelling_sprinkler_determination_source,
+                })}
+                options={['unknown', 'required', 'not_required']}
+              />
+            </Field>
+            {spec.primary_dwelling_sprinkler_requirement !== 'unknown' && (
+              <Field label="Determination Source">
+                <input
+                  type="text"
+                  value={spec.primary_dwelling_sprinkler_determination_source ?? ''}
+                  onChange={(event) => updateSpec({
+                    primary_dwelling_sprinkler_determination_source: event.target.value || null,
+                  })}
+                  placeholder="AHJ record, approved permit set, or written determination"
+                  className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] transition-colors font-mono"
+                />
+              </Field>
+            )}
+            <div className="text-[9px] font-mono text-[var(--text-secondary)] opacity-70">
+              Whether sprinklers are installed is not, by itself, a legal determination that they are required.
+            </div>
+          </>
+        )}
       </div>
 
       {/* Building parameters */}

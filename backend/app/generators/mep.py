@@ -72,8 +72,9 @@ DRAIN_PIPE_SIZES = [
 # CFM per room type per 100 sqft (approximate for residential)
 CFM_PER_100SQFT = {
     "bedroom": 25, "living": 30, "family_room": 30,
-    "office": 25, "unit": 30, "kitchen": 40, "bathroom": 50,
-    "dining": 20, "corridor": 15, "laundry": 30,
+    "office": 25, "library": 25, "gym": 35, "unit": 30,
+    "kitchen": 40, "bathroom": 50, "dining": 20,
+    "corridor": 15, "laundry": 30,
 }
 
 # Preliminary mapping: (max_cfm, width_in, height_in, diameter_in_round)
@@ -188,6 +189,14 @@ class MEPRouter:
         if is_adu:
             elements.extend(self._adu_sewer_lateral(rooms_inside, walls))
 
+        # Plumbing is generated before electrical, so sanitary vents do not
+        # initially know where receptacle wall drops will land. Feed those
+        # final vertical points back into vent routing before containment.
+        if fp_poly is not None:
+            elements = self._coordinate_vents_around_conduit_drops(
+                elements, fp_poly
+            )
+
         # Final containment pass — drop any element whose horizontal footprint
         # (x, z) start or end lands outside the building interior.
         # Vertical risers (same x,z for start and end) are exempt.
@@ -264,8 +273,11 @@ class MEPRouter:
             if isinstance(sprinkler_rule, bool):
                 profile["fire_sprinklers"] = sprinkler_rule
 
-        # An ADU is not required to add sprinklers when the primary dwelling is
-        # not sprinklered (California Gov. Code 66314(d)(12)).
+        # An ADU sprinkler exception is a legal applicability determination,
+        # not an inference from whether sprinklers happen to be installed in
+        # the primary dwelling.  Require the new explicit determination and a
+        # traceable source; the legacy boolean alone must never remove the
+        # conservative sprinkler layout.
         building_use = getattr(getattr(spec, "building_use", None), "value", getattr(spec, "building_use", None))
         profile["building_use"] = building_use
         profile["fire_standard"] = (
@@ -277,10 +289,25 @@ class MEPRouter:
         # statutory ADU exception is the only modeled sprinkler opt-out.
         profile["fire_alarms"] = True
         profile["carbon_monoxide_detectors"] = True
-        profile["fire_sprinklers"] = not (
-            building_use == "adu"
-            and getattr(spec, "primary_dwelling_sprinklered", None) is False
+        sprinkler_requirement = getattr(
+            spec, "primary_dwelling_sprinkler_requirement", None
         )
+        sprinkler_requirement = getattr(
+            sprinkler_requirement, "value", sprinkler_requirement
+        )
+        determination_source = getattr(
+            spec, "primary_dwelling_sprinkler_determination_source", None
+        )
+        documented_adu_exception = (
+            building_use == "adu"
+            and str(sprinkler_requirement or "").strip().lower() == "not_required"
+            and isinstance(determination_source, str)
+            and bool(determination_source.strip())
+        )
+        profile["adu_sprinkler_exception_documented"] = documented_adu_exception
+        profile["primary_dwelling_sprinkler_requirement"] = sprinkler_requirement
+        profile["primary_dwelling_sprinkler_determination_source"] = determination_source
+        profile["fire_sprinklers"] = not documented_adu_exception
         return profile
 
     def _footprint_polygon(
@@ -483,6 +510,99 @@ class MEPRouter:
                 }))
         return output
 
+    def _coordinate_vents_around_conduit_drops(
+        self, elements: List[MEPElement], footprint: Polygon
+    ) -> List[MEPElement]:
+        """Reserve vertical receptacle drops when routing sanitary vents.
+
+        A wall drop spans the vent elevation, so vertical zoning alone cannot
+        resolve a plan crossing. Sanitary vent branches instead receive a
+        short horizontal coordination bend. Only drops near a branch's direct
+        path are included, keeping large multifamily visibility graphs small.
+        """
+        drops_by_level: Dict[int, List[Tuple[float, float]]] = {}
+        for element in elements:
+            if (
+                element.system != "electrical"
+                or element.type != "conduit_branch"
+                or not element.start
+                or not element.end
+            ):
+                continue
+            horizontal_run = math.hypot(
+                element.end[0] - element.start[0],
+                element.end[2] - element.start[2],
+            )
+            vertical_run = abs(element.end[1] - element.start[1])
+            if horizontal_run < 0.02 and vertical_run >= 0.20:
+                drops_by_level.setdefault(element.level, []).append(
+                    (float(element.start[0]), float(element.start[2]))
+                )
+
+        if not drops_by_level:
+            return elements
+
+        coordinated: List[MEPElement] = []
+        # A 1.5-inch vent, 0.75-inch conduit, and the detector's 5cm trade
+        # clearance need roughly 0.079m between centrelines. The visibility
+        # router uses a diamond buffer, so 0.14m leaves a small tolerance.
+        drop_keepout_radius_m = 0.14
+        candidate_distance_m = 0.18
+        for element in elements:
+            if (
+                element.system != "plumbing"
+                or element.type != "vent_branch"
+                or not element.start
+                or not element.end
+            ):
+                coordinated.append(element)
+                continue
+
+            metadata = dict(element.metadata or {})
+            existing_avoid_points = list(
+                metadata.get("_coordination_avoid_points", [])
+            )
+            existing_clearance = float(
+                metadata.get("_coordination_clearance_m", 0.0) or 0.0
+            )
+            base_path = self._shortest_horizontal_path(
+                (element.start[0], element.start[2]),
+                (element.end[0], element.end[2]),
+                footprint,
+                avoid_points=[
+                    tuple(point[:3])
+                    for point in existing_avoid_points if len(point) >= 2
+                ],
+                clearance_m=existing_clearance,
+            )
+            route_shape = LineString(base_path) if len(base_path) >= 2 else LineString([
+                (element.start[0], element.start[2]),
+                (element.end[0], element.end[2]),
+            ])
+            nearby_drops = [
+                (x, z)
+                for x, z in drops_by_level.get(element.level, [])
+                if route_shape.distance(ShpPoint(x, z)) < candidate_distance_m
+            ]
+            if not nearby_drops:
+                coordinated.append(element)
+                continue
+
+            avoid_points = existing_avoid_points
+            existing = {
+                (round(float(point[0]), 4), round(float(point[1]), 4))
+                for point in avoid_points if len(point) >= 2
+            }
+            for x, z in nearby_drops:
+                key = (round(x, 4), round(z, 4))
+                if key not in existing:
+                    avoid_points.append([x, z, drop_keepout_radius_m])
+                    existing.add(key)
+            metadata["_coordination_avoid_points"] = avoid_points
+            metadata["electrical_drop_coordination"] = True
+            coordinated.append(element.model_copy(update={"metadata": metadata}))
+        return coordinated
+
     def _route_fire_protection(
         self, rooms: List[Room], levels: List[Level], floor_h: float, fine: dict
     ) -> List[MEPElement]:
@@ -656,6 +776,7 @@ class MEPRouter:
         ]
 
         stack_positions = []
+        stack_ids_by_position: Dict[Tuple[float, float], str] = {}
         drain_d = 4.0  # default drain diameter
         for room in lvl0_wet[:2]:   # max 2 stacks for small buildings
             sx, sz = self._room_slot(room, "soil")
@@ -668,14 +789,22 @@ class MEPRouter:
             )
             drain_d = self._drain_pipe_size(total_dfu)
 
+            stack_id = f"stack_{uuid.uuid4().hex[:5]}"
+            stack_ids_by_position[(sx, sz)] = stack_id
             elements.append(MEPElement(
-                id=f"stack_{uuid.uuid4().hex[:5]}",
+                id=stack_id,
                 system="plumbing",
                 type="soil_stack",
                 start=[sx, 0.0, sz],
                 end=[sx, top_y, sz],
                 level=0,
                 diameter_in=drain_d,
+                metadata={
+                    "network_id": "sanitary_drain_and_vent",
+                    "vent_through_roof": True,
+                    "terminates_above_roof": True,
+                    "design_status": "conceptual_prelayout",
+                },
             ))
 
         # ── Water service entry ──
@@ -797,12 +926,33 @@ class MEPRouter:
                 # Route pipes inside the floor/wall zone — visible inside the building
                 supply_y = floor_y + 0.15   # in-wall supply height
                 waste_y  = floor_y + 0.05   # just above finished floor
+                vent_y = floor_y + 1.95     # vent branch in partition zone
+
+                is_half = room.id in half_bath_room_ids
+                if room.type == "bathroom":
+                    served_fixture_types = ["toilet", "sink"]
+                    if not is_half:
+                        served_fixture_types.append("shower")
+                elif room.type == "kitchen":
+                    served_fixture_types = ["kitchen_sink"]
+                else:
+                    served_fixture_types = ["washer_connection"]
+                fixture_group_id = f"fixture_group_{room.id}"
+                branch_evidence = {
+                    "room_id": room.id,
+                    "served_room_id": room.id,
+                    "served_room_ids": [room.id],
+                    "served_fixture_types": served_fixture_types,
+                    "fixture_group_id": fixture_group_id,
+                    "design_status": "conceptual_prelayout",
+                }
 
                 # Cold supply branch
                 total_room_fu = FIXTURE_UNITS.get(room.type, 2.0)
                 supply_d = self._water_pipe_size(total_room_fu)
+                cold_branch_id = f"cold_{uuid.uuid4().hex[:5]}"
                 elements.append(MEPElement(
-                    id=f"cold_{uuid.uuid4().hex[:5]}",
+                    id=cold_branch_id,
                     system="plumbing",
                     type="cold_supply",
                     start=[cold_x, supply_y, cold_z],
@@ -810,7 +960,7 @@ class MEPRouter:
                     level=lvl,
                     diameter_in=supply_d,
                     metadata={
-                        "room_id": room.id, "network_id": "domestic_cold_water",
+                        **branch_evidence, "network_id": "domestic_cold_water",
                         "fixture_units": total_room_fu,
                         "_coordination_avoid_points": vertical_trade_keepouts,
                         "_coordination_clearance_m": 0.34,
@@ -818,9 +968,10 @@ class MEPRouter:
                 ))
 
                 # Hot supply branch (from water heater, parallel, slightly offset)
+                hot_branch_id = f"hot_{uuid.uuid4().hex[:5]}"
                 if room.type in ("bathroom", "kitchen", "laundry"):
                     elements.append(MEPElement(
-                        id=f"hot_{uuid.uuid4().hex[:5]}",
+                        id=hot_branch_id,
                         system="plumbing",
                         type="hot_supply",
                         start=[hot_x, supply_y + 0.04, hot_z],
@@ -828,7 +979,7 @@ class MEPRouter:
                         level=lvl,
                         diameter_in=supply_d,
                         metadata={
-                            "room_id": room.id, "network_id": "domestic_hot_water",
+                            **branch_evidence, "network_id": "domestic_hot_water",
                             "insulated": True,
                             "_coordination_avoid_points": vertical_trade_keepouts,
                             "_coordination_clearance_m": 0.34,
@@ -836,8 +987,11 @@ class MEPRouter:
                     ))
 
                 # Waste branch
+                waste_branch_id = f"waste_{uuid.uuid4().hex[:5]}"
+                vent_branch_id = f"vent_{uuid.uuid4().hex[:5]}"
+                connected_stack_id = stack_ids_by_position.get((waste_x, waste_z))
                 elements.append(MEPElement(
-                    id=f"waste_{uuid.uuid4().hex[:5]}",
+                    id=waste_branch_id,
                     system="plumbing",
                     type="waste_branch",
                     start=[connection_x, waste_y, connection_z],
@@ -845,10 +999,30 @@ class MEPRouter:
                     level=lvl,
                     diameter_in=max(1.5, drain_d - 1.0),
                     metadata={
-                        "room_id": room.id, "network_id": "sanitary",
+                        **branch_evidence, "network_id": "sanitary",
                         "slope_pct": 2.1, "vented": True,
+                        "vent_branch_id": vent_branch_id,
+                        "connected_stack_id": connected_stack_id,
                         "_coordination_avoid_points": vertical_trade_keepouts,
                         "_coordination_clearance_m": 0.34,
+                    },
+                ))
+                elements.append(MEPElement(
+                    id=vent_branch_id,
+                    system="plumbing",
+                    type="vent_branch",
+                    start=[connection_x, vent_y, connection_z],
+                    end=[waste_x, vent_y, waste_z],
+                    level=lvl,
+                    diameter_in=1.5,
+                    metadata={
+                        **branch_evidence,
+                        "network_id": "sanitary_vent",
+                        "waste_branch_id": waste_branch_id,
+                        "connected_stack_id": connected_stack_id,
+                        "vent_through_roof": True,
+                        "_coordination_avoid_points": vertical_trade_keepouts,
+                        "_coordination_clearance_m": 0.24,
                     },
                 ))
 
@@ -858,36 +1032,69 @@ class MEPRouter:
                     # Only an explicitly requested fractional bath is treated
                     # as a half bath. Compact geometry alone must not silently
                     # remove the tub/shower from a requested full bathroom.
-                    is_half = room.id in half_bath_room_ids
                     elements.append(MEPElement(
                         id=f"toilet_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="toilet",
                         start=self._fixture_xyz(room, "fixture_toilet", floor_y + 0.01), level=lvl,
-                        metadata={"room_id": room.id, "fixture_units": 3.0, "trap_seal_in": 2, "vented": True}))
+                        metadata={
+                            **branch_evidence, "fixture_units": 3.0,
+                            "trap_seal_in": 2, "vented": True,
+                            "cold_supply_branch_id": cold_branch_id,
+                            "waste_branch_id": waste_branch_id,
+                            "vent_branch_id": vent_branch_id,
+                        }))
                     elements.append(MEPElement(
                         id=f"sink_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="sink",
                         start=self._fixture_xyz(room, "fixture_sink", floor_y + 0.01), level=lvl,
-                        metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
+                        metadata={
+                            **branch_evidence, "fixture_units": 2.0,
+                            "trap_seal_in": 2, "vented": True,
+                            "cold_supply_branch_id": cold_branch_id,
+                            "hot_supply_branch_id": hot_branch_id,
+                            "waste_branch_id": waste_branch_id,
+                            "vent_branch_id": vent_branch_id,
+                        }))
                     if not is_half:
                         # Full bath: add shower
                         elements.append(MEPElement(
                             id=f"shower_{uuid.uuid4().hex[:5]}",
                             system="plumbing", type="shower",
                             start=self._fixture_xyz(room, "fixture_shower", floor_y + 0.01), level=lvl,
-                            metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
+                            metadata={
+                                **branch_evidence, "fixture_units": 2.0,
+                                "trap_seal_in": 2, "vented": True,
+                                "cold_supply_branch_id": cold_branch_id,
+                                "hot_supply_branch_id": hot_branch_id,
+                                "waste_branch_id": waste_branch_id,
+                                "vent_branch_id": vent_branch_id,
+                            }))
                 elif room.type == "kitchen":
                     elements.append(MEPElement(
                         id=f"ksink_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="kitchen_sink",
                         start=self._fixture_xyz(room, "fixture_kitchen_sink", floor_y + 0.01), level=lvl,
-                        metadata={"room_id": room.id, "fixture_units": 2.0, "trap_seal_in": 2, "vented": True}))
+                        metadata={
+                            **branch_evidence, "fixture_units": 2.0,
+                            "trap_seal_in": 2, "vented": True,
+                            "cold_supply_branch_id": cold_branch_id,
+                            "hot_supply_branch_id": hot_branch_id,
+                            "waste_branch_id": waste_branch_id,
+                            "vent_branch_id": vent_branch_id,
+                        }))
                 elif room.type == "laundry":
                     elements.append(MEPElement(
                         id=f"washer_box_{uuid.uuid4().hex[:5]}",
                         system="plumbing", type="washer_connection",
                         start=self._fixture_xyz(room, "fixture_laundry", floor_y + 0.9), level=lvl,
-                        metadata={"room_id": room.id, "fixture_units": 3.0, "trap_seal_in": 2, "vented": True}))
+                        metadata={
+                            **branch_evidence, "fixture_units": 3.0,
+                            "trap_seal_in": 2, "vented": True,
+                            "cold_supply_branch_id": cold_branch_id,
+                            "hot_supply_branch_id": hot_branch_id,
+                            "waste_branch_id": waste_branch_id,
+                            "vent_branch_id": vent_branch_id,
+                        }))
 
         return elements
 
@@ -1090,7 +1297,8 @@ class MEPRouter:
                     continue
                 if room.type not in (
                     "bedroom", "living", "family_room", "unit", "dining",
-                    "kitchen", "office", "media_room", "bonus_room", "loft",
+                    "kitchen", "office", "library", "gym", "media_room",
+                    "bonus_room", "loft",
                 ):
                     continue
                 head_x, head_z = self._room_slot_away(
@@ -1298,13 +1506,47 @@ class MEPRouter:
                 net_area = sum(r.area_sqft for r in level_rooms if r.type != "unit")
                 if net_area <= 0:
                     net_area = sum(r.area_sqft for r in level_rooms)
-                outdoor_cfm = max(30, round(net_area * 0.03))
+                # Preliminary only: this area-factor is useful for selecting a
+                # visible concept unit, but it is not the project ventilation
+                # calculation.  Carry both sides of the comparison and an
+                # explicit unverified marker so downstream compliance cannot
+                # convert a generated estimate into proof of compliance.
+                required_outdoor_cfm = max(30.0, round(net_area * 0.03, 1))
+                supplied_actual_cfm = profile.get("actual_outdoor_air_cfm")
+                try:
+                    actual_outdoor_cfm = float(supplied_actual_cfm)
+                    if actual_outdoor_cfm <= 0:
+                        raise ValueError
+                    actual_cfm_basis = "user_supplied_unverified"
+                except (TypeError, ValueError):
+                    actual_outdoor_cfm = required_outdoor_cfm
+                    actual_cfm_basis = "conceptual_selected_capacity"
+                supplied_reference = str(
+                    profile.get("ventilation_calculation_reference") or ""
+                ).strip()
+                calculation_reference = supplied_reference or (
+                    "conceptual area-factor prelayout; complete the applicable "
+                    "2025 California residential ventilation calculation"
+                )
                 equipment_type = "erv" if profile.get("erv_hrv_required") else "whole_house_ventilator"
                 elements.append(MEPElement(
                     id=f"ventilator_{lvl}", system="hvac", type=equipment_type,
                     start=[cx, plenum_y, cz], level=lvl, width_in=18, height_in=10,
                     metadata={
-                        "outdoor_air_cfm": outdoor_cfm, "level": lvl,
+                        "outdoor_air_cfm": actual_outdoor_cfm,
+                        "actual_outdoor_air_cfm": actual_outdoor_cfm,
+                        "required_outdoor_air_cfm": required_outdoor_cfm,
+                        "design_outdoor_air_cfm": actual_outdoor_cfm,
+                        "actual_cfm_basis": actual_cfm_basis,
+                        "ventilation_calculation_reference": calculation_reference,
+                        "calculation_reference": calculation_reference,
+                        "calculation_verified": False,
+                        "evidence_status": "conceptual_unverified",
+                        "requires_final_ventilation_calculation": True,
+                        "concept_capacity_meets_estimated_requirement": (
+                            actual_outdoor_cfm >= required_outdoor_cfm
+                        ),
+                        "level": lvl,
                         "duct_r_value": 8, "duct_sealed": True,
                         "anchored": True, "service_clearance_in": 30,
                     },
@@ -1318,12 +1560,21 @@ class MEPRouter:
                     bds = self._bounds(room)
                     exhaust_cfm = 100 if room.type in ("kitchen", "laundry") else 50
                     fan_type = "range_hood" if room.type == "kitchen" else "exhaust_fan"
+                    exhaust_reference = (
+                        "conceptual local-exhaust prelayout; verify the applicable "
+                        "2025 California mechanical/energy compliance path"
+                    )
                     elements.append(MEPElement(
                         id=f"exhaust_{uuid.uuid4().hex[:5]}",
                         system="hvac", type=fan_type,
                         start=[cx, fixture_y, cz], level=lvl,
                         metadata={
                             "room_id": room.id, "capacity_cfm": exhaust_cfm,
+                            "actual_exhaust_cfm": exhaust_cfm,
+                            "required_exhaust_cfm": exhaust_cfm,
+                            "calculation_reference": exhaust_reference,
+                            "calculation_verified": False,
+                            "evidence_status": "conceptual_unverified",
                             "terminates_outdoors": True,
                         },
                     ))
@@ -1335,6 +1586,11 @@ class MEPRouter:
                         level=lvl, width_in=6, height_in=6,
                         metadata={
                             "room_id": room.id, "capacity_cfm": exhaust_cfm,
+                            "actual_exhaust_cfm": exhaust_cfm,
+                            "required_exhaust_cfm": exhaust_cfm,
+                            "calculation_reference": exhaust_reference,
+                            "calculation_verified": False,
+                            "evidence_status": "conceptual_unverified",
                             "duct_r_value": 8, "duct_sealed": True,
                             "terminates_outdoors": True,
                             "_coordination_avoid_points": plumbing_keepouts,
@@ -1376,6 +1632,49 @@ class MEPRouter:
         if not all_room_pts:
             return elements
 
+        # CO alarms are applicability-driven.  Utility availability is not an
+        # installed fuel-fired source, so only a modeled garage or explicit
+        # equipment/fuel selection triggers them.
+        co_trigger_reasons: List[str] = []
+        if any(room.type == "garage" for room in specific_rooms):
+            co_trigger_reasons.append("garage")
+        for flag in (
+            "fuel_fired_equipment", "fuel_fired_appliance", "gas_appliance",
+            "gas_range", "gas_furnace", "gas_fireplace",
+        ):
+            value = fine.get(flag)
+            if value is True or str(value).strip().lower() in {"true", "yes", "installed"}:
+                co_trigger_reasons.append(flag)
+        for field in (
+            "fuel_type", "heating_fuel", "hvac_fuel", "cooking_fuel",
+            "water_heater_fuel", "water_heater_type",
+        ):
+            value = str(fine.get(field) or "").strip().lower().replace("-", "_")
+            if value in {
+                "gas", "natural_gas", "propane", "lp", "fuel_oil", "oil",
+                "fuel_fired", "combustion",
+            } or value.startswith(("gas_", "propane_", "fuel_fired_")):
+                co_trigger_reasons.append(field)
+        co_trigger_reasons = list(dict.fromkeys(co_trigger_reasons))
+        co_required = do_co and bool(co_trigger_reasons)
+
+        smoke_listing = {
+            "hardwired": True,
+            "battery_backup": True,
+            "interconnected": True,
+            "listed": True,
+            "listing_standard": "UL 217",
+            "power_source": "building_wiring_with_battery_backup",
+        }
+        co_listing = {
+            "hardwired": True,
+            "battery_backup": True,
+            "interconnected": True,
+            "listed": True,
+            "listing_standard": "UL 2034",
+            "power_source": "building_wiring_with_battery_backup",
+        }
+
         footprint = unary_union([Polygon(r.polygon) for r in specific_rooms if r.polygon])
         if footprint.geom_type == "MultiPolygon":
             footprint = max(footprint.geoms, key=lambda p: p.area)
@@ -1406,8 +1705,15 @@ class MEPRouter:
             hvac_x, hvac_z = self._central_hvac_position(specific_rooms)
             riser_keepouts.extend((
                 self._point_keepout(fire_x, fire_z, "fire"),
-                self._point_keepout(hvac_x, hvac_z, "hvac_return"),
+                # The 16-inch supply riser is much larger than a return-line
+                # keep-out. Account for its full radius plus electrical trade
+                # clearance when the visibility path bends around the chase.
+                self._point_keepout(hvac_x, hvac_z, "hvac_supply"),
             ))
+        alarm_chase_keepouts = [
+            (float(point[0]), float(point[1]))
+            for point in riser_keepouts if len(point) >= 2
+        ]
 
         # Service sizing is preliminary until an NEC 220 load calculation is
         # completed.  Do not infer a separate ADU service from floor area alone.
@@ -1497,7 +1803,7 @@ class MEPRouter:
         previous_panel = (panel_x, panel_z)
         habitable_types = {
             "bedroom", "living", "family_room", "dining", "office",
-            "media_room", "bonus_room", "loft", "kitchen",
+            "library", "gym", "media_room", "bonus_room", "loft", "kitchen",
         }
         for level in levels:
             lvl = level.index
@@ -1571,7 +1877,10 @@ class MEPRouter:
                 else:
                     outlet_count = 0
                 outlet_count = min(outlet_count, 24)
-                receptacle_positions: List[Tuple[float, float, bool]] = []
+                receptacle_positions: List[Tuple[float, float, bool, float, str]] = []
+                perimeter_spacing_ft = round(
+                    perimeter / outlet_count * 3.28084, 2
+                ) if outlet_count else 0.0
                 for outlet_index in range(outlet_count):
                     wall_point = boundary.interpolate(perimeter * (outlet_index + 0.5) / outlet_count)
                     move_x = inward_point.x - wall_point.x
@@ -1580,6 +1889,7 @@ class MEPRouter:
                     receptacle_positions.append((
                         float(wall_point.x + move_x / move_length * 0.05),
                         float(wall_point.y + move_z / move_length * 0.05), False,
+                        perimeter_spacing_ft, "room_perimeter_even_spacing",
                     ))
 
                 # Kitchen counter wall-line spacing: no point is more than 24
@@ -1589,13 +1899,21 @@ class MEPRouter:
                     min_x, min_room_z, max_x, max_room_z = polygon.bounds
                     counter_length = min((max_room_z - min_room_z) * 0.75, 3.5)
                     counter_count = max(2, math.ceil(counter_length / 1.2192))
+                    counter_spacing_ft = round(
+                        counter_length / counter_count * 3.28084, 2
+                    )
                     for counter_index in range(counter_count):
                         px = min_x + 0.06
                         pz = min_room_z + 0.3 + counter_length * (counter_index + 0.5) / counter_count
                         if polygon.buffer(0.01).covers(ShpPoint(px, pz)):
-                            receptacle_positions.append((px, pz, True))
+                            receptacle_positions.append((
+                                px, pz, True, counter_spacing_ft,
+                                "modeled_counter_run_even_spacing",
+                            ))
 
-                for outlet_index, (outlet_x, outlet_z, countertop) in enumerate(receptacle_positions):
+                for outlet_index, (
+                    outlet_x, outlet_z, countertop, design_spacing_ft, spacing_basis
+                ) in enumerate(receptacle_positions):
                     is_wet = room.type in ("bathroom", "kitchen", "laundry", "garage")
                     if room.type == "kitchen":
                         circuit_id = f"kitchen_sabc_{room.id}_{outlet_index % 2 + 1}"
@@ -1625,6 +1943,13 @@ class MEPRouter:
                             "gfci": is_wet, "afci": room.type in habitable_types,
                             "tamper_resistant": True, "countertop": countertop,
                             "max_spacing_ft": 4 if countertop else 12,
+                            "design_spacing_ft": design_spacing_ft,
+                            "design_max_distance_to_receptacle_ft": round(
+                                design_spacing_ft / 2.0, 2
+                            ),
+                            "spacing_basis": spacing_basis,
+                            "geometry_derived": True,
+                            "room_perimeter_ft": round(perimeter * 3.28084, 2),
                         },
                     ))
                     elements.append(MEPElement(
@@ -1649,39 +1974,104 @@ class MEPRouter:
                 ))
 
                 if do_alarms and room.type == "bedroom":
-                    alarm_x, alarm_z = self._room_slot(room, "alarm")
+                    alarm_x, alarm_z = self._room_slot_away(
+                        room, "alarm", alarm_chase_keepouts
+                    )
                     elements.append(MEPElement(
-                        id=f"alarm_{uuid.uuid4().hex[:5]}", system="electrical", type="fire_alarm",
+                        id=f"smoke_{uuid.uuid4().hex[:5]}", system="electrical", type="smoke_alarm",
                         start=[alarm_x, ceil_y_light + 0.02, alarm_z],
                         level=lvl,
                         metadata={
-                            "room_id": room.id, "detector": "smoke",
-                            "hardwired": True, "battery_backup": True,
-                            "interconnected": True,
+                            **smoke_listing,
+                            "room_id": room.id,
+                            "detector": "smoke",
+                            "location_basis": "inside_sleeping_room",
+                            "inside_sleeping_room": True,
+                            "sleeping_zone_id": room.unit_id or f"level_{lvl}",
                         },
                     ))
 
-            # One alarm outside sleeping areas and one CO detector per story.
-            safety_rooms = [r for r in lvl_rooms if r.type in ("corridor", "hall", "hallway")]
-            safety_room = safety_rooms[0] if safety_rooms else max(
-                lvl_rooms, key=lambda room: room.area_sqft
+            # Produce distinct outside-sleeping-area evidence for every modeled
+            # sleeping zone (normally a dwelling unit) on the level.  If there
+            # are no bedrooms, retain one story smoke alarm as separate story
+            # coverage evidence.
+            bedrooms = [room for room in lvl_rooms if room.type == "bedroom"]
+            sleeping_zones: Dict[str, List[Room]] = {}
+            for bedroom in bedrooms:
+                zone_id = bedroom.unit_id or f"level_{lvl}"
+                sleeping_zones.setdefault(zone_id, []).append(bedroom)
+            if not sleeping_zones:
+                sleeping_zones[f"level_{lvl}_no_sleeping_rooms"] = []
+
+            used_safety_points: List[Tuple[float, float]] = list(
+                alarm_chase_keepouts
             )
-            safety_x, safety_z = self._room_slot(safety_room, "alarm")
-            if do_alarms:
-                elements.append(MEPElement(
-                    id=f"story_alarm_{lvl}", system="electrical", type="fire_alarm",
-                    start=[safety_x, ceil_y_light + 0.02, safety_z], level=lvl,
-                    metadata={
-                        "detector": "smoke", "outside_sleeping_area": True,
-                        "hardwired": True, "battery_backup": True, "interconnected": True,
-                    },
-                ))
-            if do_co:
-                elements.append(MEPElement(
-                    id=f"co_detector_{lvl}", system="electrical", type="carbon_monoxide_detector",
-                    start=[safety_x, floor_y + 1.5, safety_z], level=lvl,
-                    metadata={"outside_sleeping_area": True, "listed": True},
-                ))
+            for zone_id, zone_bedrooms in sleeping_zones.items():
+                unit_id = zone_bedrooms[0].unit_id if zone_bedrooms else None
+                circulation_rooms = [
+                    room for room in lvl_rooms
+                    if room.type in ("corridor", "hall", "hallway")
+                    and (unit_id is None or room.unit_id in (None, unit_id))
+                ]
+                non_sleeping_rooms = [
+                    room for room in lvl_rooms
+                    if room.type != "bedroom"
+                    and (unit_id is None or room.unit_id in (None, unit_id))
+                ]
+                safety_room = (
+                    circulation_rooms[0]
+                    if circulation_rooms
+                    else max(non_sleeping_rooms or lvl_rooms, key=lambda room: room.area_sqft)
+                )
+                safety_x, safety_z = self._room_slot_away(
+                    safety_room, "alarm_outside", used_safety_points
+                )
+                used_safety_points.append((safety_x, safety_z))
+                zone_metadata = {
+                    "sleeping_zone_id": zone_id,
+                    "unit_id": unit_id,
+                    "level_served": lvl,
+                    "room_id": safety_room.id,
+                    "location_room_id": safety_room.id,
+                    "sleeping_room_ids": [room.id for room in zone_bedrooms],
+                    "outside_sleeping_area": bool(zone_bedrooms),
+                }
+                if do_alarms:
+                    elements.append(MEPElement(
+                        id=f"outside_smoke_{uuid.uuid4().hex[:5]}",
+                        system="electrical", type="smoke_alarm",
+                        start=[safety_x, ceil_y_light + 0.02, safety_z], level=lvl,
+                        metadata={
+                            **smoke_listing,
+                            **zone_metadata,
+                            "detector": "smoke",
+                            "location_basis": (
+                                "outside_sleeping_area"
+                                if zone_bedrooms else "story_without_sleeping_rooms"
+                            ),
+                            "story_coverage": True,
+                        },
+                    ))
+                if co_required:
+                    co_x, co_z = self._room_slot_away(
+                        safety_room, "co_alarm", used_safety_points
+                    )
+                    used_safety_points.append((co_x, co_z))
+                    elements.append(MEPElement(
+                        id=f"co_alarm_{uuid.uuid4().hex[:5]}",
+                        system="electrical", type="carbon_monoxide_alarm",
+                        start=[co_x, floor_y + 1.5, co_z], level=lvl,
+                        metadata={
+                            **co_listing,
+                            **zone_metadata,
+                            "detector": "carbon_monoxide",
+                            "location_basis": (
+                                "outside_sleeping_area"
+                                if zone_bedrooms else "applicable_story"
+                            ),
+                            "applicability_triggers": co_trigger_reasons,
+                        },
+                    ))
 
         if fine.get("ev_charging"):
             garages = [r for r in specific_rooms if r.type == "garage" and r.level == 0]
@@ -1987,6 +2377,8 @@ class MEPRouter:
             "exhaust": (0.70, 0.35),
             "lighting": (0.30, 0.30),
             "alarm": (0.52, 0.72),
+            "alarm_outside": (0.42, 0.72),
+            "co_alarm": (0.68, 0.72),
             "electrical": (0.84, 0.52),
             "fixture_toilet": (0.22, 0.22),
             "fixture_sink": (0.72, 0.22),

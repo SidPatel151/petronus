@@ -56,7 +56,10 @@ export default function IssuesPanel() {
         {issues.length === 0 ? (
           <div className="p-4 text-center">
             <div className="text-[var(--accent-green)] text-2xl mb-2">✓</div>
-            <div className="text-xs font-mono text-[var(--text-secondary)]">No compliance issues found</div>
+            <div className="text-xs font-mono text-[var(--text-secondary)]">No preflight findings reported</div>
+            <div className="text-[9px] font-mono text-[var(--text-secondary)] opacity-60 mt-1">
+              This is not a permit approval or professional compliance determination.
+            </div>
           </div>
         ) : (
           <div className="space-y-2 p-3">

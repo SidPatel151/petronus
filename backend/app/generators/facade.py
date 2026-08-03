@@ -185,7 +185,11 @@ class FacadeGenerator:
             for i in range(nfp):
                 s = poly_pts[i]
                 e = poly_pts[(i + 1) % nfp]
-                ext_walls.append(SimpleNamespace(start=(s[0], s[1]), end=(e[0], e[1]), is_exterior=True, level=0))
+                ext_walls.append(SimpleNamespace(
+                    id=f"footprint_wall_{i}",
+                    start=(s[0], s[1]), end=(e[0], e[1]),
+                    is_exterior=True, level=0,
+                ))
         else:
             # Build an ordered, deduplicated polygon of exterior wall endpoints.
             # Walls may be unordered or contain near-duplicate vertices; compute a
@@ -248,6 +252,15 @@ class FacadeGenerator:
 
             for lvl in range(stories):
                 base_y = lvl * floor_h
+                entry_on_this_wall = (
+                    lvl == 0 and wall_len >= 2.0 and _is_front and not door_placed
+                )
+                if entry_on_this_wall:
+                    self._add_entry_door(
+                        meshes, s, e, dx, dz, ux, uz, nx, nz,
+                        face_offset, entry_sill_y, arch_style, facade_color,
+                    )
+                    door_placed = True
 
                 # ── Horizontal floor band (spandrel) ──────────────────────
                 if add_bands and band_h_frac > 0:
@@ -287,7 +300,10 @@ class FacadeGenerator:
                         })
 
                 # ── Victorian bay window: 3-sided projection on front face ──
-                if is_victorian and _is_front and lvl < 2 and wall_len >= 3.0:
+                if (
+                    is_victorian and _is_front and lvl < 2 and wall_len >= 3.0
+                    and not entry_on_this_wall
+                ):
                     bay_already = wall.id in bay_wall_ids
                     if not bay_already:
                         bay_wall_ids.add(wall.id)
@@ -301,9 +317,19 @@ class FacadeGenerator:
 
                 # ── Mid-century / modern: horizontal strip windows on front ──
                 if is_modern and _is_front and wall_len >= 4.0:
+                    door_gap = None
+                    if entry_on_this_wall:
+                        # Include the frame and a small installation tolerance,
+                        # expressed as distance along the wall from ``s``.
+                        door_half_clear = 1.05 / 2.0 + 0.06 + 0.05
+                        door_gap = (
+                            wall_len * 0.5 - door_half_clear,
+                            wall_len * 0.5 + door_half_clear,
+                        )
                     self._add_strip_window(
                         meshes, s, e, dx, dz, ux, uz, nx, nz,
                         wall_len, base_y, floor_h, face_offset, win_color, lvl,
+                        door_gap=door_gap,
                     )
                     continue
 
@@ -327,7 +353,7 @@ class FacadeGenerator:
                 for i in range(num_windows):
                     t = (i + 0.5) / num_windows
 
-                    if lvl == 0 and _is_front and not door_placed:
+                    if entry_on_this_wall:
                         _t_door = 0.5
                         _door_w = 1.05
                         _clearance = (_door_w / 2 + win_w / 2 + 0.10) / wall_len
@@ -524,6 +550,96 @@ class FacadeGenerator:
 
         return meshes
 
+    def _add_entry_door(
+        self, meshes, s, e, dx, dz, ux, uz, nx, nz,
+        face_offset, door_sill, arch_style, facade_color,
+    ):
+        """Append the single front entry assembly before style window shortcuts."""
+        door_w = 1.05
+        door_h = 2.15
+        dcx = s[0] + 0.5 * dx
+        dcz = s[1] + 0.5 * dz
+        hdw = door_w / 2
+        door_fo = face_offset + 0.01
+        meshes.append({
+            "element_id": f"door_{uuid.uuid4().hex[:6]}",
+            "element_type": "door",
+            "vertices": [
+                [dcx - ux*hdw + nx*door_fo, door_sill,          dcz - uz*hdw + nz*door_fo],
+                [dcx + ux*hdw + nx*door_fo, door_sill,          dcz + uz*hdw + nz*door_fo],
+                [dcx + ux*hdw + nx*door_fo, door_sill + door_h, dcz + uz*hdw + nz*door_fo],
+                [dcx - ux*hdw + nx*door_fo, door_sill + door_h, dcz - uz*hdw + nz*door_fo],
+            ],
+            "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+            "level": 0,
+            "color": "#7c5c3a",
+        })
+        ft = 0.06
+        meshes.append({
+            "element_id": f"door_frame_{uuid.uuid4().hex[:5]}",
+            "element_type": "door_frame",
+            "vertices": [
+                [dcx - ux*(hdw+ft) + nx*door_fo, door_sill,            dcz - uz*(hdw+ft) + nz*door_fo],
+                [dcx + ux*(hdw+ft) + nx*door_fo, door_sill,            dcz + uz*(hdw+ft) + nz*door_fo],
+                [dcx + ux*(hdw+ft) + nx*door_fo, door_sill+door_h+ft, dcz + uz*(hdw+ft) + nz*door_fo],
+                [dcx - ux*(hdw+ft) + nx*door_fo, door_sill+door_h+ft, dcz - uz*(hdw+ft) + nz*door_fo],
+            ],
+            "faces": [[0, 1, 2], [0, 2, 3]],
+            "level": 0,
+            "color": "#334155",
+        })
+
+        if arch_style not in (
+            "contemporary_box", "modern_linear", "minimalist",
+            "contemporary", "urban_infill",
+        ):
+            return
+
+        can_y = door_sill + door_h + 0.12
+        can_proj = face_offset + 0.85
+        can_t = 0.09
+        can_hw = door_w * 1.60
+        can_c = self._darken(facade_color, 0.60)
+        can_v = [
+            [dcx - ux*can_hw + nx*face_offset, can_y,       dcz - uz*can_hw + nz*face_offset],
+            [dcx + ux*can_hw + nx*face_offset, can_y,       dcz + uz*can_hw + nz*face_offset],
+            [dcx + ux*can_hw + nx*can_proj,    can_y,       dcz + uz*can_hw + nz*can_proj],
+            [dcx - ux*can_hw + nx*can_proj,    can_y,       dcz - uz*can_hw + nz*can_proj],
+            [dcx - ux*can_hw + nx*face_offset, can_y+can_t, dcz - uz*can_hw + nz*face_offset],
+            [dcx + ux*can_hw + nx*face_offset, can_y+can_t, dcz + uz*can_hw + nz*face_offset],
+            [dcx + ux*can_hw + nx*can_proj,    can_y+can_t, dcz + uz*can_hw + nz*can_proj],
+            [dcx - ux*can_hw + nx*can_proj,    can_y+can_t, dcz - uz*can_hw + nz*can_proj],
+        ]
+        meshes.append({
+            "element_id": f"canopy_{uuid.uuid4().hex[:5]}",
+            "element_type": "porch",
+            "vertices": can_v,
+            "faces": [
+                [4,5,6], [4,6,7], [0,4,7], [0,7,3], [1,5,6],
+                [1,6,2], [3,7,6], [3,6,2], [0,3,2], [0,2,1],
+            ],
+            "level": 0,
+            "color": can_c,
+        })
+        for leg_sign in (-1, 1):
+            leg_x = dcx + ux * can_hw * 0.75 * leg_sign
+            leg_z = dcz + uz * can_hw * 0.75 * leg_sign
+            leg_proj = face_offset + can_proj * 0.55
+            lhw = 0.04
+            meshes.append({
+                "element_id": f"canopy_leg_{uuid.uuid4().hex[:4]}",
+                "element_type": "porch",
+                "vertices": [
+                    [leg_x - ux*lhw + nx*leg_proj, door_sill, leg_z - uz*lhw + nz*leg_proj],
+                    [leg_x + ux*lhw + nx*leg_proj, door_sill, leg_z + uz*lhw + nz*leg_proj],
+                    [leg_x + ux*lhw + nx*leg_proj, can_y,     leg_z + uz*lhw + nz*leg_proj],
+                    [leg_x - ux*lhw + nx*leg_proj, can_y,     leg_z - uz*lhw + nz*leg_proj],
+                ],
+                "faces": [[0,1,2], [0,2,3], [2,1,0], [3,2,0]],
+                "level": 0,
+                "color": "#334155",
+            })
+
     # ── Victorian bay window — 3-sided box projection on front face ─────────────
     def _add_bay_window(
         self, meshes, s, e, dx, dz, ux, uz, nx, nz,
@@ -609,6 +725,7 @@ class FacadeGenerator:
     def _add_strip_window(
         self, meshes, s, e, dx, dz, ux, uz, nx, nz,
         wall_len, base_y, floor_h, face_offset, win_color, lvl,
+        door_gap=None,
     ):
         """Full-width horizontal band of glazing — mid-century / prefab modern style.
         Strip leaves 20% margins on each side and a solid sill + head band."""
@@ -617,36 +734,49 @@ class FacadeGenerator:
         TOP_Y     = base_y + floor_h * 0.82
         fo        = face_offset
 
-        x0 = s[0] + ux*MARGIN
-        z0 = s[1] + uz*MARGIN
-        x1 = e[0] - ux*MARGIN
-        z1 = e[1] - uz*MARGIN
+        start_d = MARGIN
+        end_d = wall_len - MARGIN
+        segments = [(start_d, end_d)]
+        if door_gap is not None:
+            gap_start = max(start_d, float(door_gap[0]))
+            gap_end = min(end_d, float(door_gap[1]))
+            segments = []
+            if gap_start - start_d >= 0.30:
+                segments.append((start_d, gap_start))
+            if end_d - gap_end >= 0.30:
+                segments.append((gap_end, end_d))
 
-        strip_verts = [
-            [x0 + nx*fo, SILL_Y, z0 + nz*fo],
-            [x1 + nx*fo, SILL_Y, z1 + nz*fo],
-            [x1 + nx*fo, TOP_Y,  z1 + nz*fo],
-            [x0 + nx*fo, TOP_Y,  z0 + nz*fo],
-        ]
-        meshes.append({
-            "element_id": f"strip_win_{uuid.uuid4().hex[:5]}",
-            "element_type": "window",
-            "vertices": strip_verts,
-            "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
-            "level": 0, "color": win_color,
-        })
-        # Thin dark frame
-        FT = 0.04
-        for fv, ff in self._frame_quads(
-            (x0+x1)/2, (z0+z1)/2, SILL_Y, TOP_Y-SILL_Y, wall_len-2*MARGIN,
-            ux, uz, nx, nz, fo, FT,
-        ):
+        for segment_start, segment_end in segments:
+            segment_len = segment_end - segment_start
+            x0 = s[0] + ux * segment_start
+            z0 = s[1] + uz * segment_start
+            x1 = s[0] + ux * segment_end
+            z1 = s[1] + uz * segment_end
+            strip_verts = [
+                [x0 + nx*fo, SILL_Y, z0 + nz*fo],
+                [x1 + nx*fo, SILL_Y, z1 + nz*fo],
+                [x1 + nx*fo, TOP_Y,  z1 + nz*fo],
+                [x0 + nx*fo, TOP_Y,  z0 + nz*fo],
+            ]
             meshes.append({
-                "element_id": f"strip_frm_{uuid.uuid4().hex[:5]}",
-                "element_type": "window_frame",
-                "vertices": fv, "faces": ff,
-                "level": 0, "color": "#1e293b",
+                "element_id": f"strip_win_{uuid.uuid4().hex[:5]}",
+                "element_type": "window",
+                "vertices": strip_verts,
+                "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
+                "level": lvl, "color": win_color,
             })
+            # Thin dark frame for each retained glazing segment.
+            FT = 0.04
+            for fv, ff in self._frame_quads(
+                (x0+x1)/2, (z0+z1)/2, SILL_Y, TOP_Y-SILL_Y, segment_len,
+                ux, uz, nx, nz, fo, FT,
+            ):
+                meshes.append({
+                    "element_id": f"strip_frm_{uuid.uuid4().hex[:5]}",
+                    "element_type": "window_frame",
+                    "vertices": fv, "faces": ff,
+                    "level": lvl, "color": "#1e293b",
+                })
 
     # ── Flat parapet (original logic, extracted) ──────────────────────────────
     def _add_flat_parapet(self, meshes, massing_option, stories, floor_h, facade_color):
