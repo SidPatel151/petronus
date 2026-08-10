@@ -12,14 +12,22 @@ export interface BuildingModel {
   neighbor_style?: any; spec?: ProjectSpec;
 }
 
+export interface AuthUser { id: string; name: string; email: string; avatar?: string; }
+
 interface AppState {
+  // Auth
+  user: AuthUser | null;
+  token: string | null;
+  setAuth: (user: AuthUser, token: string) => void;
+  clearAuth: () => void;
+
   selectedSite: SiteMarker | null;
   siteContext: any | null;
   infrastructure: any | null;
   neighborConstraints: any | null;
   feasibilityData: any | null;
   clickedBuilding: any | null;
-  drawnParcel: any | null;  // GeoJSON Polygon drawn by user — overrides OSM parcel
+  drawnParcel: any | null;
   chatMessages: { role: 'user' | 'assistant'; content: string }[];
   spec: ProjectSpecDraft;
   jobId: string | null;

@@ -11,8 +11,9 @@ from shapely.geometry import shape, Polygon, mapping
 from shapely.ops import transform
 import pyproj
 from typing import Dict, Any, Optional, Tuple, List
-from app.models.schemas import SiteContext, LatLon
+from app.models.schemas import SiteContext, LatLon, WeatherData
 from app.services.hazard_lookup import HazardLookupService
+from app.services.weather import get_weather, climate_zone_hint
 
 # Optional Redis cache for Overpass results (24h TTL)
 try:
@@ -54,15 +55,27 @@ class SiteContextService:
         buildable = self._apply_setbacks(parcel_shape, DEFAULT_SETBACKS, latlon)
         centroid = self._centroid(parcel_shape)
 
-        # Parallelize all three independent async calls
+        # All independent async calls run in parallel
         hazard_svc = HazardLookupService()
-        (flood_zone, flood_flag), hazards, terrain = await asyncio.gather(
+        (flood_zone, flood_flag), hazards, terrain, municipality, weather_raw = await asyncio.gather(
             self._get_flood_zone(latlon),
             hazard_svc.get_all(latlon.lat, latlon.lon),
             self.get_terrain_data(latlon, parcel_polygon or mapping(parcel_shape)),
+            self._reverse_geocode_municipality(latlon),
+            get_weather(latlon.lat, latlon.lon),
         )
         seismic_cat = hazards["seismic"]["sdc"]
         wind_speed  = hazards["wind"]["vult_mph"]
+
+        # Embed municipality in terrain dict so archetype_loader can read it
+        if municipality and terrain:
+            terrain = dict(terrain)
+            terrain['municipality'] = municipality
+
+        weather: WeatherData | None = None
+        if weather_raw:
+            cz = climate_zone_hint(weather_raw.get("temp_f"), weather_raw.get("humidity_pct"))
+            weather = WeatherData(**weather_raw, climate_zone=cz)
 
         return SiteContext(
             parcel_polygon=mapping(parcel_shape),
@@ -76,6 +89,8 @@ class SiteContextService:
             setbacks=DEFAULT_SETBACKS,
             hazard_detail=hazards,
             terrain=terrain,
+            municipality=municipality,
+            weather=weather,
         )
 
     async def get_nearby_infrastructure(self, latlon: LatLon, radius_m: int = 150) -> Dict[str, Any]:
@@ -550,6 +565,25 @@ class SiteContextService:
         }
 
     # helpers
+    async def _reverse_geocode_municipality(self, latlon: LatLon) -> Optional[str]:
+        """Reverse geocode lat/lon → city or town name via Nominatim."""
+        try:
+            url = "https://nominatim.openstreetmap.org/reverse"
+            params = {"lat": latlon.lat, "lon": latlon.lon, "format": "json", "zoom": 10}
+            async with httpx.AsyncClient(timeout=6, headers={"User-Agent": "Petronus/0.1"}) as client:
+                resp = await client.get(url, params=params)
+                data = resp.json()
+            addr = data.get("address", {})
+            return (
+                addr.get("city")
+                or addr.get("town")
+                or addr.get("village")
+                or addr.get("hamlet")
+                or addr.get("county")
+            )
+        except Exception:
+            return None
+
     async def _geocode(self, address: str) -> LatLon:
         url = "https://nominatim.openstreetmap.org/search"
         params = {"q": address + ", California, USA", "format": "json", "limit": 1}

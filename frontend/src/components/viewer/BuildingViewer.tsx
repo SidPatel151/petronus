@@ -1,8 +1,10 @@
 'use client';
-import { useRef, useMemo, Suspense } from 'react';
+import { useRef, useMemo, Suspense, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useLoader } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment } from '@react-three/drei';
+import { EffectComposer, Bloom, SMAA } from '@react-three/postprocessing';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useAppStore, LayerKey } from '@/lib/store';
 import { getTexture, resolveTexture } from '@/lib/textures';
@@ -886,13 +888,16 @@ function FacadeMesh({ mesh }: { mesh: any; floorH?: number }) {
     return (
       <mesh geometry={geometry} castShadow={false} receiveShadow={false} renderOrder={2}>
         <meshPhysicalMaterial
-          color="#a8d8f0"
-          transmission={0.6}
-          roughness={0.05}
-          thickness={0.2}
-          ior={1.45}
+          color="#c8e8ff"
+          transmission={0.55}
+          roughness={0.02}
+          metalness={0.0}
+          thickness={0.25}
+          ior={1.52}
+          reflectivity={0.85}
+          envMapIntensity={1.8}
           transparent
-          opacity={0.7}
+          opacity={0.78}
           side={THREE.DoubleSide}
           depthWrite={false}
           polygonOffset
@@ -952,8 +957,8 @@ function TerrainMesh({ mesh }: { mesh: any }) {
   const geometry = useBufferGeo(mesh.vertices, mesh.faces);
   if (!geometry) return null;
   return (
-    <mesh geometry={geometry} receiveShadow>
-      <meshStandardMaterial color={mesh.color || '#3d5a3e'} roughness={1} transparent opacity={0.75} side={THREE.DoubleSide} />
+    <mesh geometry={geometry} receiveShadow castShadow>
+      <meshStandardMaterial color={mesh.color || '#4a6741'} roughness={0.97} metalness={0.0} side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -1276,9 +1281,50 @@ function PowerGridLine({ connection, siteCenter }: { connection: any; siteCenter
   );
 }
 
+// ── Room label — floating HTML chip at room centroid ──────────────────
+const ROOM_LABEL_COLORS: Record<string, string> = {
+  bedroom: '#3b6fd4', living: '#c27c2a', kitchen: '#2a7c3a', bathroom: '#2a7c6a',
+  dining: '#7c5a2a', office: '#5a6a2a', foyer: '#4a3a7c', stair: '#6a6a6a',
+  corridor: '#4a4a4a', pantry: '#5a7c3a', laundry: '#5a3a7c', garage: '#3a4a3a',
+  half_bath: '#2a6a7c', mudroom: '#7c4a2a', walk_in_closet: '#4a2a7c',
+  family_room: '#2a5a7c', media_room: '#1a1a5a', loft: '#2a4a7c',
+};
+function RoomLabel({ room, floorH }: { room: any; floorH: number }) {
+  if (!room.polygon?.length || ['unit','corridor','stair'].includes(room.type)) return null;
+  const pts = room.polygon as [number, number][];
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const cy = (room.level || 0) * floorH + floorH * 0.45;
+  const label = room.type.replace(/_/g, ' ');
+  const bg = ROOM_LABEL_COLORS[room.type] || '#334155';
+  return (
+    <Html position={[cx, cy, cz]} center occlude={false} style={{ pointerEvents: 'none' }}>
+      <div style={{
+        background: bg + 'cc', color: '#fff', fontSize: 9, fontFamily: 'monospace',
+        padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap',
+        textTransform: 'capitalize', letterSpacing: '0.05em',
+        border: `1px solid ${bg}`,
+      }}>
+        {label}
+      </div>
+    </Html>
+  );
+}
+
+// ── Realistic ground plane — grass + dry earth blend ──────────────────
+function GroundPlane() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
+      <planeGeometry args={[600, 600]} />
+      <meshStandardMaterial color="#4a6741" roughness={0.98} metalness={0.0} />
+    </mesh>
+  );
+}
+
 // ── Main scene ─────────────────────────────────────────────────────────
 function Scene() {
   const { buildingModel, activeLayers, selectedSite, infrastructure, neighborConstraints, spec, siteContext, drawnParcel } = useAppStore();
+  const terrain = (buildingModel as any)?.site_context?.terrain;
   const siteCenter: [number, number] = selectedSite ? [selectedSite.lon, selectedSite.lat] : [0, 0];
 
   // When a model is generated, hide the OSM building we're replacing.
@@ -1366,7 +1412,8 @@ function Scene() {
 
   return (
     <>
-      <Grid args={[300, 300]} cellColor="#0d1117" sectionColor="#1e293b" fadeDistance={150} position={[0, -0.05, 0]} />
+      <GroundPlane />
+      <Grid args={[300, 300]} cellColor="#2a3a25" sectionColor="#3a5030" fadeDistance={120} position={[0, 0.01, 0]} />
 
       {/* Neighbor buildings from OSM */}
       {activeLayers['neighbors'] && allNeighborBuildings.map((b: any, i: number) => (
@@ -1438,6 +1485,12 @@ function Scene() {
                     <RoomVolumeMesh key={`rv_${i}`} room={r} floorH={floorH} />
                   ))
                 }
+                {/* ── Room labels: floating type chips over each room ── */}
+                {activeLayers['floors'] && buildingModel.rooms
+                  .map((r: any, i: number) => (
+                    <RoomLabel key={`rl_${i}`} room={r} floorH={floorH} />
+                  ))
+                }
               </>
             );
           })()}
@@ -1470,13 +1523,18 @@ function Scene() {
           {(() => {
             const massing = buildingModel.massing_options?.[massingIndex];
             const meshes: any[] = massing?.meshes || [];
+            // Facade generator owns the roof when brief specifies a pitched type —
+            // skip massing roof to avoid double rendering
+            const facadeHasRoof = ['gabled','hipped','shed','hip'].includes(
+              ((buildingModel as any).design_brief?.roof_type || '').toLowerCase()
+            );
             return <>
               {meshes.map((m: any, i: number) => {
                 if (m.element_type === 'terrain')      return <TerrainMesh key={`t_${i}`} mesh={m} />;
                 if (m.element_type === 'floor_band')   return activeLayers['architecture'] ? <FloorBandMesh key={`fb_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'overlap')      return <OverlapMesh key={`ov_${i}`} mesh={m} />;
                 if (m.element_type === 'footprint_ok') return <FootprintMesh key={`fp_${i}`} mesh={m} />;
-                if (m.element_type === 'roof')         return activeLayers['roof'] ? <RoofMesh key={`r_${i}`} mesh={m} /> : null;
+                if (m.element_type === 'roof')         return (!facadeHasRoof && activeLayers['roof']) ? <RoofMesh key={`r_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'parapet')      return activeLayers['roof'] ? <RoofMesh key={`par_${i}`} mesh={m} /> : null;
                 if (m.element_type === 'porch')        return activeLayers['architecture'] ? <PorchMesh key={`porch_${i}`} mesh={m} /> : null;
                 return null;
@@ -1486,12 +1544,15 @@ function Scene() {
 
           {/* Facade details: windows, doors, parapet, interior stairs */}
           {(buildingModel.meshes || []).map((mesh: any, i: number) => {
-            if (mesh.element_type === 'door' || mesh.element_type === 'door_frame') {
+            // Exterior doors + frames → Walls & Windows layer
+            if (mesh.element_type === 'door' || mesh.element_type === 'door_frame' || mesh.element_type === 'garage_door') {
               return activeLayers['architecture'] ? <DoorMesh key={`d_${i}`} mesh={mesh} /> : null;
             }
+            // Interior doors → Floors & Rooms layer
             if (mesh.element_type === 'interior_door') {
-              return activeLayers['architecture'] ? <DoorMesh key={`id_${i}`} mesh={mesh} /> : null;
+              return activeLayers['floors'] ? <DoorMesh key={`id_${i}`} mesh={mesh} /> : null;
             }
+            // Stairs → Structure layer
             if (mesh.element_type === 'stair') {
               return activeLayers['structure'] ? <PorchMesh key={`stair_${i}`} mesh={mesh} /> : null;
             }
@@ -1569,26 +1630,54 @@ export default function BuildingViewer() {
   const terrain = buildingModel?.site_context?.terrain;
   const feasibility = neighborConstraints?.feasibility;
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab]   = useState<'rooms' | 'systems' | 'log'>('rooms');
+
   return (
     <div className="relative w-full h-full bg-[var(--surface-0)]">
       <Canvas
-        shadows
-        camera={{ position: [50, 40, 50], fov: 50, near: 0.1, far: 2000 }}
-        gl={{ antialias: true, toneMapping: 4, toneMappingExposure: 1.1 }}
+        shadows="soft"
+        camera={{ position: [50, 40, 50], fov: 45, near: 0.1, far: 2000 }}
+        gl={{ antialias: true, toneMapping: 4, toneMappingExposure: 1.35 }}
       >
-        <color attach="background" args={['#080604']} />
-        <fog attach="fog" args={['#080604', 120, 340]} />
-        <ambientLight intensity={0.55} color="#f5ede0" />
-        <hemisphereLight args={['#e8d8c0', '#202820', 0.6]} />
-        <directionalLight position={[40, 70, 30]} intensity={1.8} castShadow color="#fff8f0"
-          shadow-mapSize={[2048, 2048]} shadow-camera-far={300}
-          shadow-camera-left={-80} shadow-camera-right={80}
-          shadow-camera-top={80} shadow-camera-bottom={-80} />
-        <directionalLight position={[-25, 20, -25]} intensity={0.35} color="#c8d8e8" />
-        <directionalLight position={[0, -10, 20]} intensity={0.12} color="#f0e8d8" />
-        <Environment preset="apartment" background={false} />
+        {/* Architectural sky — warm California blue */}
+        <color attach="background" args={['#a8c8e0']} />
+        <fog attach="fog" args={['#c0d8ec', 180, 550]} />
+
+        {/* Sky hemisphere: warm sun-sky top, dark earth bottom */}
+        <hemisphereLight args={['#d4e8f8', '#2d3a1e', 0.9]} />
+
+        {/* Primary sun — southwest afternoon angle, 4K shadow map */}
+        <directionalLight
+          position={[60, 90, 40]} intensity={2.2} castShadow color="#fff5e8"
+          shadow-mapSize={[4096, 4096]}
+          shadow-camera-far={400}
+          shadow-camera-left={-120} shadow-camera-right={120}
+          shadow-camera-top={120}  shadow-camera-bottom={-120}
+          shadow-bias={-0.0003}
+        />
+
+        {/* Cool sky fill from opposite side — mimics sky dome bounce */}
+        <directionalLight position={[-40, 30, -50]} intensity={0.45} color="#b8d4f0" />
+
+        {/* Warm ground bounce — subtle, lifts shadow areas */}
+        <directionalLight position={[0, -8, 15]} intensity={0.18} color="#e8d8b0" />
+
+        {/* Outdoor environment map — city IBL for realistic material reflections */}
+        <Environment preset="city" background={false} />
+
         <Suspense fallback={null}>
           <Scene />
+          {/* Post-processing: window bloom + SMAA anti-aliasing */}
+          <EffectComposer multisampling={0}>
+            <Bloom
+              luminanceThreshold={0.82}
+              luminanceSmoothing={0.35}
+              intensity={0.4}
+              mipmapBlur
+            />
+            <SMAA />
+          </EffectComposer>
         </Suspense>
         <OrbitControls makeDefault minDistance={0.5} maxDistance={500} maxPolarAngle={Math.PI} enablePan />
       </Canvas>
@@ -1680,16 +1769,18 @@ export default function BuildingViewer() {
             )}
           </div>
             {/* Current weather */}
-            {(buildingModel?.spec as any)?.site && buildingModel?.site_context && (() => {
-              const weather = (buildingModel.site_context as any)?.hazard_detail?.current_weather;
+            {buildingModel?.site_context && (() => {
+              const weather = (buildingModel.site_context as any)?.weather;
               if (!weather || !weather.temp_f) return null;
               return (
                 <div className="mt-1 pt-1 border-t border-[var(--border)]">
                   <div className="text-[10px] font-mono text-[var(--text-secondary)] uppercase tracking-wider mb-1">Current Conditions</div>
                   <div className="text-[10px] font-mono" style={{ color: 'var(--text-primary)' }}>
-                    🌡 {weather.temp_f}°F · 💨 {weather.wind_mph} mph {weather.wind_dir}
+                    🌡 {weather.temp_f}°F · 💧 {weather.humidity_pct}% · 💨 {weather.wind_mph} mph
                   </div>
-                  <div className="text-[10px] font-mono text-[var(--text-secondary)]">{weather.description}</div>
+                  <div className="text-[10px] font-mono text-[var(--text-secondary)]">
+                    {weather.condition}{weather.climate_zone ? ` · ${weather.climate_zone}` : ''}
+                  </div>
                 </div>
               );
             })()}
@@ -1840,6 +1931,189 @@ export default function BuildingViewer() {
           </div>
         </div>
       )}
+
+      {/* ── Building Schedule Drawer ── */}
+      {buildingModel && (() => {
+        const rooms   = buildingModel.rooms || [];
+        const mep     = buildingModel.mep_elements || [];
+        const log     = (buildingModel as any).generation_log || [];
+
+        const totalSqft = Math.round(rooms.reduce((s: number, r: any) => s + (r.area_sqft || 0), 0));
+        const roomCount = rooms.length;  // show all rooms including corridors/stairs
+
+        // MEP summary counts
+        const plumbingCount  = mep.filter((e: any) => e.system === 'plumbing').length;
+        const electricalCount= mep.filter((e: any) => e.system === 'electrical').length;
+        const hvacCount      = mep.filter((e: any) => e.system === 'hvac').length;
+
+        // Room type → color dot
+        const ROOM_DOT: Record<string, string> = {
+          bedroom:'#5b8af5', living:'#f5a623', kitchen:'#e05a5a', bathroom:'#4fcfb0',
+          dining:'#c97cf5', office:'#f5d76e', garage:'#8a8a8a', stair:'#aaaaaa',
+          corridor:'#444', utility:'#6b7280', laundry:'#f59e42', deck:'#b5893a',
+          half_bath:'#38bdf8', foyer:'#a78bfa', mudroom:'#84cc16', pantry:'#fb923c',
+          family_room:'#f59e42', media_room:'#8b5cf6', office_room:'#f5d76e',
+        };
+
+        const byFloor: Record<number, any[]> = {};
+        rooms.forEach((r: any) => {
+          const fl = r.level ?? 0;
+          if (!byFloor[fl]) byFloor[fl] = [];
+          byFloor[fl].push(r);
+        });
+
+        return (
+          <div
+            className="absolute bottom-0 left-0 right-0 transition-all duration-300"
+            style={{ zIndex: 30 }}
+          >
+            {/* Handle strip — always visible */}
+            <button
+              onClick={() => setDrawerOpen(o => !o)}
+              className="w-full flex items-center justify-between px-5 py-2.5 font-mono text-xs tracking-widest uppercase"
+              style={{
+                background: 'rgba(8,6,4,0.92)',
+                borderTop: '1px solid rgba(196,168,130,0.25)',
+                color: 'var(--accent-gold)',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <span className="flex items-center gap-3">
+                <span style={{ color: 'var(--accent-gold)' }}>BUILDING SCHEDULE</span>
+                <span style={{ color: 'var(--text-secondary)' }}>·</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{roomCount} ROOMS</span>
+                <span style={{ color: 'var(--text-secondary)' }}>·</span>
+                <span style={{ color: 'var(--accent-cyan)' }}>{totalSqft.toLocaleString()} SQFT</span>
+                {log.some((l: string) => l.startsWith('⚠')) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>
+                    ⚠ WARNINGS
+                  </span>
+                )}
+              </span>
+              <span style={{ color: 'var(--text-secondary)', fontSize: 10 }}>
+                {drawerOpen ? '▼' : '▲'}
+              </span>
+            </button>
+
+            {/* Drawer body */}
+            {drawerOpen && (
+              <div style={{ background: 'rgba(6,5,4,0.96)', borderTop: '1px solid rgba(196,168,130,0.12)', backdropFilter: 'blur(12px)', height: 280 }}>
+
+                {/* Tab bar */}
+                <div className="flex" style={{ borderBottom: '1px solid rgba(196,168,130,0.12)' }}>
+                  {(['rooms', 'systems', 'log'] as const).map(tab => (
+                    <button
+                      key={tab}
+                      onClick={() => setDrawerTab(tab)}
+                      className="px-5 py-2 font-mono text-[11px] uppercase tracking-widest transition-colors"
+                      style={{
+                        color: drawerTab === tab ? 'var(--accent-gold)' : 'var(--text-secondary)',
+                        borderBottom: drawerTab === tab ? '2px solid var(--accent-gold)' : '2px solid transparent',
+                        background: 'transparent',
+                      }}
+                    >
+                      {tab === 'rooms' ? `Rooms (${roomCount})` : tab === 'systems' ? 'Systems' : 'AI Log'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tab content */}
+                <div className="overflow-y-auto" style={{ height: 232 }}>
+
+                  {/* ── ROOMS TAB ── */}
+                  {drawerTab === 'rooms' && (
+                    <div className="p-3">
+                      {Object.entries(byFloor).sort(([a],[b]) => +a - +b).map(([fl, flRooms]) => (
+                        <div key={fl} className="mb-3">
+                          <div className="font-mono text-[10px] uppercase tracking-widest mb-1.5 pb-1"
+                            style={{ color: 'var(--text-secondary)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                            Floor {+fl + 1}
+                          </div>
+                          <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+                            {flRooms.map((r: any, i: number) => (
+                              <div key={i} className="flex items-center gap-2 px-2 py-1.5 rounded"
+                                style={{ background: 'rgba(255,255,255,0.03)' }}>
+                                <div className="w-2 h-2 rounded-full flex-shrink-0"
+                                  style={{ background: ROOM_DOT[r.type] || '#6b7280' }} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-mono text-[11px] truncate capitalize"
+                                    style={{ color: 'var(--text-primary)' }}>
+                                    {r.type.replace(/_/g, ' ')}
+                                  </div>
+                                  <div className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+                                    {Math.round(r.area_sqft || 0)} sqft
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ── SYSTEMS TAB ── */}
+                  {drawerTab === 'systems' && (
+                    <div className="p-4 grid gap-3" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                      {[
+                        { label: 'Plumbing', count: plumbingCount, color: '#38bdf8', icon: '⬡',
+                          items: Array.from(new Set<string>(mep.filter((e:any)=>e.system==='plumbing').map((e:any)=>e.type))) },
+                        { label: 'Electrical', count: electricalCount, color: '#f5d76e', icon: '⚡',
+                          items: Array.from(new Set<string>(mep.filter((e:any)=>e.system==='electrical').map((e:any)=>e.type))) },
+                        { label: 'HVAC', count: hvacCount, color: '#f97316', icon: '◎',
+                          items: Array.from(new Set<string>(mep.filter((e:any)=>e.system==='hvac').map((e:any)=>e.type))) },
+                      ].map(sys => (
+                        <div key={sys.label} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span style={{ color: sys.color, fontSize: 14 }}>{sys.icon}</span>
+                            <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: sys.color }}>{sys.label}</span>
+                            <span className="ml-auto font-mono text-[11px] font-bold" style={{ color: 'var(--text-primary)' }}>{sys.count}</span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {(sys.items as string[]).slice(0, 6).map((t: string) => (
+                              <div key={t} className="font-mono text-[10px] capitalize truncate"
+                                style={{ color: 'var(--text-secondary)' }}>
+                                · {t.replace(/_/g, ' ')}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* ── AI LOG TAB ── */}
+                  {drawerTab === 'log' && (
+                    <div className="p-3 font-mono text-[11px] space-y-0.5">
+                      {log.length === 0 && (
+                        <div style={{ color: 'var(--text-secondary)' }}>No generation log available.</div>
+                      )}
+                      {log.map((entry: string, i: number) => {
+                        const isWarn  = entry.startsWith('⚠');
+                        const isGood  = entry.startsWith('✓') || entry.includes('claude');
+                        const isStep  = /^(Step|Fetching|Generating|Routing|Clash|Struct)/i.test(entry);
+                        return (
+                          <div key={i} className="flex gap-2 py-0.5">
+                            <span style={{ color: 'var(--text-secondary)', flexShrink: 0, userSelect: 'none' }}>
+                              {String(i + 1).padStart(2, '0')}
+                            </span>
+                            <span style={{
+                              color: isWarn ? '#fbbf24' : isGood ? 'var(--accent-cyan)' : isStep ? 'var(--accent-gold)' : 'var(--text-primary)',
+                            }}>
+                              {entry}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

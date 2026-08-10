@@ -309,7 +309,7 @@ export default function ProjectWizard() {
     const clickedHeight = clickedProps.height_m ? Math.round(parseFloat(clickedProps.height_m) / 3) : 0;
     const inferredStories = clickedLevels || clickedHeight || spec.stories || 2;
 
-    const buildingUse = (spec as any).building_use || 'multi_family';
+    const buildingUse = (spec as any).building_use || 'single_family';
     const bedrooms = (spec as any).bedrooms || (buildingUse === 'single_family' ? 3 : undefined);
     const bathrooms = (spec as any).bathrooms ?? (buildingUse === 'single_family' ? 2 : undefined);
 
@@ -398,7 +398,7 @@ export default function ProjectWizard() {
                   { label: 'Area', val: `${parcelAreaSqft?.toLocaleString() ?? siteContext.area_sqft?.toFixed(0)} sqft${drawnParcel ? ' (drawn)' : ''}` },
                   { label: 'Flood Zone', val: siteContext.flood_zone || 'X' },
                   { label: 'Seismic', val: `SDC ${siteContext.seismic_category}` + (siteContext.hazard_detail?.seismic?.source === 'USGS ASCE 7-22' ? ' ✓' : ' ~') },
-                  { label: 'Wind', val: `${siteContext.wind_speed_mph} mph` + (siteContext.hazard_detail?.wind?.source === 'ATC ASCE 7-22' ? ' ✓' : ' ~') },
+                  { label: 'Wind (Vult)', val: `${siteContext.wind_speed_mph} mph` + (siteContext.hazard_detail?.wind?.source === 'ATC ASCE 7-22' ? ' ✓' : ' ~') },
                 ].map(({ label, val }) => (
                   <div key={label} className="bg-[var(--surface-3)] rounded-lg p-2">
                     <div className="text-[10px] text-[var(--text-secondary)] font-mono">{label}</div>
@@ -643,7 +643,7 @@ export default function ProjectWizard() {
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Type</div>
         <div className="flex gap-2">
           {BUILDING_USES.map(({ key, label }) => {
-            const active = ((spec as any).building_use || 'multi_family') === key;
+            const active = ((spec as any).building_use || 'single_family') === key;
             return (
               <button key={key} onClick={() => updateSpec({ building_use: key } as any)}
                 className="flex-1 rounded-lg py-2 text-center text-xs font-mono transition-all border"
@@ -659,7 +659,7 @@ export default function ProjectWizard() {
         </div>
         {/* Archetype hint based on priority + building use */}
         {(() => {
-          const use = (spec as any).building_use || 'multi_family';
+          const use = (spec as any).building_use || 'single_family';
           const pri = (spec.priority || 'cost').replace('speed','time').replace('daylight','light').replace('budget','cost');
           const hint = ARCHETYPE_HINTS[use]?.[pri];
           return hint ? (
@@ -735,7 +735,7 @@ export default function ProjectWizard() {
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Parameters</div>
 
         {/* Bedrooms + Bathrooms — only shown for single-family / ADU */}
-        {['single_family', 'adu'].includes((spec as any).building_use || 'multi_family') && (() => {
+        {['single_family', 'adu'].includes((spec as any).building_use || 'single_family') && (() => {
           const isAdu = (spec as any).building_use === 'adu';
           const br = (spec as any).bedrooms ?? (isAdu ? 1 : 3);
           const ba = (spec as any).bathrooms ?? (isAdu ? 1 : 2);
@@ -815,7 +815,7 @@ export default function ProjectWizard() {
               </div>
             )}
             {(() => {
-              const buildingUseVal = (spec as any).building_use || 'multi_family';
+              const buildingUseVal = (spec as any).building_use || 'single_family';
               const isAduVal = buildingUseVal === 'adu';
               const isSfrVal = buildingUseVal === 'single_family';
               const platformCap = isAduVal ? 1200 : isSfrVal ? 5500 : null;
@@ -852,7 +852,7 @@ export default function ProjectWizard() {
         </Field>
 
         {/* Unit count only for multi-family */}
-        {((spec as any).building_use || 'multi_family') === 'multi_family' && (
+        {((spec as any).building_use || 'single_family') === 'multi_family' && (
           <Field label="Unit Count (optional)">
             <NumInput value={spec.unit_count} placeholder="e.g. 12" min={1}
               onChange={(v) => updateSpec({ unit_count: v ? Math.round(v) : undefined })} />

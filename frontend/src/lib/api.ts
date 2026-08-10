@@ -54,6 +54,22 @@ const API = axios.create({
   timeout: 120000,
 });
 
+// Attach JWT from Zustand persist storage on every request
+API.interceptors.request.use((config) => {
+  try {
+    const raw = localStorage.getItem('petronus-auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const t = parsed?.state?.token;
+      if (t && t !== '__dev_skip__') {
+        config.headers = config.headers ?? {};
+        (config.headers as any)['Authorization'] = `Bearer ${t}`;
+      }
+    }
+  } catch {}
+  return config;
+});
+
 export const api = {
   getSiteContext: (lat: number, lon: number, parcel_polygon?: any) =>
     API.post('/api/site/context', { lat, lon, parcel_polygon }).then(r => r.data),

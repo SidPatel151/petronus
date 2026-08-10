@@ -1,7 +1,8 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import projects, site, generate, exports, chat
+from app.api import projects, site, generate, exports, chat, auth
+from app.core.persistence import init_db
 
 app = FastAPI(
     title="Petronus API",
@@ -9,7 +10,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
 _cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002")
+# Handle both JSON array format (["url"]) and comma-separated format
+_cors_raw = _cors_raw.strip().strip("[]").replace('"', '').replace("'", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
 app.add_middleware(
@@ -20,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(site.router, prefix="/api/site", tags=["site"])
 app.include_router(generate.router, prefix="/api/generate", tags=["generate"])

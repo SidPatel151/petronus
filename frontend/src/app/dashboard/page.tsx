@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAppStore } from '@/lib/store';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -35,18 +36,27 @@ function Stat({ label, val, color }: { label: string; val: string | number; colo
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { user, token } = useAppStore();
   const [tab, setTab] = useState<'overview' | 'projects' | 'activity'>('overview');
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
+  // Auth guard
   useEffect(() => {
-    fetch(`${API_BASE}/api/projects/`)
+    if (user === null && token === null) router.replace('/login');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const headers: any = {};
+    if (token && token !== '__dev_skip__') headers['Authorization'] = `Bearer ${token}`;
+    fetch(`${API_BASE}/api/projects/`, { headers })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => setProjects(Array.isArray(data) ? data : []))
       .catch(e => setErr(`Could not reach API (${e})`))
       .finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   const stats = useMemo(() => ({
     total:     projects.length,
@@ -72,10 +82,16 @@ export default function DashboardPage() {
             Dashboard
           </span>
         </div>
-        <button onClick={() => router.push('/app')} className={navBtn}
-          style={{ background: 'rgba(0,229,255,0.08)', borderColor: 'rgba(0,229,255,0.3)', color: '#00e5ff' }}>
-          Launch App →
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={() => router.push('/app')} className={navBtn}
+            style={{ background: 'rgba(0,229,255,0.08)', borderColor: 'rgba(0,229,255,0.3)', color: '#00e5ff' }}>
+            Launch App →
+          </button>
+          <button onClick={() => { useAppStore.getState().clearAuth(); router.replace('/login'); }} className={navBtn}
+            style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)', color: '#8888aa' }}>
+            Sign out
+          </button>
+        </div>
       </nav>
 
       <div className="max-w-5xl mx-auto px-9 py-9 pb-20">
@@ -85,16 +101,16 @@ export default function DashboardPage() {
           style={{ background: 'rgba(0,229,255,0.03)', border: '1px solid rgba(0,229,255,0.1)' }}>
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center font-display font-bold text-xl flex-shrink-0"
             style={{ background: 'rgba(0,229,255,0.1)', border: '2px solid rgba(0,229,255,0.25)', color: '#00e5ff' }}>
-            AC
+            {user?.name ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() : 'AC'}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3 mb-1">
-              <span className="font-display font-bold text-lg">Alex Chen</span>
+              <span className="font-display font-bold text-lg">{user?.name || 'Alex Chen'}</span>
               <span className="font-mono text-[9px] rounded px-2 py-0.5 tracking-widest"
                 style={{ color: '#00e5ff', background: 'rgba(0,229,255,0.1)', border: '1px solid rgba(0,229,255,0.25)' }}>PRO BETA</span>
             </div>
             <div className="font-mono text-xs" style={{ color: '#8888aa' }}>
-              Principal Architect · Bay Area Development Group
+              {user?.email || 'demo@petronus.app'}
             </div>
           </div>
           <button onClick={() => router.push('/settings')} className={navBtn}

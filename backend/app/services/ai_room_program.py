@@ -1,0 +1,497 @@
+"""
+ai_room_program.py
+Replaces the hardcoded SFR_PROGRAMS lookup tables in floorplan.py.
+
+Workflow:
+  1. Load blueprint_index.json (cached in memory after first read)
+  2. Find 2-3 blueprints that match the current archetype + sqft range
+  3. Build a compact prompt with real footprint dims + examples + platform limits
+  4. Ask Claude Haiku for a dynamic room layout in JSON (absolute meters)
+  5. Convert Claude's output to the row-dict format floorplan.py expects
+  6. On any failure, fall back to None → floorplan.py uses static programs
+
+Token budget per call: ~400 tokens in, ~300 tokens out  ≈ $0.001 (Haiku pricing)
+"""
+import asyncio
+import json
+import math
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from app.constraints import LIMITS, ARCHETYPE_RULES, limits_for_prompt
+
+_INDEX_PATH  = Path(__file__).parent.parent / "data" / "blueprint_index.json"
+_INDEX_CACHE: Optional[List[Dict]] = None   # loaded once, never reloaded mid-run
+
+
+def _load_index() -> List[Dict]:
+    global _INDEX_CACHE
+    if _INDEX_CACHE is None:
+        if _INDEX_PATH.exists():
+            _INDEX_CACHE = json.loads(_INDEX_PATH.read_text())
+        else:
+            _INDEX_CACHE = []
+    return _INDEX_CACHE
+
+
+def _find_examples(archetype_id: str, bedrooms: int, target_sqft: float, n: int = 2) -> List[Dict]:
+    """Return up to n blueprints from the index that best match this job.
+
+    Strategy: archetype-matched blueprints always win. Only fall back to
+    non-matching archetypes if there aren't enough archetype matches.
+    """
+    index = _load_index()
+    if not index:
+        return []
+
+    def _score(bp: dict, primary: bool) -> float:
+        score = 100.0 if primary else 0.0  # archetype match = decisive
+        if bp.get("building_type") in ("sfr", "adu", "townhouse", "victorian"):
+            score += 1.0
+        bp_br = bp.get("bedrooms") or 0
+        if bp_br == bedrooms:
+            score += 4.0
+        elif abs((bp_br or 0) - bedrooms) <= 1:
+            score += 2.0
+        bp_sqft = bp.get("total_sqft") or 0
+        if bp_sqft and target_sqft:
+            ratio = min(bp_sqft, target_sqft) / max(bp_sqft, target_sqft)
+            score += ratio * 3.0
+        score += bp.get("confidence", 0.0) * 2
+        # Prioritise floor plans — exterior photos lack room data
+        if bp.get("image_type") == "floor_plan":
+            score += 2.0
+        elif bp.get("image_type") == "sketch":
+            score += 1.0
+        # Penalise entries with no room data
+        if not bp.get("rooms"):
+            score -= 3.0
+        return score
+
+    archetype_pool = [bp for bp in index if bp.get("archetype") == archetype_id]
+    fallback_pool  = [bp for bp in index if bp.get("archetype") != archetype_id]
+
+    ranked_primary  = sorted(archetype_pool, key=lambda bp: _score(bp, True),  reverse=True)
+    ranked_fallback = sorted(fallback_pool,  key=lambda bp: _score(bp, False), reverse=True)
+
+    results = ranked_primary[:n]
+    if len(results) < n:
+        results += ranked_fallback[: n - len(results)]
+    return results
+
+
+def _bp_to_compact(bp: dict) -> str:
+    """Convert a blueprint index entry to a compact multi-line string for the prompt."""
+    sqft  = bp.get("total_sqft", "?")
+    br    = bp.get("bedrooms", "?")
+    fp    = bp.get("footprint_ft") or {}
+    dims  = f"{fp.get('width','?')}×{fp.get('depth','?')}ft" if fp else "unknown dims"
+    style = bp.get("style", "")
+    header = f"[{bp.get('archetype','?')} | {br}BR | {sqft} sqft | {dims} | {style}]"
+
+    rooms_by_floor: Dict[int, List[str]] = {}
+    for r in bp.get("rooms", []):
+        f = r.get("floor", 0)
+        entry = r["type"]
+        if r.get("approx_sqft"):
+            entry += f"({r['approx_sqft']}sf)"
+        if r.get("position"):
+            entry += f"@{r['position']}"
+        rooms_by_floor.setdefault(f, []).append(entry)
+
+    lines = [header]
+    for fl in sorted(rooms_by_floor):
+        lines.append(f"  F{fl}: {', '.join(rooms_by_floor[fl])}")
+    stair = bp.get("stair") or {}
+    if stair.get("present"):
+        lines.append(f"  Stair: {stair.get('location','?')} → {stair.get('direction','?')}")
+    if bp.get("wet_wall_location"):
+        lines.append(f"  Wet wall: {bp['wet_wall_location']}")
+    return "\n".join(lines)
+
+
+def _archetype_layout_brief(arch: Optional[Dict]) -> str:
+    """
+    Compact per-floor layout reference extracted from archetype JSON.
+    Tells Claude EXACTLY what rooms go on each floor, where the wet wall
+    and stair live, and the 2-3 most critical MEP constraints.
+    """
+    if not arch:
+        return ""
+    lines = [f"ARCHETYPE LAYOUT REFERENCE — {arch.get('display_name', '')}:"]
+
+    # Per-floor room lists
+    fp = arch.get("floor_program", {})
+    if fp:
+        floor_order = [k for k in fp if k not in ("note",)]
+        for key in floor_order:
+            fl = fp[key]
+            if not isinstance(fl, dict):
+                continue
+            use   = fl.get("use", "")
+            rooms = fl.get("rooms", [])
+            note  = fl.get("mep_note", "")
+            label = key.replace("_", " ").title()
+            room_str = ", ".join(rooms[:10]) if rooms else "(see note)"
+            lines.append(f"  {label} ({use}): {room_str}")
+            if note:
+                lines.append(f"    MEP: {note[:120]}")
+
+    # ADU bedroom programs (compact)
+    bp = arch.get("bedroom_programs", {})
+    if bp:
+        lines.append("  Bedroom program variants:")
+        for prog_name, prog in bp.items():
+            if not isinstance(prog, dict):
+                continue
+            br  = prog.get("bedrooms", "?")
+            sqft = prog.get("target_sqft", "?")
+            st  = prog.get("stories", 1)
+            lines.append(f"    {prog_name}: {br}BR, {sqft} sqft, {st} story")
+
+    # Wet wall location
+    ww = arch.get("wet_wall", {})
+    if ww.get("location"):
+        loc = ww["location"]
+        note = ww.get("note", "")[:80]
+        lines.append(f"  Wet wall: {loc}" + (f" — {note}" if note else ""))
+
+    # Stair location
+    sc = arch.get("staircase", {})
+    if sc.get("location"):
+        lines.append(f"  Stair: {sc['location']} (width {sc.get('width_ft','?')} ft, runs {sc.get('run_direction','?')})")
+
+    # Massing hints
+    mh = arch.get("massing_hints", {})
+    if mh.get("plan_shape"):
+        ratio = mh.get("width_to_depth_ratio_typical", "")
+        lines.append(f"  Plan shape: {mh['plan_shape']}" + (f" (W:D ≈ {ratio})" if ratio else ""))
+    if mh.get("roof_type"):
+        lines.append(f"  Roof: {mh['roof_type']}")
+
+    # Top 4 known constraints
+    kcs = arch.get("known_constraints_summary", [])
+    if kcs:
+        lines.append("  Key constraints:")
+        for kc in kcs[:4]:
+            lines.append(f"    • {kc[:110]}")
+
+    return "\n".join(lines)
+
+
+def _get_api_key() -> str:
+    try:
+        from app.core.config import settings
+        return settings.ANTHROPIC_API_KEY
+    except Exception:
+        return os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+async def get_ai_room_program(
+    footprint_w_m: float,
+    footprint_d_m: float,
+    archetype_id: str,
+    bedrooms: int,
+    stories: int,
+    target_sqft: float,
+    site_ctx: Dict[str, Any],
+    bathrooms: float = 2.0,
+    archetype_data: Optional[Dict] = None,
+) -> Optional[List[Dict]]:
+    """
+    Ask Claude Haiku to generate a room layout for one floor or the whole house.
+
+    Returns a list of per-floor programs:
+      [
+        {"floor": 0, "rows": [
+          {"row_frac_d": 0.35, "rooms": [{"type": "garage", "frac_w": 0.55}, ...]},
+          ...
+        ]},
+        {"floor": 1, "rows": [...]},
+      ]
+    Returns None on failure → caller falls back to static programs.
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return None
+
+    # Gather terrain/site signals for context
+    terrain      = site_ctx.get("terrain", {}) or {}
+    slope_pct    = terrain.get("slope_pct", 0)
+    avg_elev_m   = terrain.get("avg_elevation_m", 0)
+    municipality = terrain.get("municipality", "") or site_ctx.get("municipality", "")
+    weather      = site_ctx.get("weather", {}) or {}
+    climate_zone = weather.get("climate_zone", "unknown") if weather else "unknown"
+    temp_f       = weather.get("temp_f") if weather else None
+
+    # Find matching blueprint examples
+    examples = _find_examples(archetype_id, bedrooms, target_sqft, n=2)
+    example_text = "\n\n".join(_bp_to_compact(e) for e in examples) if examples else "No matching blueprints available."
+
+    # Archetype-specific note + layout brief from JSON
+    arule = ARCHETYPE_RULES.get(archetype_id)
+    archetype_note = arule.note if arule else ""
+    arch_layout_brief = _archetype_layout_brief(archetype_data)
+
+    area_m2  = footprint_w_m * footprint_d_m
+    area_sqft_fp = area_m2 * 10.764
+
+    # Count full vs half baths
+    full_baths = int(bathrooms)
+    half_baths = 1 if (bathrooms - full_baths) >= 0.5 else 0
+
+    prompt = f"""You are an expert residential architect. Generate a room layout JSON for the building below.
+
+{limits_for_prompt()}
+
+THIS BUILDING:
+- Archetype: {archetype_id} ({archetype_note[:120] if archetype_note else 'standard'})
+- Footprint: {footprint_w_m:.1f}m wide × {footprint_d_m:.1f}m deep (= {area_sqft_fp:.0f} sqft/floor)
+- Target total: {target_sqft:.0f} sqft | {stories} stories
+- Slope: {slope_pct:.1f}% | Elevation: {avg_elev_m:.0f}m | Location: {municipality or 'unknown'}
+- Climate: {climate_zone}{f' ({temp_f:.0f}°F now)' if temp_f else ''}
+
+REFERENCE BLUEPRINTS FROM OUR DATASET:
+{example_text}
+
+{arch_layout_brief}
+
+HARD CONSTRAINTS — follow exactly:
+- EXACTLY {bedrooms} bedrooms (type="bedroom") across all floors — no more, no less
+- EXACTLY {full_baths} full bathrooms (type="bathroom") + {half_baths} half bath (type="half_bath")
+- Generate EXACTLY {stories} floor(s): floors numbered 0 through {stories - 1}
+- Rooms must fit inside {footprint_w_m:.1f}m × {footprint_d_m:.1f}m footprint
+- frac_w values per row must sum to 1.0; row_frac_d values per floor must sum to 1.0
+- Minimum widths (meters): bedroom {LIMITS.min_bedroom_w_m}, bath {LIMITS.min_bathroom_w_m}, kitchen {LIMITS.min_kitchen_w_m}, living {LIMITS.min_living_w_m}
+- For hillside/slope > 8%: floor 0 = garage+entry+utility, main living on floor 1+; otherwise floor 0 = living/garage, upper floors = bedrooms
+- Include stair room on each floor EXCEPT the topmost (floor {stories - 1}) — no staircase on the top floor unless there is an attic above it
+- Hillside/mountain: include decks, split levels, view-oriented living spaces
+- Do not exceed {LIMITS.sfr_max_bedrooms} bedrooms total
+- TOTAL BUILDING AREA MUST NOT EXCEED {min(int(target_sqft), LIMITS.sfr_max_sqft):,} sqft — this is a hard platform cap, never go above it under any circumstances
+- Target total area is {target_sqft:.0f} sqft; size rooms so they sum to approximately this, never more than {min(int(target_sqft), LIMITS.sfr_max_sqft):,} sqft
+
+SPATIAL ORDERING — hard rules (rows are ordered front-to-back within each floor):
+- Row 1 of floor 0 (front, facing street): foyer, entry, or living room — NEVER stair, garage, or bathroom first
+- Row 2 of floor 0: kitchen, dining, family room — public spaces needing natural light
+- Middle rows of any floor: stair, hallway, laundry, utility — circulation and service
+- Last rows of any floor: bedrooms and bathrooms — private, away from street
+- Stair must NOT be the first room from the front door — put foyer or entry before it
+- Bathrooms are interior — place them between bedrooms, never on the front facade row
+- Each floor must have at least 3 rows so rooms spread front-to-back across the full depth
+
+FLOOR ASSIGNMENT — non-negotiable (match the ARCHETYPE LAYOUT REFERENCE exactly):
+- dining room, living room, kitchen MUST be on floor 0 (or the floor the archetype assigns them to)
+- bedrooms and bathrooms MUST be on the upper floor(s) — NEVER on floor 0 of a 2-story home
+- For 2-story SFR: floor 0 = entry + living + dining + kitchen + half_bath; floor 1 = ALL bedrooms + baths
+- Do NOT split dining/kitchen across different floors from living
+
+Return ONLY valid JSON — no markdown, no explanation:
+{{
+  "floors": [
+    {{
+      "floor": 0,
+      "rows": [
+        {{"row_frac_d": 0.35, "rooms": [{{"type": "garage", "frac_w": 0.65}}, {{"type": "entry", "frac_w": 0.35}}]}},
+        {{"row_frac_d": 0.65, "rooms": [{{"type": "utility", "frac_w": 0.5}}, {{"type": "laundry", "frac_w": 0.5}}]}}
+      ]
+    }},
+    {{
+      "floor": 1,
+      "rows": [...]
+    }}
+  ]
+}}
+
+Valid room types: living, kitchen, dining, bedroom, bathroom, foyer, office, pantry,
+walk_in_closet, family_room, bonus_room, loft, media_room, library, gym, laundry, corridor,
+garage, mechanical, utility, stair, deck, half_bath"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = await asyncio.to_thread(
+            client.messages.create,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        # Strip markdown fences if present
+        if "```" in raw:
+            parts = raw.split("```")
+            for part in parts:
+                if part.startswith("json"):
+                    raw = part[4:].strip()
+                    break
+                elif part.strip().startswith("{"):
+                    raw = part.strip()
+                    break
+        # Extract just the outermost JSON object (ignore trailing text)
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return None
+        raw = raw[start:end]
+        data = json.loads(raw)
+        floors = data.get("floors", [])
+        if not floors:
+            return None
+        # Validate + normalise fractions
+        return _normalise(floors)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"[ai_room_program] failed: {e}", exc_info=True)
+        return None
+
+
+def _normalise(floors: List[Dict]) -> List[Dict]:
+    """
+    Ensure frac_w sums to 1.0 per row and row_frac_d sums to 1.0 per floor.
+    Clamps any negatives. Returns None if data is unparseable.
+    """
+    out = []
+    for fl in floors:
+        rows = fl.get("rows", [])
+        if not rows:
+            continue
+        # Normalise row depths
+        total_d = sum(max(r.get("row_frac_d", 0), 0.01) for r in rows) or 1.0
+        norm_rows = []
+        for row in rows:
+            rd = max(row.get("row_frac_d", 0), 0.01) / total_d
+            rooms = row.get("rooms", [])
+            total_w = sum(max(rm.get("frac_w", 0), 0.01) for rm in rooms) or 1.0
+            norm_rooms = [
+                {"type": rm.get("type", "corridor"), "frac_w": max(rm.get("frac_w", 0), 0.01) / total_w}
+                for rm in rooms
+            ]
+            norm_rows.append({"row_frac_d": rd, "rooms": norm_rooms})
+        out.append({"floor": fl.get("floor", len(out)), "rows": norm_rows})
+    return out if out else None
+
+
+async def get_ai_unit_program(
+    footprint_w_m: float,
+    footprint_d_m: float,
+    stories: int,
+    unit_count: Optional[int],
+    bedrooms_per_unit: int,
+    site_ctx: Dict[str, Any],
+    target_sqft: float = 0,
+    archetype_data: Optional[Dict] = None,
+) -> Optional[Dict]:
+    """
+    Ask Claude to generate a multi-family unit mix and room templates.
+
+    Returns:
+      {
+        "unit_mix": {"studio": 0, "1br": 2, "2br": 1, "3br": 0},
+        "templates": {
+          "1br": {"w": 8.0, "d": 10.0, "rows": [...]},
+          "2br": {"w": 10.0, "d": 12.0, "rows": [...]}
+        }
+      }
+    Returns None on failure → caller uses hardcoded UNIT_TEMPLATES.
+    """
+    import logging
+    api_key = _get_api_key()
+    if not api_key:
+        return None
+
+    terrain      = site_ctx.get("terrain", {}) or {}
+    slope_pct    = terrain.get("slope_pct", 0)
+    avg_elev_m   = terrain.get("avg_elevation_m", 0)
+    municipality = site_ctx.get("municipality", "") or terrain.get("municipality", "CA")
+    seismic      = site_ctx.get("seismic_category", "D")
+    weather      = site_ctx.get("weather", {}) or {}
+    climate_zone = weather.get("climate_zone", "unknown") if weather else "unknown"
+
+    floor_area_sqft  = footprint_w_m * footprint_d_m * 10.764
+    total_sqft_label = f"{target_sqft:.0f}" if target_sqft > 0 else f"≈{floor_area_sqft * stories:.0f}"
+    approx_units     = unit_count or max(1, round(footprint_w_m / 8))
+    unit_sqft_target = (target_sqft / max(stories, 1) / max(approx_units, 1)) if target_sqft > 0 else (floor_area_sqft / max(approx_units, 1))
+
+    is_steep = slope_pct >= 10.0
+    hillside_note = ""
+    if is_steep:
+        hillside_note = f"""
+HILLSIDE DESIGN (slope {slope_pct:.1f}%): This is a steep site. Design accordingly:
+- Ground floor (level 0): garage, mechanical, storage, mudroom — these go INTO the hillside
+- Upper floors: living spaces, bedrooms, decks on downhill (view) side
+- Each unit should have an entry from the uphill street level
+- Include deck/balcony room on downhill facade
+- Fewer units per floor is better — 1-2 large units rather than 4 small ones"""
+
+    arch_brief = _archetype_layout_brief(archetype_data)
+
+    prompt = f"""You are a licensed residential architect designing a multi-family building.
+
+SITE: {municipality} | slope {slope_pct:.1f}% | elevation {avg_elev_m:.0f}m | seismic {seismic} | climate {climate_zone}
+BUILDING: {footprint_w_m:.1f}m wide × {footprint_d_m:.1f}m deep | {stories} stories | {floor_area_sqft:.0f} sqft/floor
+TARGET: {total_sqft_label} sqft total | ~{bedrooms_per_unit} BR per unit | each unit ≈{unit_sqft_target:.0f} sqft{f' | {unit_count} units/floor' if unit_count else ''}
+{hillside_note}
+{arch_brief}
+
+HARD RULES:
+- unit_mix values are PER FLOOR (integer count of each unit type on each floor)
+- frac_w per row must sum to 1.0; frac_d per template must sum to 1.0
+- Include w (width in meters) and d (depth in meters) for each template — these set actual unit size
+- Each unit's w × d should give roughly {unit_sqft_target:.0f} sqft (= {unit_sqft_target/10.764:.1f} m²)
+- Valid room types: living, kitchen, dining, bedroom, bathroom, half_bath, foyer, office,
+  laundry, corridor, garage, mechanical, utility, stair, deck, mudroom, walk_in_closet
+
+Return ONLY valid JSON, no markdown:
+{{
+  "unit_mix": {{"studio": 0, "1br": 0, "2br": 0, "3br": 1}},
+  "templates": {{
+    "3br": {{
+      "w": 11.0,
+      "d": 13.0,
+      "rows": [
+        {{"frac_d": 0.25, "rooms": [{{"type": "living", "frac_w": 0.6}}, {{"type": "dining", "frac_w": 0.4}}]}},
+        {{"frac_d": 0.20, "rooms": [{{"type": "kitchen", "frac_w": 0.55}}, {{"type": "bathroom", "frac_w": 0.45}}]}},
+        {{"frac_d": 0.20, "rooms": [{{"type": "laundry", "frac_w": 0.4}}, {{"type": "half_bath", "frac_w": 0.6}}]}},
+        {{"frac_d": 0.35, "rooms": [{{"type": "bedroom", "frac_w": 0.38}}, {{"type": "bedroom", "frac_w": 0.32}}, {{"type": "bedroom", "frac_w": 0.30}}]}}
+      ]
+    }}
+  }}
+}}"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = await asyncio.to_thread(
+            client.messages.create,
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = msg.content[0].text.strip()
+        if "```" in raw:
+            parts = raw.split("```")
+            for part in parts:
+                stripped = part.lstrip("json").strip()
+                if stripped.startswith("{"):
+                    raw = stripped
+                    break
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return None
+        data = json.loads(raw[start:end])
+        if "unit_mix" not in data or "templates" not in data:
+            return None
+        # Normalise all template rows; preserve w/d from Claude
+        for tmpl in data["templates"].values():
+            rows = tmpl.get("rows", [])
+            total = sum(max(r.get("frac_d", 0), 0.01) for r in rows) or 1.0
+            for r in rows:
+                r["frac_d"] = max(r.get("frac_d", 0), 0.01) / total
+                w_total = sum(max(rm.get("frac_w", 0), 0.01) for rm in r.get("rooms", [])) or 1.0
+                for rm in r.get("rooms", []):
+                    rm["frac_w"] = max(rm.get("frac_w", 0), 0.01) / w_total
+        return data
+    except Exception as e:
+        logging.getLogger(__name__).error(f"[ai_unit_program] failed: {e}", exc_info=True)
+        return None

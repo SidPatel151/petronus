@@ -4,10 +4,15 @@ Ties together all generators in sequence, emitting progress events.
 """
 import uuid
 import asyncio
+import logging
 from typing import Callable, Optional
 from app.models.schemas import BuildingModel, ProjectSpec, GenerateRequest, Wall
 from app.services.site_context import SiteContextService
-from app.services.ai_brief import get_design_brief
+from app.services.ai_room_program import get_ai_room_program, get_ai_unit_program
+
+logger = logging.getLogger(__name__)
+from app.services.ai_semantic_builder import generate_semantic_building
+from app.constraints import LIMITS, limits_for_prompt
 from app.generators.massing import MassingGenerator
 from app.generators.floorplan import FloorplanGenerator
 from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS, ADU_MAX_SQFT
@@ -16,7 +21,8 @@ from app.generators.compliance import ComplianceEngine
 from app.generators.facade import FacadeGenerator, extract_neighbor_style
 from app.services.material_scorer import get_override_dict
 from app.services.archetype_loader import (
-    get_archetype, apply_archetype_to_neighbor_style, apply_archetype_to_design_brief
+    get_archetype, detect_archetype, load_archetype,
+    apply_archetype_to_neighbor_style, apply_archetype_to_design_brief
 )
 
 
@@ -34,15 +40,16 @@ class GenerationOrchestrator:
     async def run(self, spec: ProjectSpec, massing_choice: int = 0) -> BuildingModel:
         project_id = str(uuid.uuid4())
 
-        is_sfr = getattr(spec, 'building_use', 'multi_family') in ('single_family', 'adu')
-        is_adu = getattr(spec, 'building_use', 'multi_family') == 'adu'
+        _use_raw = getattr(spec, 'building_use', 'multi_family')
+        _use_str = getattr(_use_raw, 'value', str(_use_raw))
+        is_sfr = _use_str in ('single_family', 'adu')
+        is_adu = _use_str == 'adu'
 
-        # ── Hard platform caps (applied before anything else) ─────────────
-        # These enforce the "no luxury mansion" rule and honour user-set max_* fields.
-        PLATFORM_MAX_SFR_SQFT  = 5_500   # single-family / ADU absolute ceiling
-        PLATFORM_MAX_MF_SQFT   = 50_000  # multi-family: generous but prevents runaway
-        PLATFORM_MAX_STORIES   = 3       # matches wizard UI
-        PLATFORM_MAX_BEDROOMS  = 5       # matches SFR_SQFT_RANGES
+        # ── Hard platform caps — single source of truth is constraints.py ──
+        PLATFORM_MAX_SFR_SQFT  = LIMITS.sfr_max_sqft
+        PLATFORM_MAX_MF_SQFT   = LIMITS.mf_max_sqft
+        PLATFORM_MAX_STORIES   = LIMITS.max_stories
+        PLATFORM_MAX_BEDROOMS  = LIMITS.adu_max_bedrooms if is_adu else LIMITS.sfr_max_bedrooms
 
         updates: dict = {}
 
@@ -194,21 +201,30 @@ class GenerationOrchestrator:
             f"Avg height: {neighbor_style.get('avg_neighbor_height_m', 0):.1f}m"
         )
 
-        # Step 2: Claude design brief from neighbor context
-        self.progress_cb(18, "Generating AI design brief…")
-        log.append("Calling Claude for architectural design brief")
+        # Step 2: Claude — one call that covers design brief + semantic model
+        self.progress_cb(18, "Generating AI building model…")
+        sem_result   = None
+        design_brief = None
         try:
             spec_dict = {
                 "stories": spec.stories,
                 "structural_system": getattr(spec.structural_system, 'value', str(spec.structural_system)),
-                "priority": spec.priority,
+                "priority": getattr(spec.priority, 'value', str(spec.priority)),
                 "unit_count": spec.unit_count,
+                # User inputs — must reach Claude as hard constraints
+                "bedrooms": spec.bedrooms or 3,
+                "bathrooms": getattr(spec, 'bathrooms', None) or 2,
+                "target_gross_area_sqft": spec.target_gross_area_sqft or 2000,
+                "building_use": getattr(spec, 'building_use', 'single_family'),
             }
             site_ctx_dict = {
                 "area_sqft": site_ctx.area_sqft,
                 "flood_zone": site_ctx.flood_zone,
                 "seismic_category": site_ctx.seismic_category,
                 "terrain": terrain,
+                "municipality": site_ctx.municipality or terrain.get("municipality", ""),
+                "avg_elevation_m": terrain.get("avg_elevation_m", 0),
+                "slope_pct": terrain.get("slope_pct", 0),
             }
             neighbor_analysis = {
                 "count": len(neighbor_buildings),
@@ -221,25 +237,65 @@ class GenerationOrchestrator:
                 "avg_depth_m": neighbor_style.get("avg_depth_m", 14),
             }
 
-            design_brief = await get_design_brief(spec_dict, site_ctx_dict, neighbor_analysis)
-            log.append(f"Design brief: shape={design_brief.get('shape')} mat={design_brief.get('facade_material')} w={design_brief.get('width_m')}m d={design_brief.get('depth_m')}m | source={design_brief.get('source')}")
+            # Detect archetype once — shared by both parallel AI calls
+            _arch_id_pre = detect_archetype(spec, site_context=site_ctx) or ""
+            _arch_display = ""
+            if _arch_id_pre:
+                _a = load_archetype(_arch_id_pre)
+                _arch_display = (_a or {}).get("display_name", _arch_id_pre)
 
-            # Merge brief's facade_material back into neighbor_style so the
-            # facade generator and frontend both use the Claude-recommended material
+            # ── ONE parallel Claude call instead of two sequential ones ──────
+            # semantic_builder replaces ai_brief entirely — same info, one call.
+            sem_result = await generate_semantic_building(
+                spec_dict, site_ctx_dict, neighbor_analysis,
+                archetype_id=_arch_id_pre,
+                archetype_display_name=_arch_display,
+            )
+            log.append(f"Semantic [{sem_result.get('_source','?')}]: {sem_result.get('style_intent','')[:80]}")
+
+            # Derive design_brief from semantic model so the classic facade
+            # pipeline still gets real values (no separate ai_brief call)
+            s_mat = (sem_result.get("materials") or {}).get("wall_body", "stucco")
+            s_roof = (sem_result.get("roof") or {})
+            s_fp   = sem_result.get("footprint") or {}
+            s_trim = sem_result.get("trim") or {}
+            design_brief = {
+                "shape":               s_fp.get("shape", "rectangle"),
+                "width_m":             s_fp.get("width_m", neighbor_analysis.get("avg_width_m", 12)),
+                "depth_m":             s_fp.get("depth_m", neighbor_analysis.get("avg_depth_m", 14)),
+                "facade_material":     s_mat,
+                "trim_color":          (sem_result.get("materials") or {}).get("trim_color", "#4a4a4a"),
+                "horizontal_bands":    bool(s_trim.get("band_height_m", 0) > 0),
+                "band_h_frac":         min(0.30, (s_trim.get("band_height_m", 0) / 3.0)),
+                "face_offset":         0.09,
+                "window_ratio":        0.38,
+                "win_h_frac":          0.50,
+                "win_w_cap_m":         1.8,
+                "balcony_depth_m":     next((p.get("depth_m", 0) for p in (sem_result.get("porches") or []) if p.get("type") == "balcony"), 0.0),
+                "balcony_every_n_floors": 2,
+                "porch_depth_m":       next((p.get("depth_m", 0) for p in (sem_result.get("porches") or []) if p.get("type") == "entry"), 0.0),
+                "roof_type":           s_roof.get("type", "gabled"),
+                "roof_pitch_12":       s_roof.get("pitch_12", 5),
+                "ground_floor_height_boost_m": 0.3,
+                "source":              sem_result.get("_source", "fallback"),
+            }
+
             brief_mat = design_brief.get("facade_material")
             if brief_mat and brief_mat in FACADE_COLORS:
                 neighbor_style["dominant_material"] = brief_mat
                 neighbor_style["facade_color"] = FACADE_COLORS[brief_mat]
             if design_brief.get("balcony_depth_m", 0) > 0:
                 neighbor_style["has_balconies"] = True
-                neighbor_style["balcony_depth_m"] = design_brief["balcony_depth_m"]
-            neighbor_style["window_ratio"] = design_brief.get("window_ratio", 0.35)
-            neighbor_style["horizontal_bands"] = design_brief.get("horizontal_bands", True)
-            neighbor_style["balcony_every_n_floors"] = design_brief.get("balcony_every_n_floors", 1)
+            neighbor_style["window_ratio"]           = design_brief["window_ratio"]
+            neighbor_style["horizontal_bands"]       = design_brief["horizontal_bands"]
+            neighbor_style["balcony_every_n_floors"] = design_brief["balcony_every_n_floors"]
 
         except Exception as e:
+            sem_result   = None
             design_brief = None
-            log.append(f"Design brief failed ({str(e)[:60]}) — using neighbor dims directly")
+            msg = f"⚠ AI semantic builder failed: {e}"
+            log.append(msg)
+            logger.error(msg, exc_info=True)
 
         # ── Archetype detection — runs after spec is finalised ────────────────
         archetype = get_archetype(spec, site_context=site_ctx)
@@ -275,10 +331,84 @@ class GenerationOrchestrator:
         chosen = massing_options[massing_choice]
         log.append(f"Chosen massing: Option {chosen['label']} — {chosen['name']}")
 
-        # Step 4: Floorplan
+        # Step 4a: AI room program — Claude Haiku generates dynamic layout from blueprint index
+        self.progress_cb(42, "Generating AI room program…")
+        archetype_id_str = (archetype or {}).get('id', '')
+        _fp_coords = chosen.get("footprint", [])
+        _fp_xs = [c[0] for c in _fp_coords]
+        _fp_zs = [c[1] for c in _fp_coords]
+        _fp_w  = (max(_fp_xs) - min(_fp_xs)) if _fp_xs else 12.0
+        _fp_d  = (max(_fp_zs) - min(_fp_zs)) if _fp_zs else 14.0
+        _target_sqft = spec.target_gross_area_sqft or sfr_target_sqft(
+            spec.bedrooms or 3, getattr(spec.priority, 'value', 'cost')
+        )
+        _br = spec.bedrooms or 3
+
+        ai_floor_program = None
+        ai_unit_program  = None
+        _site_ctx_for_ai = {
+            "terrain": terrain,
+            "municipality": site_ctx.municipality,
+            "weather": site_ctx.weather.dict() if site_ctx.weather else {},
+            "seismic_category": site_ctx.seismic_category,
+        }
+
+        if is_sfr:
+            try:
+                ai_floor_program = await get_ai_room_program(
+                    footprint_w_m=_fp_w,
+                    footprint_d_m=_fp_d,
+                    archetype_id=archetype_id_str or "production_tract",
+                    bedrooms=_br,
+                    stories=spec.stories or 2,
+                    target_sqft=_target_sqft,
+                    site_ctx=_site_ctx_for_ai,
+                    bathrooms=getattr(spec, 'bathrooms', None) or 2.0,
+                    archetype_data=archetype,
+                )
+                if ai_floor_program:
+                    log.append(f"AI room program: {sum(len(f['rows']) for f in ai_floor_program)} rows across {len(ai_floor_program)} floors")
+                else:
+                    log.append("⚠ AI room program: no output — using static fallback")
+            except Exception as _e:
+                msg = f"⚠ AI room program failed: {_e}"
+                log.append(msg)
+                logger.error(msg, exc_info=True)
+        else:
+            # Multi-family: Claude generates unit mix + room templates
+            try:
+                ai_unit_program = await get_ai_unit_program(
+                    footprint_w_m=_fp_w,
+                    footprint_d_m=_fp_d,
+                    stories=spec.stories or 3,
+                    unit_count=getattr(spec, 'unit_count', None),
+                    bedrooms_per_unit=_br,
+                    site_ctx={
+                        **_site_ctx_for_ai,
+                        "seismic_category": site_ctx.seismic_category,
+                        "municipality": site_ctx.municipality,
+                    },
+                    target_sqft=_target_sqft,
+                    archetype_data=archetype,
+                )
+                if ai_unit_program:
+                    mix = ai_unit_program.get("unit_mix", {})
+                    log.append(f"AI unit program: {mix}")
+                else:
+                    log.append("⚠ AI unit program: no output — using static unit templates")
+            except Exception as _e:
+                msg = f"⚠ AI unit program failed: {_e}"
+                log.append(msg)
+                logger.error(msg, exc_info=True)
+
+        # Step 4b: Floorplan — uses AI program if available, else static programs
         self.progress_cb(45, "Generating floorplans…")
         log.append("Generating floorplan layouts")
-        rooms, walls = self.floorplan_gen.generate(chosen, spec, levels, archetype=archetype)
+        rooms, walls = self.floorplan_gen.generate(
+            chosen, spec, levels, archetype=archetype,
+            ai_room_program=ai_floor_program,
+            ai_unit_program=ai_unit_program,
+        )
         model.rooms = rooms
         model.walls = walls
         unit_count = len(set(r.unit_id for r in rooms if r.unit_id))
@@ -286,7 +416,10 @@ class GenerationOrchestrator:
 
         # Step 5: Facade details
         self.progress_cb(60, "Generating facade details…")
-        facade_meshes = self.facade_gen.generate(chosen, walls, levels, neighbor_style, design_brief)
+        facade_meshes = self.facade_gen.generate(
+            chosen, walls, levels, neighbor_style, design_brief,
+            rooms=rooms, semantic_model=sem_result,
+        )
         model.neighbor_style = neighbor_style
         model.design_brief = design_brief
         stair_meshes = self._generate_stair_meshes(rooms, levels, spec)
@@ -372,6 +505,9 @@ class GenerationOrchestrator:
         errors = len([i for i in issues if i.severity == "error"])
         warnings = len([i for i in issues if i.severity == "warning"])
         log.append(f"Compliance: {errors} errors, {warnings} warnings")
+
+        # Semantic model came from the parallel call at the top — attach it here
+        model.semantic_model = sem_result if sem_result else None
 
         self.progress_cb(100, "Done!")
         log.append("Generation complete")

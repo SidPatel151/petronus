@@ -25,6 +25,18 @@ class SiteInput(BaseModel):
     latlon: Optional[LatLon] = None
     parcel_polygon: Optional[Dict[str, Any]] = None  # GeoJSON
 
+class WeatherData(BaseModel):
+    temp_f:       Optional[float] = None
+    humidity_pct: Optional[int]   = None
+    wind_mph:     Optional[float] = None
+    wind_dir_deg: Optional[float] = None
+    precip_in:    Optional[float] = None
+    condition:    Optional[str]   = None
+    wmo_code:     Optional[int]   = None
+    timezone:     Optional[str]   = None
+    climate_zone: Optional[str]   = None
+    source:       Optional[str]   = None
+
 class SiteContext(BaseModel):
     parcel_polygon: Dict[str, Any]
     buildable_envelope_2d: Dict[str, Any]
@@ -39,6 +51,8 @@ class SiteContext(BaseModel):
     })
     hazard_detail: Optional[Dict[str, Any]] = None
     terrain: Optional[Dict[str, Any]] = None
+    municipality: Optional[str] = None
+    weather: Optional[WeatherData] = None
 
 # ── Project Spec ───────────────────────────────────────────────────────────
 
@@ -64,9 +78,9 @@ class ProjectSpec(BaseModel):
     site: SiteInput
 
     # Building type
-    building_use: BuildingUse = BuildingUse.multi_family
-    # Residential: number of bedrooms (0=studio for ADU, 1–5 for SFR/MF).
-    bedrooms: Optional[int] = Field(default=None, ge=0, le=5)
+    building_use: BuildingUse = BuildingUse.single_family
+    # Residential: number of bedrooms (0=studio for ADU, 1–7 for SFR/MF).
+    bedrooms: Optional[int] = Field(default=None, ge=0, le=7)
     # Bathrooms: whole number = full bath (toilet+sink+shower/tub), .5 = half bath (toilet+sink only).
     # e.g. 2.5 means two full baths + one half bath.
     bathrooms: Optional[float] = Field(default=None, ge=0.5)

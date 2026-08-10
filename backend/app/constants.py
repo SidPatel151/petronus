@@ -38,9 +38,11 @@ class PriorityType(str, Enum):
 # ── Design style ─────────────────────────────────────────────────────────────
 
 class DesignStyle(str, Enum):
-    classic_gabled = "classic_gabled"   # pitched roofs, traditional forms
-    modern_linear  = "modern_linear"    # flat/low-slope, clean horizontal lines
-    solid_sculpted = "solid_sculpted"   # monolithic, textured mass
+    classic_gabled   = "classic_gabled"    # pitched roofs, traditional forms
+    modern_linear    = "modern_linear"     # flat/low-slope, clean horizontal lines
+    solid_sculpted   = "solid_sculpted"    # monolithic, textured mass
+    sculpted_stepped = "sculpted_stepped"  # hillside stepped levels
+    hillside         = "hillside"          # alias for hillside stepped
 
 
 # ── Parking ─────────────────────────────────────────────────────────────────
@@ -109,6 +111,8 @@ SFR_SQFT_RANGES: dict[int, tuple[int, int]] = {
     3: (1200, 1900),
     4: (1800, 2800),
     5: (2500, 4200),
+    6: (3500, 5500),
+    7: (4500, 5500),  # capped at platform max
 }
 
 # Conservative statewide detached-ADU default. A local ordinance may adopt a
@@ -135,7 +139,7 @@ CALIFORNIA_CODE_REFERENCES: list[str] = [
 
 def sfr_target_sqft(bedrooms: int, priority: str) -> int:
     """Return target sqft for SFR/ADU based on bedroom count and priority."""
-    lo, hi = SFR_SQFT_RANGES.get(max(1, min(5, bedrooms)), (1200, 1900))
+    lo, hi = SFR_SQFT_RANGES.get(max(1, min(7, bedrooms)), (1200, 1900))
     t = PRIORITY_SQFT_POSITION.get(priority, 0.5)
     return round(lo + (hi - lo) * t)
 

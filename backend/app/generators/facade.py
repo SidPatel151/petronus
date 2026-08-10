@@ -12,11 +12,80 @@ FAKE DATA NOTE:
 """
 import math
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.models.schemas import Wall, Level
 from app.constants import FACADE_COLORS as MATERIAL_FACADE_COLORS
 
 WINDOW_COLOR = "#7dd3fc"
+
+# ── Room-to-window specs — what window goes behind each room type ────────────
+_ROOM_WIN = {
+    "bedroom":     {"w": 1.05, "h": 1.30, "sill_frac": 0.28, "style": "double_hung"},
+    "bathroom":    {"w": 0.55, "h": 0.50, "sill_frac": 0.52, "style": "casement"},
+    "half_bath":   {"w": 0.45, "h": 0.45, "sill_frac": 0.55, "style": "casement"},
+    "kitchen":     {"w": 0.90, "h": 0.75, "sill_frac": 0.40, "style": "casement"},
+    "living":      {"w": 1.60, "h": 1.40, "sill_frac": 0.18, "style": "picture"},
+    "family_room": {"w": 1.60, "h": 1.40, "sill_frac": 0.18, "style": "picture"},
+    "dining":      {"w": 1.00, "h": 1.20, "sill_frac": 0.25, "style": "double_hung"},
+    "office":      {"w": 1.00, "h": 1.30, "sill_frac": 0.28, "style": "double_hung"},
+    "library":     {"w": 1.10, "h": 1.40, "sill_frac": 0.22, "style": "picture"},
+    "bonus_room":  {"w": 1.10, "h": 1.20, "sill_frac": 0.28, "style": "double_hung"},
+    "loft":        {"w": 1.10, "h": 1.20, "sill_frac": 0.28, "style": "double_hung"},
+    "utility":     {"w": 0.45, "h": 0.40, "sill_frac": 0.55, "style": "casement"},
+    "laundry":     {"w": 0.45, "h": 0.40, "sill_frac": 0.55, "style": "casement"},
+    "media_room":  {"w": 0.60, "h": 0.60, "sill_frac": 0.38, "style": "casement"},
+}
+_NO_WIN_TYPES = {"garage", "stair", "mechanical", "corridor", "hallway", "foyer",
+                 "entry", "mudroom", "attic", "roof", "walk_in_closet",
+                 "porch", "balcony", "deck", "covered_porch"}
+_PATIO_TYPES  = {"living", "dining", "family_room"}
+
+# Per-arch-style multipliers for (w_scale, h_scale, sill_frac_offset).
+# Keys must match the arch_style values that actually flow through the system
+# (from apply_archetype_to_design_brief / AI brief), NOT archetype JSON IDs.
+#
+# Actual values in use:
+#   classic_gabled    → victorian_narrow_lot, production_tract (tall traditional)
+#   contemporary_box  → adu_compact, urban_infill_zero_lot, prefab_modern (large glazing)
+#   modern_linear     → mid_century_modern, high_density_townhome, high_end_custom (wide horizontal)
+#   sculpted_stepped  → hillside_stepped (panoramic view windows)
+#
+# AI can also produce any of the secondary styles below when there's no archetype override.
+_ARCH_WIN_SCALE: Dict[str, Tuple[float, float, float]] = {
+    # ── Primary styles set by archetype system ──────────────────────────────
+    "classic_gabled":       (0.78, 1.22, -0.02),  # Victorian/tract: taller than wide
+    "contemporary_box":     (1.40, 1.45, -0.06),  # ADU/urban infill: near floor-to-ceiling
+    "modern_linear":        (1.25, 1.05,  0.00),  # MCM/townhome: wide, generous height
+    "sculpted_stepped":     (1.35, 1.38, -0.05),  # Hillside: panoramic picture windows for views
+    # ── Secondary styles (AI-generated when no archetype override) ──────────
+    "victorian":            (0.68, 1.40, -0.04),  # Narrow double-hung
+    "victorian_edwardian_narrow": (0.65, 1.42, -0.04),
+    "tudor":                (0.72, 1.28, -0.03),
+    "craftsman":            (0.85, 1.12, -0.01),
+    "colonial":             (0.80, 1.15, -0.02),
+    "farmhouse":            (0.92, 1.02,  0.00),
+    "ranch":                (1.28, 0.68,  0.09),  # Wide & low banded windows
+    "minimalist":           (1.38, 1.42, -0.07),  # Floor-to-ceiling
+    "contemporary_luxury":  (1.50, 1.50, -0.08),  # High-end custom: floor-to-ceiling glass walls
+    "suburban_traditional": (0.85, 1.10,  0.00),  # Tract builder standard
+    "contemporary_stepped": (1.30, 1.35, -0.05),  # Same as sculpted_stepped
+}
+
+
+def _pip(px: float, pz: float, poly: list) -> bool:
+    """Ray-cast point-in-polygon test (2D in XZ plane)."""
+    inside = False
+    n = len(poly)
+    j = n - 1
+    for i in range(n):
+        xi, zi = poly[i][0], poly[i][1]
+        xj, zj = poly[j][0], poly[j][1]
+        if (zi > pz) != (zj > pz):
+            denom = zj - zi
+            if abs(denom) > 1e-12 and px < (xj - xi) * (pz - zi) / denom + xi:
+                inside = not inside
+        j = i
+    return inside
 
 
 def extract_neighbor_style(buildings: List[Dict]) -> Dict[str, Any]:
@@ -103,72 +172,56 @@ class FacadeGenerator:
         levels: List[Level],
         neighbor_style: Optional[Dict] = None,
         design_brief: Optional[Dict] = None,
+        rooms: Optional[List] = None,
+        semantic_model: Optional[Dict] = None,
     ) -> List[Dict]:
         style = neighbor_style or {}
         brief = design_brief or {}
-        floor_h = 3.0
+        # Use actual floor height from levels so roof_y matches wall tops exactly.
+        floor_h = (levels[0].height_ft * 0.3048) if levels and getattr(levels[0], 'height_ft', None) else 3.0
         stories = len(levels)
-        facade_color = style.get("facade_color", "#d6cbb8")
+
+        # ── Material → color: brief drives the building, neighbors are context ──
+        _MAT_COLORS = {
+            "stucco":        "#d4c5a9",
+            "wood":          "#8b6914",
+            "cedar":         "#9b6a2f",
+            "redwood":       "#8b4513",
+            "brick":         "#a0522d",
+            "concrete":      "#9a9a9a",
+            "metal":         "#708090",
+            "steel":         "#607080",
+            "fiber_cement":  "#c0b8aa",
+            "stone":         "#7a6a5a",
+            "glass":         "#aec8d8",
+            "vinyl":         "#cfc9be",
+        }
+        brief_mat = (brief.get("facade_material") or "").lower()
+        neighbor_color = style.get("facade_color", "#d6cbb8")
+        facade_color = _MAT_COLORS.get(brief_mat, neighbor_color)
+
         win_color = style.get("window_color", WINDOW_COLOR)
         band_color = self._darken(facade_color, 0.75)
         balcony_color = self._darken(facade_color, 0.65)
 
-        # ── Resolve arch style — drives geometry decisions ──────────────────
-        arch_style = style.get("dominant_arch_style", "modern")
+        # ── Arch style: brief takes priority over neighbor context ──────────
+        arch_style = brief.get("arch_style") or style.get("dominant_arch_style", "modern")
 
-        # Brief overrides drive visual character to match neighbors
+        # ── All render parameters from Claude's brief — no lookup tables ───────
         window_ratio  = min(float(brief.get("window_ratio") or style.get("window_ratio", 0.35)), 0.55)
-        bal_every_n   = int(brief.get("balcony_every_n_floors") or style.get("balcony_every_n_floors") or 1)
+        bal_every_n   = int(brief.get("balcony_every_n_floors") or 1)
+        bal_every_n   = max(1, min(bal_every_n, max(1, stories - 1)))
         add_bands     = bool(brief.get("horizontal_bands", style.get("horizontal_bands", True)))
         has_balconies = bool(style.get("has_balconies", False))
 
-        # ── Arch style overrides ─────────────────────────────────────────────
-        face_offset   = 0.09
-        balcony_depth = 0.0
-        if arch_style in ("craftsman", "victorian", "tudor"):
-            face_offset = 0.15
-            band_h_frac = 0.30
-            add_bands   = True
-        elif arch_style == 'modern_linear':
-            # Townhome / urban infill: strong floor bands, large windows, optional balconies
-            face_offset   = 0.10
-            band_h_frac   = 0.16
-            add_bands     = True
-            window_ratio  = min(max(window_ratio, 0.42), 0.52)
-            if has_balconies:
-                balcony_depth = 0.75   # 75 cm Juliet/shallow balcony
-        elif arch_style in ("modern", "minimalist", "contemporary", "contemporary_box"):
-            # ADU / prefab: clean flat facade, strip windows
-            add_bands    = False
-            window_ratio = min(max(window_ratio, 0.40), 0.52)
-            band_h_frac  = 0.0
-            if has_balconies:
-                balcony_depth = 0.65   # shallow deck for 2-story ADU/prefab
-        elif arch_style in ("colonial", "spanish", "mediterranean"):
-            face_offset = 0.12
-            band_h_frac = 0.22
-            add_bands   = True
-        elif arch_style in ('classic_gabled', 'suburban_traditional'):
-            add_bands   = False
-            band_h_frac = 0.0
-            face_offset = 0.08
-        else:
-            band_h_frac = 0.18
-
-        # ── Window style from neighbors ─────────────────────────────────────
-        window_style = style.get("window_style", "standard")
-        if window_style == "tall_narrow":
-            win_h_frac = 0.65
-            win_w_cap  = 0.85
-        elif window_style in ("wide", "large_horizontal"):
-            win_h_frac = 0.38
-            win_w_cap  = 2.4
-        elif window_style == 'double_hung':
-            win_h_frac = 0.52
-            win_w_cap  = 1.4
-        else:  # standard
-            win_h_frac = 0.50
-            win_w_cap  = 1.8
+        band_h_frac   = float(brief.get("band_h_frac", 0.15))
+        face_offset   = float(brief.get("face_offset", 0.09))
+        win_h_frac    = float(brief.get("win_h_frac", 0.50))
+        win_w_cap     = float(brief.get("win_w_cap_m", 1.8))
+        balcony_depth = float(brief.get("balcony_depth_m") or 0.0)
+        trim_color    = brief.get("trim_color") or "#4a4a4a"
+        if balcony_depth == 0.0 and has_balconies:
+            balcony_depth = 0.65  # neighbour fallback only if Claude left it at 0
 
         meshes: List[Dict] = []
         ext_walls = [w for w in walls if w.is_exterior and w.level == 0]
@@ -211,23 +264,59 @@ class FacadeGenerator:
                 poly_pts = []
                 poly_cx = poly_cz = 0.0
 
+        # ── Semantic model openings — Claude's exact window positions ────────
+        # Keys: "f{level}_front" → list of opening dicts
+        _sem_opens: Dict[str, List] = {}
+        _sem_w = 0.0
+        if semantic_model:
+            _sem_w = float((semantic_model.get("footprint") or {}).get("width_m", 0))
+            for op in (semantic_model.get("openings") or []):
+                wid = op.get("wall_id", "")
+                if wid:
+                    _sem_opens.setdefault(wid, []).append(op)
+
+        # Back-face Z for patio door detection
+        _back_face_z = (max((w.start[1] + w.end[1]) / 2 for w in ext_walls)
+                        if ext_walls else 0.0)
+
+        # Pre-compute each front wall segment's cumulative start offset so
+        # semantic window positions (offset_m along full facade) are mapped
+        # correctly even when the front face has multiple segments.
+        _front_face_z_tmp = min((w.start[1] + w.end[1]) / 2 for w in ext_walls) if ext_walls else 0.0
+        _front_segs = sorted(
+            [w for w in ext_walls if (w.start[1] + w.end[1]) / 2 <= _front_face_z_tmp + 0.5],
+            key=lambda w: min(w.start[0], w.end[0]),
+        )
+        _front_seg_offset: Dict[int, float] = {}
+        _cum = 0.0
+        for _fw in _front_segs:
+            _front_seg_offset[id(_fw)] = _cum
+            _fdx, _fdz = _fw.end[0] - _fw.start[0], _fw.end[1] - _fw.start[1]
+            _cum += math.sqrt(_fdx * _fdx + _fdz * _fdz)
+
         # ── Entry door rules ─────────────────────────────────────────────────
         # Front face = wall(s) with minimum average Z (street-facing in local coords).
         is_gabled_style = ('classic' in arch_style or 'gabled' in arch_style
-                           or 'victorian' in arch_style
-                           or arch_style in ('craftsman', 'tudor'))
+                           or 'victorian' in arch_style or 'suburban' in arch_style
+                           or arch_style in ('craftsman', 'tudor', 'farmhouse', 'colonial'))
         is_victorian = arch_style in ('classic_gabled', 'craftsman', 'tudor', 'victorian')
         is_modern    = arch_style in ('modern_linear', 'contemporary_box', 'minimalist')
         front_face_z = (min((w.start[1] + w.end[1]) / 2 for w in ext_walls)
                         if ext_walls else 0.0)
-        if is_gabled_style and stories >= 1:
-            _porch_h = min(1.52, stories * floor_h * 0.35)
-            _step_rise = 0.19
-            _n_steps = max(2, round(_porch_h / _step_rise))
-            entry_sill_y = _n_steps * _step_rise
-        else:
-            entry_sill_y = 0.0
+        # Entry sill: 2 steps (0.18m each = 0.36m) — realistic residential threshold.
+        # Do NOT scale with floor_h; that produced 1.5m+ elevated entries which created
+        # a gaping hole at the door because the interior floor slab stays at y=0.
+        entry_sill_y = 0.36 if is_gabled_style else 0.0
         door_placed = False
+        # Door world position + wall vectors — captured when door is placed so the
+        # porch code can center on the door rather than the wall midpoint.
+        _door_cx: float | None = None
+        _door_cz: float | None = None
+        _door_ux: float = 1.0
+        _door_uz: float = 0.0
+        _door_nx: float = 0.0
+        _door_nz: float = -1.0
+        _door_flen: float = 0.0
 
         # Track which front walls get bay windows so we don't double-window them
         bay_wall_ids: set = set()
@@ -248,7 +337,8 @@ class FacadeGenerator:
 
             _wall_mid_z = (s[1] + e[1]) / 2
             _is_front   = _wall_mid_z <= front_face_z + 0.5
-            _is_side    = not _is_front and abs(mid_z - front_face_z) < wall_len * 1.5
+            _is_back    = not _is_front and _wall_mid_z >= _back_face_z - 0.5
+            _is_side    = not _is_front and not _is_back
 
             for lvl in range(stories):
                 base_y = lvl * floor_h
@@ -333,22 +423,40 @@ class FacadeGenerator:
                     )
                     continue
 
-                # ── Standard windows ─────────────────────────────────────
-                win_spacing = max(1.4, 2.8 * (1.0 - window_ratio))
-                num_windows = max(1, int(wall_len / win_spacing))
-                is_sfr_style = 'classic' in arch_style or 'gabled' in arch_style
-                # Front gets up to 3, sides get 1-2, rear matches front
-                if _is_side:
-                    num_windows = min(num_windows, 1 if is_sfr_style else 2)
+                # ── Window placement: semantic → room-aware → math fallback ──
+                _sem_key = f"f{lvl}_front"
+                _use_sem = _is_front and bool(_sem_opens.get(_sem_key)) and _sem_w > 0
+
+                if _use_sem:
+                    _seg_start = _front_seg_offset.get(id(wall), 0.0)
+                    self._place_semantic_windows(
+                        meshes, s, e, dx, dz, ux, uz, nx, nz,
+                        wall_len, base_y, floor_h, face_offset,
+                        win_color, trim_color, arch_style, lvl,
+                        _sem_opens[_sem_key], _sem_w, _seg_start,
+                    )
+                elif not _is_front:
+                    # Room-aware for side and back walls
+                    adj = self._find_adj_room(wall, rooms or [], lvl, -nx, -nz)
+                    self._place_side_windows(
+                        meshes, s, e, dx, dz, ux, uz, nx, nz,
+                        wall_len, base_y, floor_h, face_offset,
+                        win_color, trim_color, arch_style, lvl, adj,
+                        is_back=_is_back,
+                    )
                 else:
-                    num_windows = min(num_windows, 2 if is_sfr_style else 3)
-                raw_win_w   = wall_len / num_windows * window_ratio * 2.0
-                win_w       = max(0.55, min(raw_win_w, win_w_cap))
-                win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)
-                win_sill    = base_y + floor_h * (0.28 - window_ratio * 0.05)
-                _win_top_max = base_y + floor_h - 0.25
-                if win_sill + win_h > _win_top_max:
-                    win_h = max(0.3, _win_top_max - win_sill)
+                    # Original math-based front windows (unchanged fallback)
+                    win_spacing = max(1.4, 2.8 * (1.0 - window_ratio))
+                    num_windows = max(1, int(wall_len / win_spacing))
+                    is_sfr_style = 'classic' in arch_style or 'gabled' in arch_style
+                    num_windows = min(num_windows, 4 if is_sfr_style else 5)
+                    raw_win_w   = wall_len / num_windows * window_ratio * 2.0
+                    win_w       = max(0.55, min(raw_win_w, win_w_cap))
+                    win_h       = floor_h * win_h_frac * (0.8 + window_ratio * 0.4)
+                    win_sill    = base_y + floor_h * (0.28 - window_ratio * 0.05)
+                    _win_top_max = base_y + floor_h - 0.25
+                    if win_sill + win_h > _win_top_max:
+                        win_h = max(0.3, _win_top_max - win_sill)
 
                 for i in range(num_windows):
                     t = (i + 0.5) / num_windows
@@ -399,6 +507,10 @@ class FacadeGenerator:
                     t_door = 0.5
                     dcx = s[0] + t_door * dx
                     dcz = s[1] + t_door * dz
+                    _door_cx, _door_cz = dcx, dcz
+                    _door_ux, _door_uz = ux, uz
+                    _door_nx, _door_nz = nx, nz
+                    _door_flen = wall_len
                     hdw = door_w / 2
                     door_sill = entry_sill_y
                     door_fo = face_offset + 0.01
@@ -547,6 +659,188 @@ class FacadeGenerator:
                             ],
                             "faces": [[0,1,2],[0,2,3],[5,4,7],[5,7,6],[3,2,6],[3,6,7],[0,3,7],[0,7,4],[1,5,6],[1,6,2]],
                         })
+
+        # ── Pitched roof — facade is the single source of truth for all roof shapes.
+        # Massing._extrude_footprint skips gabled geometry (wrong normals); facade owns it.
+        roof_type = (brief.get("roof_type") or "").lower()
+        if roof_type in ("gabled", "hipped", "hip", "shed"):
+            self._add_pitched_roof(
+                meshes, massing_option, stories, floor_h, facade_color, roof_type
+            )
+
+        # ── Traditional covered porch (non-modern styles) ────────────────────
+        porch_depth = float(brief.get("porch_depth_m") or 0.0)
+        if porch_depth > 0.1 and not is_modern and _door_cx is not None:
+            # Use the door wall vectors so the porch is perfectly aligned.
+            fux, fuz = _door_ux, _door_uz
+            fnx, fnz = _door_nx, _door_nz
+            flen = _door_flen
+
+            # Per-style width range (min_frac, max_frac) — pick a value seeded by
+            # the footprint size so the same building always looks the same but
+            # different buildings of the same style vary naturally.
+            _PORCH_WIDTH_RANGE = {
+                "craftsman":        (0.62, 0.82),  # signature wide wraparound porch
+                "victorian":        (0.55, 0.72),  # ornate front facade, varies per lot
+                "classic_gabled":   (0.50, 0.68),  # production/tract — some wider, some not
+                "farmhouse":        (0.60, 0.80),  # full-width barn porch vibe
+                "colonial":         (0.42, 0.58),  # centered portico, symmetrical
+                "tudor":            (0.30, 0.45),  # modest covered entry arch
+                "suburban":         (0.22, 0.35),  # small stoop
+                "contemporary_box": (0.20, 0.30),  # minimal covered entry
+                "ranch":            (0.22, 0.32),  # low spread-out stoop
+            }
+            _lo, _hi = _PORCH_WIDTH_RANGE.get(arch_style, (0.28, 0.42))
+            # Deterministic variation: hash footprint dimensions so same house = same porch
+            _seed = abs(hash((round(flen, 1), round(porch_depth, 1)))) % 1000 / 1000.0
+            _pw_frac = _lo + _seed * (_hi - _lo)
+
+            pw = min(flen * _pw_frac, flen - 0.5)   # at least 25cm wall visible on each side
+            pw = max(pw, min(2.2, flen * 0.25))      # never narrower than door + clearance
+
+            phw = pw / 2
+            # Center on the door, not the wall midpoint
+            pcx = _door_cx
+            pcz = _door_cz
+            proj = face_offset + porch_depth
+            deck_t = 0.22
+            deck_col = self._darken(facade_color, 0.80)
+            # Deck slab
+            meshes.append({
+                "element_id": f"porch_deck_{uuid.uuid4().hex[:5]}",
+                "element_type": "porch",
+                "level": 0, "color": deck_col,
+                "vertices": [
+                    [pcx-fux*phw + fnx*face_offset, entry_sill_y,        pcz-fuz*phw + fnz*face_offset],
+                    [pcx+fux*phw + fnx*face_offset, entry_sill_y,        pcz+fuz*phw + fnz*face_offset],
+                    [pcx+fux*phw + fnx*proj,        entry_sill_y,        pcz+fuz*phw + fnz*proj],
+                    [pcx-fux*phw + fnx*proj,        entry_sill_y,        pcz-fuz*phw + fnz*proj],
+                    [pcx-fux*phw + fnx*face_offset, entry_sill_y-deck_t, pcz-fuz*phw + fnz*face_offset],
+                    [pcx+fux*phw + fnx*face_offset, entry_sill_y-deck_t, pcz+fuz*phw + fnz*face_offset],
+                    [pcx+fux*phw + fnx*proj,        entry_sill_y-deck_t, pcz+fuz*phw + fnz*proj],
+                    [pcx-fux*phw + fnx*proj,        entry_sill_y-deck_t, pcz-fuz*phw + fnz*proj],
+                ],
+                "faces": [[0,1,2],[0,2,3],[7,6,5],[7,5,4],[0,4,5],[0,5,1],[1,5,6],[1,6,2],[2,6,7],[2,7,3],[3,7,4],[3,4,0]],
+            })
+            # Porch columns (2 front corners)
+            col_h = floor_h * 0.92
+            col_r = 0.12
+            col_col = trim_color
+            for sign in (-1, 1):
+                cxp = pcx + fux*phw*0.82*sign + fnx*proj
+                czp = pcz + fuz*phw*0.82*sign + fnz*proj
+                meshes.append({
+                    "element_id": f"porch_col_{uuid.uuid4().hex[:4]}",
+                    "element_type": "porch",
+                    "level": 0, "color": col_col,
+                    "vertices": [
+                        [cxp-col_r, entry_sill_y,       czp-col_r],
+                        [cxp+col_r, entry_sill_y,       czp-col_r],
+                        [cxp+col_r, entry_sill_y,       czp+col_r],
+                        [cxp-col_r, entry_sill_y,       czp+col_r],
+                        [cxp-col_r, entry_sill_y+col_h, czp-col_r],
+                        [cxp+col_r, entry_sill_y+col_h, czp-col_r],
+                        [cxp+col_r, entry_sill_y+col_h, czp+col_r],
+                        [cxp-col_r, entry_sill_y+col_h, czp+col_r],
+                    ],
+                    "faces": [[0,1,2],[0,2,3],[4,7,6],[4,6,5],[0,4,5],[0,5,1],[1,5,6],[1,6,2],[2,6,7],[2,7,3],[3,7,4],[3,4,0]],
+                })
+            # Porch roof overhang
+            rov_t = 0.10
+            rov_y = entry_sill_y + col_h
+            meshes.append({
+                "element_id": f"porch_roof_{uuid.uuid4().hex[:4]}",
+                "element_type": "porch",
+                "level": 0, "color": self._darken(facade_color, 0.70),
+                "vertices": [
+                    [pcx-fux*(phw+0.15) + fnx*face_offset, rov_y,       pcz-fuz*(phw+0.15) + fnz*face_offset],
+                    [pcx+fux*(phw+0.15) + fnx*face_offset, rov_y,       pcz+fuz*(phw+0.15) + fnz*face_offset],
+                    [pcx+fux*(phw+0.15) + fnx*(proj+0.15), rov_y,       pcz+fuz*(phw+0.15) + fnz*(proj+0.15)],
+                    [pcx-fux*(phw+0.15) + fnx*(proj+0.15), rov_y,       pcz-fuz*(phw+0.15) + fnz*(proj+0.15)],
+                    [pcx-fux*(phw+0.15) + fnx*face_offset, rov_y+rov_t, pcz-fuz*(phw+0.15) + fnz*face_offset],
+                    [pcx+fux*(phw+0.15) + fnx*face_offset, rov_y+rov_t, pcz+fuz*(phw+0.15) + fnz*face_offset],
+                    [pcx+fux*(phw+0.15) + fnx*(proj+0.15), rov_y+rov_t, pcz+fuz*(phw+0.15) + fnz*(proj+0.15)],
+                    [pcx-fux*(phw+0.15) + fnx*(proj+0.15), rov_y+rov_t, pcz-fuz*(phw+0.15) + fnz*(proj+0.15)],
+                ],
+                "faces": [[4,5,6],[4,6,7],[0,3,2],[0,2,1]],
+            })
+
+        # ── Garage doors — only when AI puts a garage room in the program ────
+        garage_rooms = [r for r in (rooms or []) if getattr(r, 'type', '') == 'garage' and getattr(r, 'level', 0) == 0]
+        if garage_rooms and ext_walls:
+            for gr in garage_rooms:
+                gp = gr.polygon or []
+                if len(gp) < 3:
+                    continue
+                gxs = [p[0] for p in gp]
+                gzs = [p[1] for p in gp]
+                gcx = sum(gxs) / len(gxs)
+                gcz = sum(gzs) / len(gzs)
+                gw  = max(gxs) - min(gxs)
+                # Find the best exterior wall for the garage door.
+                # Preference order: (1) front face (street) walls within reach of garage,
+                # (2) side walls near garage, (3) absolutely nearest wall.
+                # This prevents garage doors from appearing on the back or facing the porch.
+                front_walls_near = [
+                    ew for ew in ext_walls
+                    if (ew.start[1]+ew.end[1])/2 <= front_face_z + 0.5
+                    and math.sqrt(((ew.start[0]+ew.end[0])/2-gcx)**2+((ew.start[1]+ew.end[1])/2-gcz)**2) < 10.0
+                ]
+                candidate_walls = front_walls_near if front_walls_near else ext_walls
+                best_wall, best_d = None, 999.0
+                for ew in candidate_walls:
+                    emx = (ew.start[0]+ew.end[0])/2
+                    emz = (ew.start[1]+ew.end[1])/2
+                    d   = math.sqrt((emx-gcx)**2+(emz-gcz)**2)
+                    if d < best_d:
+                        best_d, best_wall = d, ew
+                if best_wall is None or best_d > 12.0:
+                    continue
+                es, ee = best_wall.start, best_wall.end
+                edx, edz = ee[0]-es[0], ee[1]-es[1]
+                elen = max(0.01, math.sqrt(edx*edx+edz*edz))
+                eux, euz = edx/elen, edz/elen
+                enx, enz = euz, -eux
+                if enx*((es[0]+ee[0])/2-poly_cx)+enz*((es[1]+ee[1])/2-poly_cz) < 0:
+                    enx, enz = -enx, -enz
+                # Garage door: 2.7m wide (single bay), 2.35m tall, centered on wall
+                gd_w = min(gw * 0.85, 5.5)   # up to double-wide
+                gd_h = 2.35
+                gd_fo = face_offset + 0.02
+                ghw   = gd_w / 2
+                # Panel sections (4 horizontal panels)
+                n_panels = 4
+                ph = gd_h / n_panels
+                panel_col = self._darken(facade_color, 0.65)
+                for pi in range(n_panels):
+                    py0 = pi * ph
+                    py1 = py0 + ph - 0.04
+                    meshes.append({
+                        "element_id": f"gdoor_p{pi}_{uuid.uuid4().hex[:4]}",
+                        "element_type": "garage_door",
+                        "level": 0, "color": panel_col,
+                        "vertices": [
+                            [gcx-eux*ghw + enx*gd_fo, py0, gcz-euz*ghw + enz*gd_fo],
+                            [gcx+eux*ghw + enx*gd_fo, py0, gcz+euz*ghw + enz*gd_fo],
+                            [gcx+eux*ghw + enx*gd_fo, py1, gcz+euz*ghw + enz*gd_fo],
+                            [gcx-eux*ghw + enx*gd_fo, py1, gcz-euz*ghw + enz*gd_fo],
+                        ],
+                        "faces": [[0,1,2],[0,2,3],[2,1,0],[3,2,0]],
+                    })
+                # Garage door frame
+                ft = 0.06
+                meshes.append({
+                    "element_id": f"gdoor_frame_{uuid.uuid4().hex[:4]}",
+                    "element_type": "door_frame",
+                    "level": 0, "color": trim_color,
+                    "vertices": [
+                        [gcx-eux*(ghw+ft) + enx*gd_fo, 0,        gcz-euz*(ghw+ft) + enz*gd_fo],
+                        [gcx+eux*(ghw+ft) + enx*gd_fo, 0,        gcz+euz*(ghw+ft) + enz*gd_fo],
+                        [gcx+eux*(ghw+ft) + enx*gd_fo, gd_h+ft,  gcz+euz*(ghw+ft) + enz*gd_fo],
+                        [gcx-eux*(ghw+ft) + enx*gd_fo, gd_h+ft,  gcz-euz*(ghw+ft) + enz*gd_fo],
+                    ],
+                    "faces": [[0,1,2],[0,2,3]],
+                })
 
         return meshes
 
@@ -837,10 +1131,11 @@ class FacadeGenerator:
         pts = [[footprint[i][0], footprint[i][1]] for i in range(n)]
 
         # Bounding box → determine long axis for ridge
+        EAVE = 0.3  # overhang so roof edge sits outside wall face, not recessed
         xs = [p[0] for p in pts]
         zs = [p[1] for p in pts]
-        min_x, max_x = min(xs), max(xs)
-        min_z, max_z = min(zs), max(zs)
+        min_x, max_x = min(xs) - EAVE, max(xs) + EAVE
+        min_z, max_z = min(zs) - EAVE, max(zs) + EAVE
         w = max_x - min_x
         d = max_z - min_z
         cx = (min_x + max_x) / 2
@@ -1054,6 +1349,235 @@ class FacadeGenerator:
             return f"#{r:02x}{g:02x}{b:02x}"
         except Exception:
             return hex_color
+
+    # ── Room-aware helpers ────────────────────────────────────────────────────
+
+    def _find_adj_room(self, wall, rooms: list, lvl: int, inward_nx: float, inward_nz: float):
+        """Find the room adjacent to an exterior wall by probing inward."""
+        s, e = wall.start, wall.end
+        dx, dz = e[0] - s[0], e[1] - s[1]
+        wl = math.sqrt(dx * dx + dz * dz)
+        if wl < 0.1 or not rooms:
+            return None
+        lvl_rooms = sorted(
+            [r for r in rooms if r.level == lvl and r.polygon and len(r.polygon) >= 3],
+            key=lambda r: r.area_sqft,
+        )
+        for t_frac in (0.25, 0.5, 0.75):
+            px = s[0] + t_frac * dx + inward_nx * 1.2
+            pz = s[1] + t_frac * dz + inward_nz * 1.2
+            for room in lvl_rooms:
+                if _pip(px, pz, room.polygon):
+                    return room
+        return None
+
+    def _add_styled_window(
+        self, meshes, wcx, wcz, win_sill, win_h, win_w,
+        ux, uz, nx, nz, fo, win_color, trim_color, style, lvl,
+    ):
+        """Place a window with style-specific detail (mullion, divider, etc.)."""
+        hw = win_w / 2
+        ft = 0.055
+
+        meshes.append({
+            "element_id": f"win_{uuid.uuid4().hex[:6]}",
+            "element_type": "window",
+            "vertices": [
+                [wcx - ux*hw + nx*fo, win_sill,          wcz - uz*hw + nz*fo],
+                [wcx + ux*hw + nx*fo, win_sill,          wcz + uz*hw + nz*fo],
+                [wcx + ux*hw + nx*fo, win_sill + win_h,  wcz + uz*hw + nz*fo],
+                [wcx - ux*hw + nx*fo, win_sill + win_h,  wcz - uz*hw + nz*fo],
+            ],
+            "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+            "level": 0,
+            "color": win_color,
+        })
+        for fv, ff in self._frame_quads(wcx, wcz, win_sill, win_h, win_w, ux, uz, nx, nz, fo, ft):
+            meshes.append({
+                "element_id": f"frm_{uuid.uuid4().hex[:6]}",
+                "element_type": "window_frame",
+                "vertices": fv, "faces": ff,
+                "level": 0, "color": trim_color,
+            })
+
+        # Style-specific interior detail
+        if style == "double_hung":
+            mid_y = win_sill + win_h * 0.55
+            bar_t = 0.038
+            meshes.append({
+                "element_id": f"mullion_{uuid.uuid4().hex[:5]}",
+                "element_type": "window_frame",
+                "vertices": [
+                    [wcx - ux*hw + nx*fo, mid_y,         wcz - uz*hw + nz*fo],
+                    [wcx + ux*hw + nx*fo, mid_y,         wcz + uz*hw + nz*fo],
+                    [wcx + ux*hw + nx*fo, mid_y + bar_t, wcz + uz*hw + nz*fo],
+                    [wcx - ux*hw + nx*fo, mid_y + bar_t, wcz - uz*hw + nz*fo],
+                ],
+                "faces": [[0, 1, 2], [0, 2, 3]],
+                "level": 0, "color": trim_color,
+            })
+
+        elif style == "casement" and win_w > 0.7:
+            # Thin vertical divider (paired casement)
+            dv_t = 0.038
+            meshes.append({
+                "element_id": f"div_{uuid.uuid4().hex[:5]}",
+                "element_type": "window_frame",
+                "vertices": [
+                    [wcx - ux*dv_t + nx*fo, win_sill,          wcz - uz*dv_t + nz*fo],
+                    [wcx + ux*dv_t + nx*fo, win_sill,          wcz + uz*dv_t + nz*fo],
+                    [wcx + ux*dv_t + nx*fo, win_sill + win_h,  wcz + uz*dv_t + nz*fo],
+                    [wcx - ux*dv_t + nx*fo, win_sill + win_h,  wcz - uz*dv_t + nz*fo],
+                ],
+                "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+                "level": 0, "color": trim_color,
+            })
+
+    def _place_semantic_windows(
+        self, meshes, s, e, dx, dz, ux, uz, nx, nz,
+        wall_len, base_y, floor_h, fo, win_color, trim_color,
+        arch_style, lvl, openings, sem_w, seg_start_m: float = 0.0,
+    ):
+        """Place windows at Claude's exact fractional positions with style detail."""
+        ws, hs, ss = _ARCH_WIN_SCALE.get(arch_style, (1.0, 1.0, 0.0))
+        for op in openings:
+            if op.get("type") not in ("window",):
+                continue
+            offset_m = float(op.get("offset_m", 0))
+            win_w    = float(op.get("width_m", 1.0)) * ws
+            win_h    = float(op.get("height_m", 1.3)) * hs
+            sill_abs = float(op.get("sill_m", 0.9))
+            style    = op.get("style", "double_hung")
+
+            # Window center in facade-space (measured along full front face)
+            win_center_facade = offset_m + win_w / 2
+
+            # Only place this window if its center falls within this segment
+            seg_end_m = seg_start_m + wall_len
+            if win_center_facade < seg_start_m - 0.1 or win_center_facade > seg_end_m + 0.1:
+                continue
+
+            if style == "bay_3panel":
+                self._add_bay_window(
+                    meshes, s, e, dx, dz, ux, uz, nx, nz,
+                    wall_len, base_y, floor_h, fo,
+                    win_color, self._darken(win_color, 0.5), lvl,
+                )
+                continue
+
+            if style == "strip_horizontal":
+                self._add_strip_window(
+                    meshes, s, e, dx, dz, ux, uz, nx, nz,
+                    wall_len, base_y, floor_h, fo, win_color, lvl,
+                )
+                continue
+
+            # Map window center from facade-space into this segment's [0,1] fraction
+            t_center = (win_center_facade - seg_start_m) / max(wall_len, 0.01)
+            t_center = min(max(t_center, 0.05), 0.95)
+            wcx = s[0] + t_center * dx
+            wcz = s[1] + t_center * dz
+            win_sill = base_y + sill_abs + (floor_h * ss)
+            _top_max = base_y + floor_h - 0.2
+            if win_sill + win_h > _top_max:
+                win_h = max(0.3, _top_max - win_sill)
+            if win_h < 0.3:
+                continue
+
+            self._add_styled_window(
+                meshes, wcx, wcz, win_sill, win_h,
+                min(win_w, wall_len * 0.7),
+                ux, uz, nx, nz, fo, win_color, trim_color, style, lvl,
+            )
+
+    def _place_side_windows(
+        self, meshes, s, e, dx, dz, ux, uz, nx, nz,
+        wall_len, base_y, floor_h, fo, win_color, trim_color,
+        arch_style, lvl, adj_room, is_back,
+    ):
+        """Room-aware windows for non-front walls."""
+        rtype = adj_room.type if adj_room else None
+
+        if rtype in _NO_WIN_TYPES:
+            return
+
+        # Back wall + living/dining/family → patio sliding glass door
+        if is_back and rtype in _PATIO_TYPES:
+            self._add_patio_door(
+                meshes, s, e, dx, dz, ux, uz, nx, nz,
+                wall_len, base_y, floor_h, fo, win_color, trim_color, lvl,
+            )
+            return
+
+        spec = _ROOM_WIN.get(rtype or "", {
+            "w": 0.9, "h": 1.2, "sill_frac": 0.28, "style": "double_hung",
+        })
+        ws, hs, ss = _ARCH_WIN_SCALE.get(arch_style, (1.0, 1.0, 0.0))
+        win_w    = min(spec["w"] * ws, wall_len * 0.40)
+        win_h    = spec["h"] * hs
+        win_sill = base_y + floor_h * max(0.08, spec["sill_frac"] + ss)
+        _top_max = base_y + floor_h - 0.2
+        if win_sill + win_h > _top_max:
+            win_h = max(0.3, _top_max - win_sill)
+        if win_h < 0.3 or win_w < 0.3:
+            return
+
+        # Place multiple windows on long side walls (one per ~2.8m of wall length)
+        n_wins = max(1, min(4, int(wall_len / 2.8)))
+        for i in range(n_wins):
+            t = (i + 0.5) / n_wins
+            wcx = s[0] + t * (e[0] - s[0])
+            wcz = s[1] + t * (e[1] - s[1])
+            self._add_styled_window(
+                meshes, wcx, wcz, win_sill, win_h, win_w,
+                ux, uz, nx, nz, fo, win_color, trim_color, spec["style"], lvl,
+            )
+
+    def _add_patio_door(
+        self, meshes, s, e, dx, dz, ux, uz, nx, nz,
+        wall_len, base_y, floor_h, fo, win_color, trim_color, lvl,
+    ):
+        """Sliding glass patio door — back wall, living/dining rooms."""
+        pd_w = min(2.0, wall_len * 0.55)
+        pd_h = floor_h * 0.82
+        hw   = pd_w / 2
+        ft   = 0.06
+        wcx  = (s[0] + e[0]) / 2
+        wcz  = (s[1] + e[1]) / 2
+
+        meshes.append({
+            "element_id": f"patio_{uuid.uuid4().hex[:5]}",
+            "element_type": "window",
+            "vertices": [
+                [wcx - ux*hw + nx*fo, base_y,          wcz - uz*hw + nz*fo],
+                [wcx + ux*hw + nx*fo, base_y,          wcz + uz*hw + nz*fo],
+                [wcx + ux*hw + nx*fo, base_y + pd_h,   wcz + uz*hw + nz*fo],
+                [wcx - ux*hw + nx*fo, base_y + pd_h,   wcz - uz*hw + nz*fo],
+            ],
+            "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+            "level": 0, "color": win_color,
+        })
+        for fv, ff in self._frame_quads(wcx, wcz, base_y, pd_h, pd_w, ux, uz, nx, nz, fo, ft):
+            meshes.append({
+                "element_id": f"patio_frm_{uuid.uuid4().hex[:5]}",
+                "element_type": "window_frame",
+                "vertices": fv, "faces": ff,
+                "level": 0, "color": trim_color,
+            })
+        # Center rail between two sliding panels
+        rail_t = 0.04
+        meshes.append({
+            "element_id": f"patio_rail_{uuid.uuid4().hex[:5]}",
+            "element_type": "window_frame",
+            "vertices": [
+                [wcx - ux*rail_t + nx*fo, base_y,        wcz - uz*rail_t + nz*fo],
+                [wcx + ux*rail_t + nx*fo, base_y,        wcz + uz*rail_t + nz*fo],
+                [wcx + ux*rail_t + nx*fo, base_y + pd_h, wcz + uz*rail_t + nz*fo],
+                [wcx - ux*rail_t + nx*fo, base_y + pd_h, wcz - uz*rail_t + nz*fo],
+            ],
+            "faces": [[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]],
+            "level": 0, "color": trim_color,
+        })
 
     def _frame_quads(self, wcx, wcz, sill, win_h, win_w, ux, uz, nx, nz, fo, ft):
         hw  = win_w / 2

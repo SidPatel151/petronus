@@ -1,12 +1,51 @@
 """
-AIBriefService
-Calls Claude to generate a unique architectural design brief from site + neighbor context.
+AIBriefService — Claude decides every facade render parameter.
+No lookup tables. The archetype tells Claude what direction to go;
+Claude reads the blueprints and returns concrete numbers the renderer uses directly.
 """
 import json
 import asyncio
-from typing import Dict, Any, List
+from pathlib import Path
+from typing import Dict, Any, Optional
 
-from app.constants import CALIFORNIA_CODE_REFERENCES
+_INDEX_PATH = Path(__file__).parent.parent / "data" / "blueprint_index.json"
+_INDEX_CACHE: Optional[list] = None
+
+
+def _load_index() -> list:
+    global _INDEX_CACHE
+    if _INDEX_CACHE is None:
+        _INDEX_CACHE = json.loads(_INDEX_PATH.read_text()) if _INDEX_PATH.exists() else []
+    return _INDEX_CACHE
+
+
+def _find_blueprints(archetype_id: str, bedrooms: int, sqft: float, n: int = 3) -> list:
+    idx = _load_index()
+    if not idx:
+        return []
+    def score(bp):
+        s = 0.0
+        if bp.get("archetype") == archetype_id: s += 4
+        if bp.get("image_type") == "floor_plan": s += 2
+        br = bp.get("bedrooms") or 0
+        if br == bedrooms: s += 2
+        elif abs(br - bedrooms) <= 1: s += 1
+        bsqft = bp.get("total_sqft") or 0
+        if bsqft and sqft:
+            s += min(bsqft, sqft) / max(bsqft, sqft) * 2
+        s += bp.get("confidence", 0)
+        return s
+    return sorted(idx, key=score, reverse=True)[:n]
+
+
+def _bp_summary(bp: dict) -> str:
+    sqft = bp.get("total_sqft", "?")
+    br = bp.get("bedrooms", "?")
+    style = bp.get("style", "")
+    mat = bp.get("facade_material", "")
+    rooms = bp.get("rooms", [])
+    room_str = ", ".join(r["type"] for r in rooms[:8]) if rooms else "unknown"
+    return f"  [{br}BR {sqft}sqft {style} {mat}] rooms: {room_str}"
 
 
 def _get_api_key() -> str:
@@ -22,12 +61,9 @@ async def get_design_brief(
     spec_dict: Dict[str, Any],
     site_ctx_dict: Dict[str, Any],
     neighbor_analysis: Dict[str, Any],
+    archetype_id: str = "",
+    archetype_display_name: str = "",
 ) -> Dict[str, Any]:
-    """
-    Call Claude claude-sonnet-4-6 with site + neighbor context.
-    Returns a structured design brief that drives massing + facade generation.
-    Falls back to defaults if API key missing or call fails.
-    """
     api_key = _get_api_key()
     if not api_key:
         return _default_brief(spec_dict, neighbor_analysis)
@@ -36,26 +72,34 @@ async def get_design_brief(
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
 
-        parcel_sqft = site_ctx_dict.get("area_sqft", 5000)
-        flood = site_ctx_dict.get("flood_zone", "X")
-        seismic = site_ctx_dict.get("seismic_category", "D")
-        terrain = site_ctx_dict.get("terrain", {})
-        slope = terrain.get("slope_pct", 0)
+        terrain      = site_ctx_dict.get("terrain", {}) or {}
+        slope        = terrain.get("slope_pct", 0)
+        avg_elev_m   = terrain.get("avg_elevation_m", 0)
+        municipality = site_ctx_dict.get("municipality", "") or terrain.get("municipality", "")
+        flood        = site_ctx_dict.get("flood_zone", "X")
+        seismic      = site_ctx_dict.get("seismic_category", "D")
+        parcel_sqft  = site_ctx_dict.get("area_sqft", 5000)
+        weather      = site_ctx_dict.get("weather") or {}
+        climate_zone = weather.get("climate_zone", "") if weather else ""
+        temp_f       = weather.get("temp_f") if weather else None
 
-        nav = neighbor_analysis
-        avg_h = nav.get("avg_height_m", 6)
-        avg_w = nav.get("avg_width_m", 12)
-        avg_d = nav.get("avg_depth_m", 14)
-        dominant_mat = nav.get("dominant_material", "stucco")
-        dominant_shape = nav.get("dominant_shape", "rectangle")
-        n_count = nav.get("count", 0)
-        avg_stories = nav.get("avg_stories", 2)
-        has_balconies = nav.get("has_balconies", False)
+        nav          = neighbor_analysis
+        n_count      = nav.get("count", 0)
+        avg_h        = nav.get("avg_height_m", 6)
+        avg_w        = nav.get("avg_width_m", 12)
+        avg_d        = nav.get("avg_depth_m", 14)
+        dom_mat      = nav.get("dominant_material", "stucco")
 
-        stories = spec_dict.get("stories", 2)
-        structural = spec_dict.get("structural_system", "wood")
+        stories  = spec_dict.get("stories", 2)
+        bedrooms = spec_dict.get("bedrooms", 3)
+        sqft     = spec_dict.get("sqft") or spec_dict.get("target_gross_area_sqft", 2000)
+        # Hard cap: platform never allows SFR above 5,500 sqft
+        sqft     = min(float(sqft), 5500.0)
+        style    = spec_dict.get("style", "")
         priority = spec_dict.get("priority", "cost")
-        units = spec_dict.get("unit_count") or "unspecified"
+        struct   = spec_dict.get("structural_system", "wood")
+        # Max footprint per floor so width_m × depth_m stays within the sqft cap
+        _max_fp_m2 = (sqft / max(stories, 1)) / 10.764
 
         code_reference_list = "\n".join(f"- {c}" for c in CALIFORNIA_CODE_REFERENCES)
         prompt = f"""You are a California residential conceptual-design assistant. Given this site and its neighbors, output a concise JSON massing brief for a new residential building. Do not claim that the result is engineered, code-verified, permit-ready, or approved.
@@ -70,44 +114,46 @@ STRUCTURAL & SEISMIC SCREENING INPUTS:
 - Do not invent member sizes, foundation capacity, or prescriptive seismic requirements
 
 SITE:
-- Parcel: {parcel_sqft:.0f} sqft
-- Flood zone: {flood}
-- Seismic: SDC {seismic}
-- Terrain slope: {slope:.1f}%
+- Location: {municipality or "unknown"} | {parcel_sqft:.0f} sqft lot
+- Elevation: {avg_elev_m:.0f}m | Slope: {slope:.1f}% | {terrain_desc}
+- Climate: {climate_zone}{f" ({temp_f:.0f}°F)" if temp_f else ""} | Flood: {flood} | SDC: {seismic}
 
-NEIGHBORS ({n_count} buildings analyzed):
-- Average height: {avg_h:.1f}m ({avg_stories:.1f} stories)
-- Average footprint: {avg_w:.1f}m wide × {avg_d:.1f}m deep
-- Dominant material: {dominant_mat}
-- Dominant shape: {dominant_shape}
-- Balconies common: {has_balconies}
+NEIGHBORS ({n_count} nearby):
+- Avg height: {avg_h:.1f}m | Footprint: {avg_w:.1f}m × {avg_d:.1f}m | Material: {dom_mat}
 
-PROJECT SPEC:
-- Stories: {stories}
-- Structural: {structural}
-- Units: {units}
-- Priority: {priority}
+PROJECT: {stories} stories | {bedrooms} BR | {sqft:.0f} sqft | priority={priority} | structure={struct}
+HARD SQFT CAP: {sqft:.0f} sqft total across all floors — NEVER return width_m × depth_m × {stories} stories above this.
+Each floor footprint must be ≤ {_max_fp_m2:.1f} m², so width_m × depth_m ≤ {_max_fp_m2:.1f}
 
-Respond with ONLY valid JSON, no markdown, no explanation:
+MATCHING BLUEPRINTS FROM OUR DATASET (use these proportions as inspiration, not copy):
+{bp_block}
+
+Return ONLY valid JSON. Every field is required — these values drive the 3D renderer directly:
 {{
-  "shape": "rectangle|l_shape|bar|u_shape|stepped",
-  "width_m": <float, match neighbor scale>,
-  "depth_m": <float, match neighbor scale>,
-  "window_ratio": <float 0.25-0.55, match neighbor density>,
-  "balcony_depth_m": <float 0.0-1.5>,
-  "balcony_every_n_floors": <int 1-3, 0=none>,
-  "facade_material": "stucco|brick|concrete|wood|steel",
+  "shape": "rectangle|narrow_lot|wide_shallow|l_shape|sculpted",
+  "width_m": <float — footprint width, must satisfy width_m × depth_m ≤ {_max_fp_m2:.1f}>,
+  "depth_m": <float — footprint depth, must satisfy width_m × depth_m ≤ {_max_fp_m2:.1f}>,
+  "facade_material": "stucco|wood|brick|concrete|metal|stone|fiber_cement",
+  "trim_color": "<hex — accent/trim color contrasting the facade>",
+  "band_h_frac": <float 0.0-0.35 — floor band height fraction; 0=none>,
+  "face_offset": <float 0.05-0.20 — facade relief/depth>,
+  "window_ratio": <float 0.20-0.60 — window area fraction>,
+  "win_h_frac": <float 0.30-0.80 — window height as fraction of floor height>,
+  "win_w_cap_m": <float 0.8-3.5 — max window width meters>,
+  "balcony_depth_m": <float 0.0-2.0 — balcony projection; 0=none>,
+  "balcony_every_n_floors": <int 1-3; ignored if balcony_depth_m=0>,
+  "porch_depth_m": <float 0.0-3.0 — entry porch depth; 0=none>,
   "horizontal_bands": <bool>,
-  "roof_type": "flat|parapet|gabled|shed",
+  "roof_type": "flat|gabled|hipped|shed",
+  "roof_pitch_12": <int 0-12>,
   "ground_floor_height_boost_m": <float 0.0-1.0>,
-  "penthouse_setback": <bool>,
-  "rationale": "<one sentence>"
+  "rationale": "<one sentence explaining key design decisions>"
 }}"""
 
         msg = await asyncio.to_thread(
             client.messages.create,
             model="claude-haiku-4-5-20251001",
-            max_tokens=300,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = msg.content[0].text.strip()
@@ -120,7 +166,7 @@ Respond with ONLY valid JSON, no markdown, no explanation:
 
     except Exception as e:
         fallback = _default_brief(spec_dict, neighbor_analysis)
-        fallback["source"] = f"fallback ({str(e)[:60]})"
+        fallback["source"] = f"fallback ({str(e)[:80]})"
         return fallback
 
 
@@ -134,20 +180,25 @@ def _default_brief(spec_dict: Dict, nav: Dict) -> Dict[str, Any]:
         mat = "stucco"
     avg_w = nav.get("avg_width_m", 12)
     avg_d = nav.get("avg_depth_m", 14)
-    has_bal = nav.get("has_balconies", False)
     return {
-        "shape": shape,
+        "shape": "rectangle",
         "width_m": max(8, avg_w * 0.95),
         "depth_m": max(8, avg_d * 0.95),
-        "window_ratio": 0.35,
-        "balcony_depth_m": 1.0 if has_bal else 0.0,
-        "balcony_every_n_floors": 1 if has_bal else 0,
         "facade_material": mat,
+        "trim_color": "#4a4a4a",
+        "band_h_frac": 0.14,
+        "face_offset": 0.09,
+        "window_ratio": 0.35,
+        "win_h_frac": 0.50,
+        "win_w_cap_m": 1.8,
+        "balcony_depth_m": 0.0,
+        "balcony_every_n_floors": 0,
+        "porch_depth_m": 0.0,
         "horizontal_bands": True,
-        "roof_type": "flat",
+        "roof_type": "gabled",
+        "roof_pitch_12": 5,
         "ground_floor_height_boost_m": 0.3,
-        "penthouse_setback": spec_dict.get("stories", 2) >= 3,
-        "rationale": "Rule-based default from neighbor analysis",
+        "rationale": "Fallback defaults — Claude unavailable",
         "source": "fallback",
     }
 

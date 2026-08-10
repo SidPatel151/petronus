@@ -96,6 +96,26 @@ class MassingGenerator:
             if not style_val:
                 style_val = 'classic_gabled' if _is_sfr else 'modern_linear'
 
+
+        # Human-readable style name for massing labels
+        _STYLE_LABELS = {
+            'classic_gabled':     'Gabled Traditional',
+            'craftsman':          'Craftsman',
+            'victorian':          'Victorian',
+            'tudor':              'Tudor',
+            'colonial':           'Colonial',
+            'farmhouse':          'Farmhouse',
+            'ranch':              'Ranch',
+            'modern_linear':      'Modern',
+            'contemporary_box':   'Contemporary',
+            'minimalist':         'Minimalist',
+            'mid_century_modern': 'Mid-Century Modern',
+            'urban_infill':       'Urban Infill',
+            'prefab_modern':      'Prefab Modern',
+        }
+        _style_label = _STYLE_LABELS.get(style_val or '',
+                       (style_val or 'Standard').replace('_', ' ').title())
+
         # ── Max lot coverage: house must not fill the whole parcel ──
         # CA residential: SFR ≤45%, ADU ≤75%, multi-family ≤60% of buildable envelope
         _max_coverage = 0.75 if _is_adu else (0.45 if _is_sfr else 0.60)
@@ -104,9 +124,9 @@ class MassingGenerator:
         target_area_m2 = min(target_area_m2, _max_total_area)
 
         slope_mag = math.sqrt(grad_x ** 2 + grad_z ** 2)
-        # Hillside mode is driven entirely by archetype detection, which reads
-        # the actual USGS 3DEP slope_pct for this parcel.  No hardcoded threshold here.
-        is_hillside = brief_shape in ('sculpted', 'hillside')
+        # Hillside mode: archetype sets 'sculpted' shape, OR slope > 15% triggers it
+        # automatically even when archetype detection was skipped (e.g. MF building type).
+        is_hillside = brief_shape in ('sculpted', 'hillside') or slope_mag > 0.15
 
         # Roof pitch from archetype — default 12/12 for Victorian/American-traditional
         _roof_pitch_12 = int(brief.get("roof_pitch_12", 12))
@@ -218,7 +238,7 @@ class MassingGenerator:
                     envelope_local, target_w, target_d, target_area_m2, stories,
                     floor_height_m, spec.priority, mat_color, grad_x, grad_z,
                     neighbor_local, style_val,
-                    label="A", name="Rectangle",
+                    label="A", name=f"{_style_label} Floor Plan",
                     desc="Clean rectangular footprint — maximum usable area per floor",
                     roof_pitch_12=_roof_pitch_12,
                 ),
@@ -462,8 +482,12 @@ class MassingGenerator:
             base = envelope_local
         target_fp_area = target_area_m2 / max(1, stories)
         footprint = self._fit_to_area(base, target_fp_area)
-        fc = footprint.centroid
-        base_terrain_y = self._ground_y(fc.x, fc.y, grad_x, grad_z)
+        # Use the HIGHEST terrain point under the footprint so the uphill wall
+        # sits at grade and the downhill side is elevated (pilotis/foundation).
+        base_terrain_y = max(
+            self._ground_y(x, z, grad_x, grad_z)
+            for x, z in footprint.exterior.coords
+        )
 
         dh_x, dh_z = self._hillside_step_vec(grad_x, grad_z, slope_mag)
         # Step distance derived directly from measured slope: steeper = shorter step per level
@@ -522,8 +546,10 @@ class MassingGenerator:
             base = envelope_local
         target_fp_area = target_area_m2 / max(1, stories)
         footprint = self._fit_to_area(base, target_fp_area * 0.75)
-        fc = footprint.centroid
-        base_terrain_y = self._ground_y(fc.x, fc.y, grad_x, grad_z)
+        base_terrain_y = max(
+            self._ground_y(x, z, grad_x, grad_z)
+            for x, z in footprint.exterior.coords
+        )
 
         dh_x, dh_z = self._hillside_step_vec(grad_x, grad_z, slope_mag)
         half_h = floor_height_m * 0.5
@@ -676,251 +702,15 @@ class MassingGenerator:
 
         # ── Roof — three distinct forms per style ──
         roof_height_rel = stories * floor_height_m
-        is_gabled   = 'classic' in style or 'gabled' in style or 'victorian' in style
+        is_gabled   = ('classic' in style or 'gabled' in style or 'victorian' in style
+                        or 'suburban' in style or 'colonial' in style or 'craftsman' in style
+                        or 'farmhouse' in style or 'tudor' in style or 'ranch' in style)
         is_sculpted = 'sculpted' in style
 
         if is_gabled:
-            # ── Gabled roof with ridge line — two slopes, triangular gable ends ──
-            b = footprint.bounds
-            bw = b[2] - b[0]
-            bd = b[3] - b[1]
-            # Pitch driven by archetype (default 12/12 for Victorian/American-traditional)
-            pitch_12 = roof_pitch_12
-            peak_height = min(bw, bd) / 2 * (pitch_12 / 12.0)
-            cx_b = (b[0] + b[2]) / 2
-            cz_b = (b[1] + b[3]) / 2
-
-            # Ridge runs along the LONG axis — same logic as the old frontend GableRoofMesh
-            # but done here in the backend so it uses the real footprint coordinates.
-            # Ridge endpoints are extended by EAVE_OH so gable ends flush with eave overhang.
-            EAVE_OH = 0.45
-            if bw >= bd:
-                r0 = [b[0] - EAVE_OH, self._ground_y(b[0], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
-                r1 = [b[2] + EAVE_OH, self._ground_y(b[2], cz_b, grad_x, grad_z) + roof_height_rel + peak_height, cz_b]
-            else:
-                r0 = [cx_b, self._ground_y(cx_b, b[1], grad_x, grad_z) + roof_height_rel + peak_height, b[1] - EAVE_OH]
-                r1 = [cx_b, self._ground_y(cx_b, b[3], grad_x, grad_z) + roof_height_rel + peak_height, b[3] + EAVE_OH]
-
-            # Overhang: push each eave vertex outward from building centre ~45 cm.
-            eave_verts = []
-            for x, z in coords:
-                dir_x = x - cx_b
-                dir_z = z - cz_b
-                dist = math.sqrt(dir_x ** 2 + dir_z ** 2) or 1.0
-                ox = x + (dir_x / dist) * EAVE_OH
-                oz = z + (dir_z / dist) * EAVE_OH
-                gy = self._ground_y(ox, oz, grad_x, grad_z)
-                eave_verts.append([ox, gy + roof_height_rel, oz])
-
-            n_eave = len(eave_verts)
-            R0, R1 = n_eave, n_eave + 1
-            roof_verts = eave_verts + [r0, r1]
-            roof_faces = []
-
-            for i in range(n_eave):
-                j = (i + 1) % n_eave
-                ev_i, ev_j = eave_verts[i], eave_verts[j]
-                d0i = (ev_i[0]-r0[0])**2 + (ev_i[2]-r0[2])**2
-                d1i = (ev_i[0]-r1[0])**2 + (ev_i[2]-r1[2])**2
-                d0j = (ev_j[0]-r0[0])**2 + (ev_j[2]-r0[2])**2
-                d1j = (ev_j[0]-r1[0])**2 + (ev_j[2]-r1[2])**2
-                near0_i = d0i <= d1i
-                near0_j = d0j <= d1j
-                if near0_i and near0_j:
-                    roof_faces.append([i, j, R0])
-                elif not near0_i and not near0_j:
-                    roof_faces.append([i, j, R1])
-                else:
-                    Ri = R0 if near0_i else R1
-                    Rj = R0 if near0_j else R1
-                    roof_faces.extend([[i, j, Ri], [j, Rj, Ri]])
-
-            meshes.append({
-                "element_id": f"{prefix}_roof",
-                "element_type": "roof",
-                "vertices": roof_verts, "faces": roof_faces,
-                "level": stories - 1, "color": "#374151",
-            })
-
-            # ── Front porch + staircase — American traditional gabled houses ──
-            # Placed on the min-Z face (garage-door / street face per Victorian layout).
-            porch_w    = bw * 0.65          # 65% of building width
-            porch_d    = 2.4                # metres projection in front
-            porch_h    = min(1.52, roof_height_rel * 0.35)  # ~5 ft raised entry
-            step_rise  = 0.19               # metres per step (≈ 7.5 in)
-            step_run   = 0.28               # metres per step (≈ 11 in)
-            n_steps    = max(2, round(porch_h / step_rise))
-            porch_floor_h = n_steps * step_rise
-
-            px0 = cx_b - porch_w / 2
-            px1 = cx_b + porch_w / 2
-            # Front face of building is at b[1] (minimum Z); porch extends outward
-            porch_z1 = b[1]
-            porch_z0 = b[1] - porch_d
-            base_porch = self._ground_y(cx_b, porch_z0, grad_x, grad_z)
-
-            # Porch deck slab (flat platform at porch_floor_h)
-            py_bot = base_porch
-            py_top = base_porch + porch_floor_h
-            porch_verts = [
-                [px0, py_bot, porch_z0], [px1, py_bot, porch_z0],
-                [px1, py_bot, porch_z1], [px0, py_bot, porch_z1],
-                [px0, py_top, porch_z0], [px1, py_top, porch_z0],
-                [px1, py_top, porch_z1], [px0, py_top, porch_z1],
-            ]
-            porch_faces = [
-                [4, 5, 6], [4, 6, 7],   # top
-                [0, 4, 7], [0, 7, 3],   # left side
-                [1, 2, 6], [1, 6, 5],   # right side
-                [0, 1, 5], [0, 5, 4],   # front face (outward)
-            ]
-            meshes.append({
-                "element_id": f"{prefix}_porch",
-                "element_type": "porch",
-                "vertices": porch_verts, "faces": porch_faces,
-                "level": 0, "color": "#c8a87a",
-            })
-
-            # Stair steps — extend outward from porch front edge
-            sw0 = cx_b - porch_w * 0.45
-            sw1 = cx_b + porch_w * 0.45
-            for s in range(n_steps):
-                s_z1 = porch_z0 - step_run * (n_steps - 1 - s)
-                s_z0 = s_z1 - step_run
-                s_y_top = base_porch + step_rise * (s + 1)
-                step_verts = [
-                    [sw0, base_porch, s_z0], [sw1, base_porch, s_z0],
-                    [sw1, base_porch, s_z1], [sw0, base_porch, s_z1],
-                    [sw0, s_y_top,    s_z0], [sw1, s_y_top,    s_z0],
-                    [sw1, s_y_top,    s_z1], [sw0, s_y_top,    s_z1],
-                ]
-                step_faces = [
-                    [4, 5, 6], [4, 6, 7],   # top tread
-                    [0, 1, 5], [0, 5, 4],   # front riser
-                    [0, 4, 7], [0, 7, 3],   # left side
-                    [1, 2, 6], [1, 6, 5],   # right side
-                ]
-                meshes.append({
-                    "element_id": f"{prefix}_step_{s}",
-                    "element_type": "porch",
-                    "vertices": step_verts, "faces": step_faces,
-                    "level": 0, "color": "#b8996a",
-                })
-
-            # ── Porch columns (4 corners) ─────────────────────────────────
-            col_hw   = 0.14          # half-width of column (28cm square)
-            col_gap  = 0.22          # inset from porch edge so column sits inside rail
-            col_y0   = base_porch + porch_floor_h
-            canopy_y = col_y0 + 2.2  # 7.2ft clear head-room above porch deck
-            for (col_x, col_z) in [(px0 + col_gap, porch_z0 + col_gap),
-                                    (px1 - col_gap, porch_z0 + col_gap),
-                                    (px0 + col_gap, porch_z1 - col_gap),
-                                    (px1 - col_gap, porch_z1 - col_gap)]:
-                cv = [
-                    [col_x-col_hw, col_y0,  col_z-col_hw],
-                    [col_x+col_hw, col_y0,  col_z-col_hw],
-                    [col_x+col_hw, col_y0,  col_z+col_hw],
-                    [col_x-col_hw, col_y0,  col_z+col_hw],
-                    [col_x-col_hw, canopy_y, col_z-col_hw],
-                    [col_x+col_hw, canopy_y, col_z-col_hw],
-                    [col_x+col_hw, canopy_y, col_z+col_hw],
-                    [col_x-col_hw, canopy_y, col_z+col_hw],
-                ]
-                cf = [[0,1,5],[0,5,4],[1,2,6],[1,6,5],
-                      [2,3,7],[2,7,6],[3,0,4],[3,4,7]]
-                meshes.append({
-                    "element_id": f"{prefix}_col_{uuid.uuid4().hex[:4]}",
-                    "element_type": "porch",
-                    "vertices": cv, "faces": cf,
-                    "level": 0, "color": "#f0ece4",
-                })
-
-            # ── Porch canopy slab (flat roof over porch) ─────────────────
-            ct = 0.15   # slab thickness
-            can_verts = [
-                [px0 - 0.1, canopy_y,      porch_z0 - 0.1],
-                [px1 + 0.1, canopy_y,      porch_z0 - 0.1],
-                [px1 + 0.1, canopy_y,      porch_z1],
-                [px0 - 0.1, canopy_y,      porch_z1],
-                [px0 - 0.1, canopy_y + ct, porch_z0 - 0.1],
-                [px1 + 0.1, canopy_y + ct, porch_z0 - 0.1],
-                [px1 + 0.1, canopy_y + ct, porch_z1],
-                [px0 - 0.1, canopy_y + ct, porch_z1],
-            ]
-            can_faces = [
-                [4,5,6],[4,6,7],           # top face
-                [0,4,7],[0,7,3],           # left
-                [1,5,6],[1,6,2],           # right
-                [0,1,5],[0,5,4],           # front
-                [3,7,6],[3,6,2],           # back (flush with building wall)
-                [0,3,2],[0,2,1],           # bottom face
-            ]
-            meshes.append({
-                "element_id": f"{prefix}_porch_canopy",
-                "element_type": "porch",
-                "vertices": can_verts, "faces": can_faces,
-                "level": 0, "color": "#7c5e3a",
-            })
-
-            # ── Porch railings (front + left side + right side) ──────────
-            rail_y0  = base_porch + porch_floor_h + 0.05   # bottom of rail zone
-            rail_y1  = base_porch + porch_floor_h + 0.92   # top rail height (36in)
-            rail_t   = 0.05                                  # rail bar thickness
-            post_hw  = 0.04                                  # baluster half-width
-
-            def _box_mesh(ax0, ay0, az0, ax1, ay1, az1):
-                return ([
-                    [ax0,ay0,az0],[ax1,ay0,az0],[ax1,ay0,az1],[ax0,ay0,az1],
-                    [ax0,ay1,az0],[ax1,ay1,az0],[ax1,ay1,az1],[ax0,ay1,az1],
-                ], [
-                    [4,5,6],[4,6,7],[0,3,2],[0,2,1],  # top + bottom
-                    [0,4,7],[0,7,3],[1,2,6],[1,6,5],  # left + right
-                    [0,1,5],[0,5,4],[3,7,6],[3,6,2],  # front + back
-                ])
-
-            def _add_rail_span(x0, z0, x1, z1, n_posts, tag):
-                """Top rail, bottom rail, and n_posts+1 balusters along x0,z0→x1,z1."""
-                # Axis: if x changes it's horizontal along X; if z changes, along Z
-                if abs(x1 - x0) >= abs(z1 - z0):  # X-axis span
-                    # Top rail bar
-                    bv, bf = _box_mesh(x0, rail_y1 - rail_t, z0 - rail_t,
-                                       x1, rail_y1,            z0 + rail_t)
-                    meshes.append({"element_id": f"{prefix}_rt_{tag}", "element_type": "porch",
-                                   "vertices": bv, "faces": bf, "level": 0, "color": "#c8b87a"})
-                    # Bottom rail bar
-                    bv, bf = _box_mesh(x0, rail_y0, z0 - rail_t,
-                                       x1, rail_y0 + rail_t, z0 + rail_t)
-                    meshes.append({"element_id": f"{prefix}_rb_{tag}", "element_type": "porch",
-                                   "vertices": bv, "faces": bf, "level": 0, "color": "#c8b87a"})
-                    for p in range(n_posts + 1):
-                        t_p = p / max(1, n_posts)
-                        px_p = x0 + t_p * (x1 - x0)
-                        bv, bf = _box_mesh(px_p - post_hw, rail_y0, z0 - post_hw,
-                                           px_p + post_hw, rail_y1, z0 + post_hw)
-                        meshes.append({"element_id": f"{prefix}_rp_{tag}_{p}", "element_type": "porch",
-                                       "vertices": bv, "faces": bf, "level": 0, "color": "#d4c89a"})
-                else:  # Z-axis span
-                    bv, bf = _box_mesh(x0 - rail_t, rail_y1 - rail_t, z0,
-                                       x0 + rail_t, rail_y1,            z1)
-                    meshes.append({"element_id": f"{prefix}_rt_{tag}", "element_type": "porch",
-                                   "vertices": bv, "faces": bf, "level": 0, "color": "#c8b87a"})
-                    bv, bf = _box_mesh(x0 - rail_t, rail_y0, z0,
-                                       x0 + rail_t, rail_y0 + rail_t, z1)
-                    meshes.append({"element_id": f"{prefix}_rb_{tag}", "element_type": "porch",
-                                   "vertices": bv, "faces": bf, "level": 0, "color": "#c8b87a"})
-                    for p in range(n_posts + 1):
-                        t_p = p / max(1, n_posts)
-                        pz_p = z0 + t_p * (z1 - z0)
-                        bv, bf = _box_mesh(x0 - post_hw, rail_y0, pz_p - post_hw,
-                                           x0 + post_hw, rail_y1, pz_p + post_hw)
-                        meshes.append({"element_id": f"{prefix}_rp_{tag}_{p}", "element_type": "porch",
-                                       "vertices": bv, "faces": bf, "level": 0, "color": "#d4c89a"})
-
-            n_front = max(2, int(porch_w / 0.9))
-            n_side  = max(1, int(porch_d / 0.9))
-            _add_rail_span(px0 + col_gap, porch_z0, px1 - col_gap, porch_z0, n_front, "fr")
-            _add_rail_span(px0, porch_z0 + col_gap, px0, porch_z1 - col_gap, n_side, "le")
-            _add_rail_span(px1, porch_z0 + col_gap, px1, porch_z1 - col_gap, n_side, "ri")
+            # Gabled roof + porch are both owned by facade.py (correct normals, wall-aligned).
+            # Massing only emits the wall shell for gabled styles.
+            pass
 
         elif is_sculpted:
             # ── Mono-pitch shed roof — slopes low at front (min-Z), high at rear (max-Z) ──
@@ -1149,10 +939,11 @@ class MassingGenerator:
         return meshes
 
     def _fit_to_area(self, footprint: Polygon, target_area_m2: float) -> Polygon:
-        """Scale footprint down to target_area if it's larger, preserving shape."""
-        if footprint.area <= target_area_m2:
+        """Scale footprint to match target_area in both directions, preserving shape."""
+        area = footprint.area
+        if area < 0.01 or abs(area - target_area_m2) < 1.0:
             return footprint
-        scale = math.sqrt(target_area_m2 / footprint.area)
+        scale = math.sqrt(target_area_m2 / area)
         return shp_scale(footprint, xfact=scale, yfact=scale, origin='centroid')
 
     # ── Utilities ─────────────────────────────────────────────────────────

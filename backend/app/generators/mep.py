@@ -2084,6 +2084,37 @@ class MEPRouter:
                     metadata={"circuit_id": "evse", "amps": 40, "gfci": True},
                 ))
 
+                # Garage-specific electrical (NEC 210.52, CEC Title 24)
+                if room.type == "garage":
+                    # 240V EVSE circuit (NEC 625 / CEC 625.40 — required by CA since 2023)
+                    elements.append(MEPElement(
+                        id=f"ev_circuit_{uuid.uuid4().hex[:5]}",
+                        system="electrical", type="ev_charger_circuit",
+                        start=[bds[0]+0.3, floor_y+0.5, bds[1]+0.3],
+                        level=lvl,
+                    ))
+                    # Garage door opener ceiling outlet (NEC 210.52(G)(1))
+                    ctr_x = (bds[0] + bds[2]) / 2 if len(bds) >= 3 else bds[0] + 1.5
+                    ctr_z = (bds[1] + bds[3]) / 2 if len(bds) >= 4 else bds[1] + 1.5
+                    elements.append(MEPElement(
+                        id=f"gdo_outlet_{uuid.uuid4().hex[:5]}",
+                        system="electrical", type="ceiling_outlet",
+                        start=[ctr_x, floor_y + floor_h - 0.15, ctr_z],
+                        level=lvl,
+                    ))
+                    # Wall outlets every 6 ft along garage perimeter (NEC 210.52(G)(2))
+                    garage_span_ft = max(bds[2]-bds[0] if len(bds) >= 3 else 3.0, 0.1) * 3.281
+                    n_wall_outlets = max(1, int(garage_span_ft / 6))
+                    step = (bds[2]-bds[0]) / (n_wall_outlets + 1) if len(bds) >= 3 else 1.0
+                    for oi in range(n_wall_outlets):
+                        ox = bds[0] + step * (oi + 1)
+                        elements.append(MEPElement(
+                            id=f"garage_outlet_{uuid.uuid4().hex[:5]}",
+                            system="electrical", type="outlet",
+                            start=[ox, floor_y + ZONE["outlet"], bds[1] + 0.05],
+                            level=lvl,
+                        ))
+
         return elements
 
     # ════════════════════════════════════════════════════════════════════════

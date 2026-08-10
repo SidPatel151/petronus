@@ -1,9 +1,21 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from app.models.schemas import ProjectCreate, ProjectResponse, ProjectSpec, BuildingModel, SiteInput
 from app.core.persistence import init_db, upsert_project, get_project, list_projects
 from typing import Optional
 import uuid
+
+_opt_bearer = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
+
+async def _optional_user(token: str = Depends(_opt_bearer)):
+    if not token:
+        return None
+    try:
+        from app.api.auth import get_current_user, _oauth2
+        return await get_current_user(token)
+    except Exception:
+        return None
 
 router = APIRouter()
 
@@ -42,8 +54,9 @@ async def create_project(body: ProjectCreate):
 
 
 @router.get("/", response_model=list)
-async def list_projects_endpoint():
-    rows = list_projects()
+async def list_projects_endpoint(user=Depends(_optional_user)):
+    uid = user["id"] if user else None
+    rows = list_projects(user_id=uid)
     return [
         {
             "id":      r["id"],
@@ -91,7 +104,7 @@ class SaveBody(BaseModel):
 
 
 @router.post("/save")
-async def save_project(body: SaveBody):
+async def save_project(body: SaveBody, user=Depends(_optional_user)):
     """Save or update a project (upsert by generated ID)."""
     pid = str(uuid.uuid4())
     bm = body.building_model or {}
@@ -109,6 +122,7 @@ async def save_project(body: SaveBody):
         "generated" if body.building_model else "created",
         body.building_model,
         stories, units, sqft, seismic, flood,
+        user_id=user["id"] if user else None,
     )
     _projects[pid] = {
         "id": pid, "name": body.name, "address": body.address or "",

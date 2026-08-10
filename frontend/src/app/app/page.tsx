@@ -32,8 +32,14 @@ function AppContent() {
     buildingModel, selectedSite, spec,
     setBuildingModel, setSelectedSite, setSiteContext,
     setInfrastructure, setNeighborConstraints, setFeasibilityData, setDrawnParcel,
-    updateSpec,
+    updateSpec, user, token,
   } = useAppStore();
+
+  // Auth guard — redirect to login if not authenticated
+  useEffect(() => {
+    if (user === null && token === null) router.replace('/login');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load project from ?load=ID query param (coming from dashboard)
   useEffect(() => {

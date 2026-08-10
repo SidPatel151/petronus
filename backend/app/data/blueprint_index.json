@@ -1,0 +1,3447 @@
+[
+  {
+    "archetype": "hillside_stepped",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "entry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "closet",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "living",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Multi-level modern floor plan with 3 bedrooms, 2+ bathrooms, central stair circulation, and integrated garage on the ground floor.",
+    "source_file": "Hillside-homes/R.jpg"
+  },
+  {
+    "archetype": "hillside_stepped",
+    "image_type": "3d_render",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "concrete",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": "rear_right",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern two-story hillside residence with concrete and stone facades, extensive glazing, green roofs, and integrated landscape design.",
+    "source_file": "Hillside-homes/Screenshot 2026-05-21 152550.png"
+  },
+  {
+    "archetype": "hillside_stepped",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "stucco",
+    "has_garage": null,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Contemporary two-story residence with stucco and metal/glass elements, built into hillside with modern architectural design featuring cantilevered sections and extensive glazing.",
+    "source_file": "Hillside-homes/Screenshot 2026-05-21 152635.png"
+  },
+  {
+    "archetype": "hillside_stepped",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "wood_painted",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Contemporary two-story residence with horizontal wood siding, extensive glazing, concrete retaining walls, and modern architectural design featuring clean lines and overhanging eaves.",
+    "source_file": "Hillside-homes/Screenshot 2026-05-21 152652.png"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": 26,
+      "depth": 21.33
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 520,
+        "position": "rear_center"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "porch",
+        "floor": 0,
+        "approx_sqft": 150,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 256,
+        "position": "left_spine"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 108,
+        "position": "front_right"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 107,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 110,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 110,
+        "position": "left_spine"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 104,
+        "position": "center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "corridor",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Single-story contemporary home with 3 bedrooms, 2 full baths, 1 half bath, 2-car garage, and open concept great room with covered lanai entry.",
+    "source_file": "High-End-Custom/33117ZR_f1.webp"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 4,
+    "bathrooms": 4,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": 151.0,
+      "depth": 120.0
+    },
+    "style": "unknown",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 598,
+        "position": "front_left"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 858,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 224,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 210,
+        "position": "rear_left"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 1147,
+        "position": "center_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 408,
+        "position": "center_left"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 300,
+        "position": "center"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": 400,
+        "position": "center"
+      },
+      {
+        "type": "office",
+        "floor": 0,
+        "approx_sqft": 144,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 432,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 72,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "corridor",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Luxury single-story floor plan with 4 bedrooms, 4 bathrooms, dual garages, grand foyer, courtyard with pool, and extensive outdoor entertainment spaces.",
+    "source_file": "High-End-Custom/69e6c92803c6c5c5c1e4590dc2a1e281.jpg"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 3,
+    "floors": 1,
+    "total_sqft": 5377,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": 150,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 450,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 320,
+        "position": "center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 280,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 180,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 200,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 240,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 80,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 75,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 95,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": 120,
+        "position": "rear_left"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 550,
+        "position": "front_left"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 450,
+        "position": "rear_right"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": 100,
+        "position": "rear_left"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": 80,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Luxury single-story floor plan with master suite, three bedrooms, expansive family room, outdoor kitchen, and dual garages with pool/spa area.",
+    "source_file": "High-End-Custom/OIP.webp"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 4,
+    "bathrooms": 3,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 900,
+        "position": "front_left"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": 120,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 450,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 300,
+        "position": "rear_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 320,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": 150,
+        "position": "rear_left"
+      },
+      {
+        "type": "office",
+        "floor": 0,
+        "approx_sqft": 180,
+        "position": "rear_left"
+      },
+      {
+        "type": "powder",
+        "floor": 0,
+        "approx_sqft": 50,
+        "position": "center"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": 80,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": 80,
+        "position": "center"
+      },
+      {
+        "type": "master",
+        "floor": 1,
+        "approx_sqft": 400,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": 120,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 200,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 180,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 160,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": 80,
+        "position": "rear_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": 100,
+        "position": "rear_left"
+      },
+      {
+        "type": "hall",
+        "floor": 1,
+        "approx_sqft": 120,
+        "position": "center"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 900,
+        "position": "rear_left"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Two-story luxury residence with dual 2-car garages, 4 bedrooms, 3.5 bathrooms, featuring formal living/dining, large kitchen, and pool on rear property.",
+    "source_file": "High-End-Custom/R.jpg"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": 39.7,
+      "depth": 32.5
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "half_hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "right_spine"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "patio",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Single-story contemporary floor plan with 3 bedrooms, 2.5 baths, open living/dining, 2-car garage, and pool access via patio.",
+    "source_file": "High-End-Custom/SD-7-FP1_Fotor_670.jpg"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "3d_render",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "stucco",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": "interior",
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern two-story residential home with white stucco facade, extensive glass walls, integrated pool and fire pit lounge area, and contemporary architectural design.",
+    "source_file": "High-End-Custom/Screenshot 2026-05-21 152957.png"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Two-story contemporary gabled residence with light blue fiber cement siding, arched windows, dual garages, and mature tree in front yard, photographed at dusk.",
+    "source_file": "High-End-Custom/Screenshot 2026-05-21 153001.png"
+  },
+  {
+    "archetype": "high_end_custom",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern single-story residential home with mixed facade materials (brown metal siding, white fiber cement board) and contemporary geometric design photographed at sunset.",
+    "source_file": "High-End-Custom/Screenshot 2026-05-21 153005.png"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 3,
+    "total_sqft": 2071,
+    "footprint_ft": {
+      "width": 20.917,
+      "depth": 38.0
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 423,
+        "position": "front_right"
+      },
+      {
+        "type": "entry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 156,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": 175,
+        "position": "rear_center"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": 160,
+        "position": "center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": 188,
+        "position": "front_center"
+      },
+      {
+        "type": "balcony",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "master_suite",
+        "floor": 2,
+        "approx_sqft": 219,
+        "position": "rear_left"
+      },
+      {
+        "type": "master_bath",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": 208,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "wardrobe",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_left"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_left",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Three-story contemporary townhouse with 3 bedrooms, 2.5 baths, 2-car garage, and total living area of 2,071 sq ft across three distinct floor plans.",
+    "source_file": "High-Density-Townhomes/8afa49f46e13e3ff8cd39fa3c762f2b3.jpg"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 4,
+    "total_sqft": 2283,
+    "footprint_ft": {
+      "width": 25.0,
+      "depth": 11.1
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 320,
+        "position": "rear_right"
+      },
+      {
+        "type": "entry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 140,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": 200,
+        "position": "front_left"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": 150,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": 110,
+        "position": "front_right"
+      },
+      {
+        "type": "balcony",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": 140,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "master_suite",
+        "floor": 2,
+        "approx_sqft": 260,
+        "position": "front_left"
+      },
+      {
+        "type": "attic",
+        "floor": 3,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "roof_deck",
+        "floor": 3,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "left_spine",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "right_spine",
+    "entry_side": "rear",
+    "confidence": 0.92,
+    "notes": "Contemporary urban townhouse with 3 bedrooms, 2.5 baths across 4 floors with front-facing stair tower and rear-loaded 2-car garage.",
+    "source_file": "High-Density-Townhomes/97e25c4a6289c7ee8764d876d2666425.jpg"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 3,
+    "total_sqft": 2436,
+    "footprint_ft": {
+      "width": 24.17,
+      "depth": 43.67
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 380,
+        "position": "rear_center"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": 48,
+        "position": "rear_center"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": 253,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": 120,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": 115,
+        "position": "front_right"
+      },
+      {
+        "type": "breakfast",
+        "floor": 1,
+        "approx_sqft": 66,
+        "position": "front_right"
+      },
+      {
+        "type": "balcony",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "pantry",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "master_suite",
+        "floor": 2,
+        "approx_sqft": 180,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "closet",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "study",
+        "floor": 2,
+        "approx_sqft": 96,
+        "position": "center"
+      },
+      {
+        "type": "loft",
+        "floor": 2,
+        "approx_sqft": 168,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": 130,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": 128,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "storage",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "rear",
+    "confidence": 0.92,
+    "notes": "Three-story urban townhouse with 3 bedrooms, 2.5 baths, 2-car garage, and loft space on second floor, typical of contemporary downtown infill development.",
+    "source_file": "High-Density-Townhomes/R.jpg"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "3d_render",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Multi-unit townhouse development with three stories, gabled rooflines, fiber cement siding, front-facing garage entries, and contemporary architectural styling.",
+    "source_file": "High-Density-Townhomes/Screenshot 2026-05-21 152752.png"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "3d_render",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "brick",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Contemporary townhouse row with mixed brick and fiber cement siding, three stories, evening render with warm interior lighting and landscaping.",
+    "source_file": "High-Density-Townhomes/Screenshot 2026-05-21 152804.png"
+  },
+  {
+    "archetype": "high_density_townhome",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 3,
+    "bathrooms": 3,
+    "floors": 4,
+    "total_sqft": 2214,
+    "footprint_ft": {
+      "width": 20.58,
+      "depth": 43.67
+    },
+    "style": "modern",
+    "facade_material": "brick",
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 312,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 132,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": 132,
+        "position": "rear_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": 129,
+        "position": "rear_center"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": 200,
+        "position": "center"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "master_suite",
+        "floor": 2,
+        "approx_sqft": 195,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": 143,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "stair",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "closet",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "utility",
+        "floor": 3,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "stair",
+        "floor": 3,
+        "approx_sqft": null,
+        "position": "left_spine"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "left_spine",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "right_spine",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Modern three-story townhouse with garage, featuring mixed brick and white stucco facade, central living spaces with rear amenities and distributed bedrooms across floors.",
+    "source_file": "High-Density-Townhomes/eaf6c3c271a0b848b5c1015dc1389453.jpg"
+  },
+  {
+    "archetype": "mid_century_modern",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 4,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": 2084,
+    "footprint_ft": {
+      "width": 29,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 567,
+        "position": "front_left"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 407,
+        "position": "front_center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 520,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 150,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 195,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 156,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 176,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 165,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "other",
+        "floor": 0,
+        "approx_sqft": 156,
+        "position": "front_right"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.92,
+    "notes": "Single-story mid-century modern home plan with 4 bedrooms, 2 bathrooms, multi-purpose room, and attached garage featuring contemporary box aesthetic with patio access.",
+    "source_file": "Mid-Century/36ef47400f6ece010fbca07b9a4da709.jpg"
+  },
+  {
+    "archetype": "mid_century_modern",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 4,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 324,
+        "position": "front_center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 384,
+        "position": "front_left"
+      },
+      {
+        "type": "carport",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "corridor",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Mid-century modern single-story residence with 4 bedrooms, 2 full bathrooms, attached garage, carport, and open-plan living areas.",
+    "source_file": "Mid-Century/OIP.webp"
+  },
+  {
+    "archetype": "mid_century_modern",
+    "image_type": "3d_render",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "concrete",
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.72,
+    "notes": "Modern single-story ADU with clean minimalist design, flat roof, extensive glazing, and open-plan living spaces integrated with a contemporary courtyard setting.",
+    "source_file": "Mid-Century/Screenshot 2026-05-21 152329.png"
+  },
+  {
+    "archetype": "prefab_modern",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": 1512,
+    "footprint_ft": {
+      "width": 28,
+      "depth": 56
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "master",
+        "floor": 0,
+        "approx_sqft": 180,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 87,
+        "position": "rear_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 72,
+        "position": "rear_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 156,
+        "position": "rear_right"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 158,
+        "position": "rear_right"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 220,
+        "position": "center"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": 60,
+        "position": "front_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 119,
+        "position": "front_left"
+      },
+      {
+        "type": "office",
+        "floor": 0,
+        "approx_sqft": 98,
+        "position": "center"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": 35,
+        "position": "front_left"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Single-story residential floor plan with 3 bedrooms, 2.5 baths, master suite with dual baths, kitchen with extended bar, separate dining, and den/optional bed 3 configuration totaling 1512 sqft.",
+    "source_file": "Prefab-Modern/2af07f99d8e537ae7e53f252a2fbb092.jpg"
+  },
+  {
+    "archetype": "prefab_modern",
+    "image_type": "3d_render",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_left",
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern single-story ADU with white fiber cement siding, metal frame pergolas, large black-framed glass doors, and contemporary gabled roof design at dusk.",
+    "source_file": "Prefab-Modern/Screenshot 2026-05-21 153022.png"
+  },
+  {
+    "archetype": "prefab_modern",
+    "image_type": "exterior_photo",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "corrugated_metal_and_wood",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Modern single-story ADU with black corrugated metal cladding on main volume and warm wood paneling on left module, featuring large illuminated windows and contemporary minimalist design.",
+    "source_file": "Prefab-Modern/Screenshot 2026-05-21 153027.png"
+  },
+  {
+    "archetype": "prefab_modern",
+    "image_type": "3d_render",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": 14,
+      "depth": 40
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern single-story modular ADU with corrugated metal siding, elevated on posts, featuring a front entry and multiple windows with warm interior lighting.",
+    "source_file": "Prefab-Modern/Screenshot 2026-05-21 153030.png"
+  },
+  {
+    "archetype": "prefab_modern",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": 2832,
+    "footprint_ft": {
+      "width": 40,
+      "depth": 70
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "right_spine"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "right_spine",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Single-story ranch-style floor plan with 3 bedrooms, 2 bathrooms, open concept kitchen/living area, and multiple utility spaces.",
+    "source_file": "Prefab-Modern/pinehurst-2510-layout-new-logo.jpg"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 4,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": 2724,
+    "footprint_ft": {
+      "width": 40.0,
+      "depth": 70.833
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Single-story 4-bedroom, 2-bathroom contemporary home with 2,724 sq ft featuring open-concept living and dining, utility room, and clustered bedrooms and bathrooms.",
+    "source_file": "Production-Tract_homes/6013-2-floor-plans.jpg"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "exterior_photo",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Row of modern townhouses with classic gabled rooflines, fiber cement siding, brick foundations, and front porches in a contemporary residential development.",
+    "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152912.png"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "A row of single-story gabled ranch-style homes with fiber cement siding, stone accents, and front-load garages along a residential street.",
+    "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152920.png"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Row of contemporary two-story single-family homes with classic gabled rooflines, fiber cement siding in neutral colors, and attached garages.",
+    "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152924.png"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "exterior_photo",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Row of attached two-story townhomes with gabled roofs, fiber cement siding, front-facing garages, and contemporary design in a mountain valley setting.",
+    "source_file": "Production-Tract_homes/Screenshot 2026-05-21 152928.png"
+  },
+  {
+    "archetype": "production_tract",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 1,
+    "total_sqft": 1920,
+    "footprint_ft": {
+      "width": 64.0,
+      "depth": 30.5
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "master bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "living room",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "dining room",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_left",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "Single-story 3-bedroom, 2-bathroom Essential Brantley floor plan with approximately 1920 SF, featuring an open living/dining area, kitchen, and utility spaces along the front elevation.",
+    "source_file": "Production-Tract_homes/floor-plans-SMALL.jpg"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "floor_plan",
+    "building_type": "adu",
+    "bedrooms": 1,
+    "bathrooms": 1,
+    "floors": 2,
+    "total_sqft": 658,
+    "footprint_ft": {
+      "width": 14.0,
+      "depth": 25.0
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "closet",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "left_spine",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.95,
+    "notes": "2-story ADU with 1 bedroom and 1 bathroom totaling 658 SQFT, featuring a linear layout with stairs along the left spine and wet wall cluster in the rear center.",
+    "source_file": "ADUs/ADU-Floor-Plan-Two-Story-Under-700-sqft-1BR-1BA-658-sqft-SnapADU.webp"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "floor_plan",
+    "building_type": "adu",
+    "bedrooms": 2,
+    "bathrooms": 2,
+    "floors": 2,
+    "total_sqft": 1155,
+    "footprint_ft": {
+      "width": 20,
+      "depth": 30
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 185,
+        "position": "front_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 110,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 50,
+        "position": "rear_center"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": 35,
+        "position": "rear_right"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": 40,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 180,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": 65,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 155,
+        "position": "rear_left"
+      },
+      {
+        "type": "closet",
+        "floor": 1,
+        "approx_sqft": 30,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.92,
+    "notes": "2-story 2BR/2BA ADU with 1,155 sqft footprint of 30x20, featuring central stair, ground-floor living/kitchen, and upper-floor primary and secondary bedrooms.",
+    "source_file": "ADUs/OIP.webp"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "exterior_photo",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "wood_painted",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern single-story ADU with black exterior wood siding, large glass panels, flat roof, situated on residential lot with paved patio and wooden deck areas.",
+    "source_file": "ADUs/Screenshot 2026-05-21 152710.png"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "3d_render",
+    "building_type": "adu",
+    "bedrooms": 2,
+    "bathrooms": 2,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Contemporary 2-story ADU with 2 bedrooms and 2 bathrooms featuring an open-concept ground floor and central staircase with fiber cement siding.",
+    "source_file": "ADUs/Screenshot 2026-05-21 152716.png"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "exterior_photo",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 1,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "modern",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Modern single-story accessory dwelling unit with horizontal fiber cement siding, large glazed doors and windows, black metal frame detailing, and natural wood soffit overhang.",
+    "source_file": "ADUs/Screenshot 2026-05-21 152723.png"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Contemporary gabled cottage-style home with blue-gray fiber cement siding, stone chimney, asymmetrical roofline, attached garage with lattice gates, and professional landscaping.",
+    "source_file": "ADUs/Screenshot 2026-05-21 152728.png"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "floor_plan",
+    "building_type": "adu",
+    "bedrooms": 1,
+    "bathrooms": 1,
+    "floors": 1,
+    "total_sqft": 935,
+    "footprint_ft": {
+      "width": 32.6,
+      "depth": 31.1
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 130,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 45,
+        "position": "rear_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": 50,
+        "position": "rear_left"
+      },
+      {
+        "type": "restroom",
+        "floor": 0,
+        "approx_sqft": 200,
+        "position": "rear_right"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 130,
+        "position": "rear_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 250,
+        "position": "front_left"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "rear_left",
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.92,
+    "notes": "Single-story 935 sq ft ADU with one bedroom, one full bathroom, open living/kitchen concept, and rear stair access.",
+    "source_file": "ADUs/il_1588xN.6407395665_dpgk.webp"
+  },
+  {
+    "archetype": "adu_compact",
+    "image_type": "floor_plan",
+    "building_type": "adu",
+    "bedrooms": 1,
+    "bathrooms": 1,
+    "floors": 1,
+    "total_sqft": 935,
+    "footprint_ft": {
+      "width": 34,
+      "depth": 34
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 144,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": 35,
+        "position": "front_right"
+      },
+      {
+        "type": "restroom",
+        "floor": 0,
+        "approx_sqft": 72,
+        "position": "front_right"
+      },
+      {
+        "type": "closet",
+        "floor": 0,
+        "approx_sqft": 32,
+        "position": "left_spine"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 132,
+        "position": "rear_right"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 216,
+        "position": "rear_left"
+      }
+    ],
+    "stair": {
+      "present": false,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": "rear_right",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Single-story ADU floor plan with 935 square feet featuring one bedroom, one full bathroom, open living/kitchen area, and accessible entry from front.",
+    "source_file": "ADUs/il_fullxfull.6407395665_dpgk.webp"
+  },
+  {
+    "archetype": "victorian_narrow_lot",
+    "image_type": "3d_render",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "classic_gabled",
+    "facade_material": "fiber_cement",
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "foyer",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 3,
+        "approx_sqft": null,
+        "position": "front_center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.65,
+    "notes": "3D render of three contemporary colonial-style houses with gabled roofs, fiber cement siding, elevated first floors with garages, and white railings.",
+    "source_file": "victorian-house/Screenshot 2026-05-21 152152.png"
+  },
+  {
+    "archetype": "victorian_narrow_lot",
+    "image_type": "exterior_photo",
+    "building_type": "victorian",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "victorian",
+    "facade_material": "wood_painted",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": "front",
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Three-story Victorian townhouses with ornate gabled roofs, decorative trim, bay windows, and painted wood facades typical of San Francisco's Painted Ladies architectural style.",
+    "source_file": "victorian-house/Screenshot 2026-05-21 152242.png"
+  },
+  {
+    "archetype": "victorian_narrow_lot",
+    "image_type": "exterior_photo",
+    "building_type": "victorian",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "victorian",
+    "facade_material": "wood_painted",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Two-story Victorian mansion with mansard roof, wraparound porches, brick and wood siding, and prominent chimneys, designed by F.D. Orff architect in Minneapolis.",
+    "source_file": "victorian-house/c4599e545890206b44e86b2e7a23f9a3.jpg"
+  },
+  {
+    "archetype": "victorian_narrow_lot",
+    "image_type": "sketch",
+    "building_type": "victorian",
+    "bedrooms": 2,
+    "bathrooms": 1,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "victorian",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "basement",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "library",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "parlor",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "hall",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "left_spine"
+      },
+      {
+        "type": "bath",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "chamber",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "alcove",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 2,
+        "approx_sqft": null,
+        "position": "left_spine"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "left_spine",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_left",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Victorian city house design from 1874 with three stories, featuring elaborate facade with turrets, parlor and library on first floor, bedrooms on second floor, and basement utility spaces.",
+    "source_file": "victorian-house/d14fbcc748534c0450d96400d4b26bc5.jpg"
+  },
+  {
+    "archetype": "victorian_narrow_lot",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 2,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "victorian",
+    "facade_material": null,
+    "has_garage": false,
+    "rooms": [
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 180,
+        "position": "rear_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 0,
+        "approx_sqft": 200,
+        "position": "rear_center"
+      },
+      {
+        "type": "utility",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": 60,
+        "position": "rear_left"
+      },
+      {
+        "type": "hall",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "dining",
+        "floor": 1,
+        "approx_sqft": 480,
+        "position": "rear_center"
+      },
+      {
+        "type": "library",
+        "floor": 1,
+        "approx_sqft": 384,
+        "position": "rear_right"
+      },
+      {
+        "type": "morning_room",
+        "floor": 1,
+        "approx_sqft": 240,
+        "position": "front_center"
+      },
+      {
+        "type": "stair",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "office",
+        "floor": 2,
+        "approx_sqft": 120,
+        "position": "front_left"
+      },
+      {
+        "type": "office",
+        "floor": 2,
+        "approx_sqft": 120,
+        "position": "front_right"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Victorian townhouse in Berkeley Square with basement, ground, and first floor plans showing service areas, living spaces, and upper floor rooms designed by Ernest Newton & Bates Architects.",
+    "source_file": "victorian-house/eea960476afe8282001d00f8be5d7015.jpg"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "floor_plan",
+    "building_type": "sfr",
+    "bedrooms": 3,
+    "bathrooms": 2,
+    "floors": 2,
+    "total_sqft": 1733,
+    "footprint_ft": {
+      "width": 24.0,
+      "depth": 27.0
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": 576,
+        "position": "front_left"
+      },
+      {
+        "type": "foyer",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "living",
+        "floor": 0,
+        "approx_sqft": 264,
+        "position": "front_right"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": 168,
+        "position": "center"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": 264,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 138,
+        "position": "front_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 156,
+        "position": "front_right"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": 143,
+        "position": "rear_left"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "corridor",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "center"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "center",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Two-story townhouse with front-facing garage, main floor at 696 sq ft and second floor at 1037 sq ft, featuring 3 bedrooms and 2.5 bathrooms with optional deck above.",
+    "source_file": "UrbanInfill-Zero-Lot/OIP.webp"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "exterior_photo",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 3,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Multi-unit contemporary townhouse development with 3-story units featuring mixed facade materials in warm earth tones and modern architectural design with balconies.",
+    "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152825.png"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "exterior_photo",
+    "building_type": "sfr",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "stucco",
+    "has_garage": true,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Row of contemporary two-story stucco residential homes with varied neutral color schemes, gabled rooflines, and attached garages in a planned community development.",
+    "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152830.png"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "exterior_photo",
+    "building_type": "adu",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": null,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Modern two-story accessory dwelling unit with green and red fiber cement board siding, multiple windows, and contemporary boxy architectural style in an urban infill context.",
+    "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152835.png"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "3d_render",
+    "building_type": "townhouse",
+    "bedrooms": null,
+    "bathrooms": null,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": null,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": "fiber_cement",
+    "has_garage": false,
+    "rooms": [],
+    "stair": {
+      "present": true,
+      "location": null,
+      "direction": null
+    },
+    "wet_wall_location": null,
+    "entry_side": "front",
+    "confidence": 0.75,
+    "notes": "Multi-unit contemporary townhouse development with white and blue fiber cement siding, pitched roofs, and two-story floor plans arranged in a row.",
+    "source_file": "UrbanInfill-Zero-Lot/Screenshot 2026-05-21 152839.png"
+  },
+  {
+    "archetype": "urban_infill_zero_lot",
+    "image_type": "floor_plan",
+    "building_type": "townhouse",
+    "bedrooms": 2,
+    "bathrooms": 2,
+    "floors": 2,
+    "total_sqft": null,
+    "footprint_ft": {
+      "width": 4.0,
+      "depth": null
+    },
+    "style": "contemporary_box",
+    "facade_material": null,
+    "has_garage": true,
+    "rooms": [
+      {
+        "type": "great_room",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_center"
+      },
+      {
+        "type": "kitchen",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_right"
+      },
+      {
+        "type": "dining",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "bathroom",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_left"
+      },
+      {
+        "type": "laundry",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "garage",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "stair",
+        "floor": 0,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_left"
+      },
+      {
+        "type": "bedroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "front_right"
+      },
+      {
+        "type": "bathroom",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_center"
+      },
+      {
+        "type": "closet",
+        "floor": 1,
+        "approx_sqft": null,
+        "position": "rear_right"
+      }
+    ],
+    "stair": {
+      "present": true,
+      "location": "left_spine",
+      "direction": "front_to_rear"
+    },
+    "wet_wall_location": "rear_center",
+    "entry_side": "front",
+    "confidence": 0.85,
+    "notes": "Comparison of Traditional Lot (4' setback) versus Zero Lot Line (5' setback) townhouse floor plans showing identical interior layouts with side-setback variations.",
+    "source_file": "UrbanInfill-Zero-Lot/Traditional-Lot-2-scaled.jpg"
+  }
+]
