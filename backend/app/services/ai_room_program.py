@@ -368,23 +368,63 @@ _GROUND_ONLY_TYPES = {
 # the generator's vocabulary is narrower. Map one onto the other so
 # floor_program can be compared against generated room types.
 _ARCHETYPE_ROOM_ALIASES = {
-    "entry_hall": "foyer", "entry": "foyer",
-    "parlor": "living", "living_room": "living", "great_room": "living",
-    "dining_room": "dining", "family": "family_room",
-    "primary_bedroom": "bedroom", "master_bedroom": "bedroom",
-    "guest_bedroom": "bedroom",
-    "full_bath": "bathroom", "primary_bath": "bathroom", "bath": "bathroom",
-    "powder_room": "half_bath", "powder": "half_bath",
+    # Entry / circulation
+    "entry_hall": "foyer", "entry": "foyer", "grand_entry": "foyer",
+    "entry_atrium_or_foyer": "foyer",
     "hall": "corridor", "hallway": "corridor",
-    "closets": "walk_in_closet", "closet": "walk_in_closet",
-    "flex_room": "office", "bonus": "bonus_room", "den": "office",
+    # Living
+    "parlor": "living", "living_room": "living", "great_room": "great_room",
+    "sitting_room": "sitting_room", "family": "family_room",
+    "dining_room": "dining", "formal_dining": "dining",
+    # Kitchen
+    "chef_kitchen": "kitchen", "catering_kitchen": "kitchen",
+    "butler_pantry": "butler_pantry",
+    # Sleeping
+    "primary_bedroom": "bedroom", "master_bedroom": "bedroom",
+    "guest_bedroom": "bedroom", "primary_suite": "bedroom",
+    "closets": "walk_in_closet", "closet": "closet",
+    "dressing_room": "dressing_room",
+    # Bathrooms. half_bath is not in the generator vocabulary, so a powder
+    # room maps to a full bathroom rather than leaking an unknown type.
+    "full_bath": "bathroom", "primary_bath": "bathroom", "bath": "bathroom",
+    "hall_bath": "bathroom", "ensuite_bath": "bathroom", "spa_bath": "bathroom",
+    "half_bath": "bathroom", "powder_room": "bathroom", "powder": "bathroom",
+    "guest_powder_room": "bathroom", "pool_bath": "pool_bath",
+    # Garage / service. Every "N_car_garage" spelling collapses to garage.
+    "2_car_garage": "garage", "3_car_garage": "garage",
+    "garage_1_car": "garage", "garage_2_car": "garage",
+    "garage_or_bicycle_storage": "garage", "ev_charging_station": "garage",
+    "utility_closet": "utility", "mechanical_closet": "mechanical",
+    "mechanical_room": "mechanical", "av_it_room": "utility",
+    "laundry_closet": "laundry", "laundry_room": "laundry",
+    "laundry_utility": "laundry",
+    # Work / flex
+    "home_office": "office", "study": "office", "office": "office",
+    "family_loft": "loft", "flex_loft": "loft", "loft_optional": "loft",
+    "flex_room": "office", "bonus": "bonus_room",
+    "den": "office", "home_gym": "gym", "steam_room": "sauna",
+    "wine_cellar": "wine_cellar", "cinema_room": "cinema_room",
+    "media_room": "media_room", "game_room": "game_room",
+    # Outdoor
+    "outdoor_deck_or_patio": "deck", "deck_or_juliet_balcony": "balcony",
+    "roof_deck": "deck", "loggia": "loggia",
     "utility": "utility", "mechanical": "mechanical",
 }
 
 
-def _normalise_archetype_room(name: str) -> str:
+def _normalise_archetype_room(name: str) -> Optional[str]:
+    """Map an archetype's prose room name onto a type the generator can build.
+
+    Returns None for anything that still isn't in the generator's vocabulary.
+    Previously unmapped names were passed through verbatim, so a floor_program
+    entry like "2_car_garage" or "primary_suite" became the allowed-set for
+    that storey and could be handed straight to the layout as a room type it
+    has no width, colour or geometry for."""
+    from app.generators.compliance import KNOWN_ROOM_TYPES
+
     key = str(name).strip().lower().replace(" ", "_")
-    return _ARCHETYPE_ROOM_ALIASES.get(key, key)
+    mapped = _ARCHETYPE_ROOM_ALIASES.get(key, key)
+    return mapped if mapped in KNOWN_ROOM_TYPES else None
 
 
 def archetype_floor_rooms(archetype: Optional[Dict]) -> Dict[int, set]:
@@ -411,7 +451,10 @@ def archetype_floor_rooms(archetype: Optional[Dict]) -> Dict[int, set]:
     out: Dict[int, set] = {}
     for index, key in enumerate(ordered):
         rooms = program[key].get("rooms") or []
-        out[index] = {_normalise_archetype_room(r) for r in rooms}
+        mapped = {_normalise_archetype_room(r) for r in rooms}
+        mapped.discard(None)
+        if mapped:
+            out[index] = mapped
     return out
 
 
@@ -446,12 +489,26 @@ def _enforce_floor_assignment(
             for room in row["rooms"]:
                 present.setdefault(room["type"], set()).add(floor["floor"])
 
+    # Preference order when a misplaced room has to become something else.
+    # Ordered by how much floor area the type normally wants, so a big cell
+    # becomes a living room rather than, say, the third bathroom in a row —
+    # which is what picking alphabetically out of the allowed set produced.
+    _PREFER_WIDE = (
+        "great_room", "living", "family_room", "kitchen", "dining",
+        "bedroom", "office", "bonus_room", "loft", "library", "garage",
+    )
+    _PREFER_NARROW = (
+        "walk_in_closet", "closet", "storage", "pantry", "laundry",
+        "bathroom", "utility", "mechanical",
+    )
+
     def _replacement(allowed: Optional[set], frac_w: float) -> str:
+        # `allowed` is already filtered to the generator's vocabulary by
+        # archetype_floor_rooms, so anything picked here is buildable.
+        order = _PREFER_NARROW + _PREFER_WIDE if frac_w < 0.22 else _PREFER_WIDE + _PREFER_NARROW
         if allowed:
-            for candidate in ("bedroom", "office", "bonus_room", "walk_in_closet"):
+            for candidate in order:
                 if candidate in allowed:
-                    if candidate == "walk_in_closet" and frac_w >= 0.22:
-                        continue
                     return candidate
             for candidate in sorted(allowed):
                 if candidate not in ("corridor", "stair", "hall"):
@@ -489,6 +546,26 @@ def _enforce_floor_assignment(
                     )
                     return None
                 room["type"] = _replacement(allowed, room["frac_w"])
+
+    # Finally: no two storeys may come back as the same set of rooms. Type
+    # enforcement above only relocates rooms that are on the *wrong* floor —
+    # it cannot see a model that simply answered with the same program twice,
+    # which is the "why is floor 2 identical to floor 1" case. There is no way
+    # to invent a distinct upper floor here, so hand back None and let the
+    # static templates (which are genuinely different per storey) take over.
+    from collections import Counter
+    signatures = [
+        tuple(sorted(Counter(
+            room["type"] for row in floor["rows"] for room in row["rooms"]
+        ).items()))
+        for floor in floors
+    ]
+    if len(signatures) > 1 and len(set(signatures)) < len(signatures):
+        log.warning(
+            "[ai_room_program] two storeys came back with identical room sets — "
+            "rejecting program, falling back to static templates"
+        )
+        return None
     return floors
 
 
