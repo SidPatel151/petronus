@@ -22,7 +22,7 @@ def detect_archetype(spec, site_context=None) -> Optional[str]:
                        str(getattr(spec, 'hvac_preference', '') or ''))
     use      = getattr(spec, 'building_use', 'multi_family')
     _use_str = getattr(use, 'value', str(use))
-    is_sfr   = _use_str in ('single_family', 'adu')
+    is_sfr   = _use_str == 'single_family'
     struct   = getattr(spec.structural_system, 'value', str(spec.structural_system))
     stories  = spec.stories or 2
     style    = getattr(getattr(spec, 'style', None), 'value',
@@ -36,11 +36,6 @@ def detect_archetype(spec, site_context=None) -> Optional[str]:
         if isinstance(terrain, dict):
             slope_pct  = terrain.get('slope_pct', 0.0)
             avg_elev_m = terrain.get('avg_elevation_m', 0.0)
-
-    # ADU: always takes priority over style-based detection
-    is_adu = use in ('adu',) or getattr(use, 'value', '') == 'adu'
-    if is_adu:
-        return 'adu_compact'
 
     # Hillside detection — purely elevation/slope based so it works globally:
     # • Parcel slope ≥ 8 %  →  stepped massing required
@@ -138,12 +133,7 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
     if palette.get('window_frame'):
         neighbor_style['window_color']    = palette['window_frame']
 
-    if arch_id == 'adu_compact':
-        neighbor_style['window_style']      = 'large_horizontal'
-        neighbor_style['horizontal_bands']  = True   # floor-line bands
-        neighbor_style['has_balconies']     = True   # small deck on 2-story ADU
-        neighbor_style['dominant_material'] = 'fiber_cement'
-    elif arch_id == 'victorian_narrow_lot':
+    if arch_id == 'victorian_narrow_lot':
         neighbor_style['window_style']     = 'tall_narrow'
         neighbor_style['horizontal_bands'] = False
         neighbor_style['has_balconies']    = False
@@ -190,7 +180,9 @@ def apply_archetype_to_neighbor_style(archetype: Dict, neighbor_style: Dict) -> 
     return neighbor_style
 
 
-def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict]) -> Dict:
+def apply_archetype_to_design_brief(
+    archetype: Dict, design_brief: Optional[Dict], units_wide: int = 1
+) -> Dict:
     """
     Enforce physical massing constraints per archetype.
     Only touches shape/footprint/arch_style — Claude owns all facade/material params.
@@ -200,10 +192,17 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
       'wide_shallow' → Mid-Century, Prefab
       'l_shape'      → High-End Custom
       'sculpted'     → Hillside stepped
-      'rectangle'    → ADU, Production Tract
+      'rectangle'    → Production Tract
+
+    units_wide: how many narrow-lot units sit side by side on a floor (rowhouse-style
+    multi-family). The per-unit width caps below are for ONE unit — for N units
+    attached along the street frontage the cap must scale by N, otherwise a
+    multi-unit building gets squeezed into a single unit's width and stretched into
+    an absurdly deep strip to hit the (much larger) total target area.
     """
     brief = dict(design_brief) if design_brief else {}
     arch_id = archetype.get('id', '')
+    units_wide = max(1, int(units_wide or 1))
 
     # Helper: enforce aspect ratio without destroying the area Claude computed.
     # Solves for (w, d) such that w*d = original area and w/d = target_ratio.
@@ -218,20 +217,13 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
 
     if arch_id == 'victorian_narrow_lot':
         brief['shape']         = 'narrow_lot'
-        brief['arch_style']    = 'classic_gabled'
+        brief['arch_style']    = 'victorian_edwardian_narrow'
         brief['roof_type']     = 'gabled'
         brief['roof_pitch_12'] = 10
-        # Victorian = narrow and deep: width capped at 7.6m, depth grows to match area
-        brief['width_m'] = min(w, 7.6)
+        # Victorian = narrow and deep per unit: cap width at 7.0m (≈23ft) per unit,
+        # scaled by units_wide for attached rowhouse-style multi-family buildings.
+        brief['width_m'] = min(w, 7.0 * units_wide)
         brief['depth_m'] = max((w * d) / brief['width_m'], 17.0)
-
-    elif arch_id == 'adu_compact':
-        brief['shape']         = 'rectangle'
-        brief['arch_style']    = 'contemporary_box'
-        brief['roof_type']     = 'flat'
-        brief['roof_pitch_12'] = 0
-        brief['width_m']       = min(w, 9.8)
-        brief['depth_m']       = (w * d) / brief['width_m']
 
     elif arch_id == 'mid_century_modern':
         brief['shape']         = 'wide_shallow'
@@ -253,8 +245,9 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
         brief['arch_style']    = 'modern_linear'
         brief['roof_type']     = 'flat'
         brief['roof_pitch_12'] = 0
-        # Townhome = narrow per unit, depth grows with area
-        brief['width_m'] = min(w, 8.5)
+        # Townhome = narrow per unit, depth grows with area; width scales with
+        # units_wide since attached units sit side by side along the frontage.
+        brief['width_m'] = min(w, 8.5 * units_wide)
         brief['depth_m'] = max((w * d) / brief['width_m'], 14.0)
 
     elif arch_id == 'urban_infill_zero_lot':
@@ -262,7 +255,7 @@ def apply_archetype_to_design_brief(archetype: Dict, design_brief: Optional[Dict
         brief['arch_style']    = 'contemporary_box'
         brief['roof_type']     = 'flat'
         brief['roof_pitch_12'] = 0
-        brief['width_m'] = min(w, 8.0)
+        brief['width_m'] = min(w, 8.0 * units_wide)
         brief['depth_m'] = max((w * d) / brief['width_m'], 14.0)
 
     elif arch_id == 'production_tract':

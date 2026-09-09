@@ -20,7 +20,7 @@ export interface ProjectSpec {
   code_cycle: CaliforniaCodeCycle;
   jurisdiction_city?: string | null;
   site: ProjectSiteInput;
-  building_use?: 'single_family' | 'multi_family' | 'adu';
+  building_use?: 'single_family' | 'multi_family';
   bedrooms?: number | null;
   bathrooms?: number | null;
   house_archetype?: string | null;
@@ -95,6 +95,14 @@ export const api = {
     API.post('/api/projects/save', { name, address, spec, building_model }).then(r => r.data),
   listProjects: () =>
     API.get('/api/projects/').then(r => r.data),
+  blueprintDraft: (spec: ProjectSpec, massingChoice = 0) =>
+    API.post('/api/blueprint/draft', { spec, massing_choice: massingChoice }).then(r => r.data),
+  getBlueprintDraft: (draftId: string) =>
+    API.get(`/api/blueprint/${draftId}`).then(r => r.data),
+  blueprintEdit: (draftId: string, op: { op_type: string; params: Record<string, unknown> }) =>
+    API.post(`/api/blueprint/${draftId}/edit`, { op }).then(r => r.data),
+  blueprintFinalize: (draftId: string) =>
+    API.post(`/api/blueprint/${draftId}/finalize`, {}).then(r => r.data),
 };
 
 export default api;

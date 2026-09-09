@@ -18,7 +18,6 @@ _BLUEPRINT_INDEX = _DATA_ROOT / "blueprint_index.json"
 # Hard caps enforced after Claude's response
 SFR_MAX_SQFT   = 5500
 SFR_MAX_BED    = 7
-ADU_MAX_SQFT   = 1200
 
 
 def _load_blueprint_examples(archetype_id: str, max_examples: int = 2) -> List[Dict]:
@@ -130,8 +129,8 @@ async def generate_semantic_building(
         priority  = spec_dict.get("priority", "cost")
         use       = spec_dict.get("building_use", "single_family")
 
-        # Use-aware sqft cap: SFR=5500, ADU=1200, multi-family no hard cap here
-        _sqft_caps = {"single_family": SFR_MAX_SQFT, "adu": ADU_MAX_SQFT}
+        # Use-aware sqft cap; multi-family has no hard cap here
+        _sqft_caps = {"single_family": SFR_MAX_SQFT}
         _sqft_cap  = _sqft_caps.get(use, 50_000)
         sqft       = min(float(spec_dict.get("sqft") or spec_dict.get("target_gross_area_sqft", 2000)), _sqft_cap)
 
@@ -144,7 +143,6 @@ async def generate_semantic_building(
         _use_labels = {
             "single_family": "single-family residential",
             "multi_family":  "multi-family residential",
-            "adu":           "accessory dwelling unit (ADU)",
         }
         arch_label = archetype_display_name or archetype_id or _use_labels.get(use, "residential")
 
@@ -157,11 +155,22 @@ async def generate_semantic_building(
         _floor_area_m2 = (sqft / 10.764) / max(stories, 1)
         _floor_area_sqft_per_floor = sqft / max(stories, 1)
 
+        # Minimum width and aspect ratio by archetype — prevents Claude from returning
+        # skinny strips that look nothing like real houses.
+        _is_narrow_lot = archetype_id in ("victorian_narrow_lot", "urban_infill_zero_lot",
+                                          "high_density_townhome")
+        if _is_narrow_lot:
+            _min_w_m, _max_ratio = 5.5, 0.45   # narrow by design
+        elif archetype_id in ("mid_century_modern", "prefab_modern"):
+            _min_w_m, _max_ratio = 11.0, 2.0   # wide-shallow
+        else:
+            _min_w_m, _max_ratio = 10.0, 1.4   # SFR default — roughly square, not skinny
+
         prompt = f"""You are a licensed residential architect. Design a building and return ONLY a compact JSON spec.
 {bp_text}
 
 PLATFORM LIMITS (hard caps — never exceed):
-  SFR max: {SFR_MAX_SQFT:,} sqft | ADU max: {ADU_MAX_SQFT:,} sqft | SFR max bedrooms: {SFR_MAX_BED}
+  SFR max: {SFR_MAX_SQFT:,} sqft | SFR max bedrooms: {SFR_MAX_BED}
   Multi-family: no platform sqft cap — size to unit count and lot coverage
 
 ARCHETYPE: {arch_label}
@@ -169,7 +178,6 @@ Make it authentically represent the archetype — NOT a generic box.
 victorian_narrow_lot: bay windows, steep gable (9-12), wood siding, ornate trim, narrow lot.
 mid_century_modern: ribbon/strip windows, low pitch (0-3), wide shallow plan, indoor-outdoor.
 hillside_stepped: large glazing, flat/shed roof, cantilevered upper floor, follows terrain steps.
-adu_compact: compact footprint, flat roof, fiber cement, efficient open plan.
 high_density_townhome: stacked units, shared party walls, roof deck, contemporary materials.
 urban_infill_zero_lot: narrow modern box, 3 stories, zero side setback, metal/glass facade.
 production_tract: near-square footprint, attached garage, gabled roof, cost-efficient.
@@ -484,23 +492,6 @@ def _default_model(spec_dict: Dict, nav: Dict, archetype_id: str = "") -> Dict[s
                 {"style": "picture",  "offset_frac": 0.08, "w": 5.0, "h": 2.0, "sill": 0.5},
             ],
             "porches": [{"type": "entry", "depth_m": 3.0, "width_frac": 0.4}],
-        },
-        "adu_compact": {
-            "intent": "ADU Compact — small efficient unit, fiber cement, flat roof",
-            "w": 9.0, "d": 10.5, "fh": 2.9,
-            "shape": "rectangle",
-            "mat": "fiber_cement", "trim": "#4a6a8a", "frame": "#1a2a3a", "door_c": "#2a3a2a",
-            "roof_type": "flat", "pitch": 0, "roof_mat": "flat_membrane", "overhang": 0.25,
-            "band_h": 0.12, "band_floors": [0],
-            "front_wins": [
-                {"style": "casement", "offset_frac": 0.12, "w": 1.4, "h": 1.5, "sill": 0.9},
-                {"style": "casement", "offset_frac": 0.60, "w": 1.4, "h": 1.5, "sill": 0.9},
-            ],
-            "upper_wins": [
-                {"style": "casement", "offset_frac": 0.20, "w": 1.2, "h": 1.2, "sill": 0.9},
-                {"style": "casement", "offset_frac": 0.65, "w": 1.2, "h": 1.2, "sill": 0.9},
-            ],
-            "porches": [],
         },
         "production_tract": {
             "intent": "Production Tract — classic suburban gabled SFR, stucco & brick",

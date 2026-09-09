@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     # Credentials must only come from the environment / backend/.env.  Never
     # ship a usable key as a source-code default.
     ANTHROPIC_API_KEY: str = ""
+    BLENDER_RENDER_ENABLED: bool = False
 
     class Config:
         env_file = ".env"

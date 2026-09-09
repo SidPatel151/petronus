@@ -58,7 +58,6 @@ class ParkingStrategy(str, Enum):
 class BuildingUse(str, Enum):
     single_family = "single_family"
     multi_family  = "multi_family"
-    adu           = "adu"
 
 
 # ── House archetypes ─────────────────────────────────────────────────────────
@@ -85,8 +84,6 @@ class HouseArchetype(str, Enum):
     craftsman        = "craftsman"
     mediterranean    = "mediterranean"
     victorian        = "victorian"
-    # Small / Special
-    adu_compact      = "adu_compact"
 
 
 # ── Priority → archetype affinity ────────────────────────────────────────────
@@ -105,19 +102,21 @@ PRIORITY_ARCHETYPES: dict[str, list[str]] = {
 # ── SFR sqft ranges by bedroom count ─────────────────────────────────────────
 # Tuple: (min_sqft, max_sqft).
 # Sources: NAR, US Census, CA HCD — ranges reflect CA middle-market construction.
+# Both 6BR and 7BR used to top out at exactly 5,500 (the old platform cap), so
+# asking for a bigger house past 5 bedrooms changed nothing. The upper end now
+# runs into genuine custom-home territory.
 SFR_SQFT_RANGES: dict[int, tuple[int, int]] = {
-    1: (500,   900),
-    2: (800,  1300),
-    3: (1200, 1900),
-    4: (1800, 2800),
-    5: (2500, 4200),
-    6: (3500, 5500),
-    7: (4500, 5500),  # capped at platform max
+    1: (500,    900),
+    2: (800,   1300),
+    3: (1200,  1900),
+    4: (1800,  2800),
+    5: (2500,  4200),
+    6: (3500,   6000),
+    7: (4500,   8000),
+    8: (6000,  11000),
+    9: (7500,  15000),
+    10: (9000, 20000),
 }
-
-# Conservative statewide detached-ADU default. A local ordinance may adopt a
-# less restrictive maximum, so callers can override this in project details.
-ADU_MAX_SQFT = 1200
 
 # Priority → fractional position within sqft range (0.0 = min, 1.0 = max)
 PRIORITY_SQFT_POSITION: dict[str, float] = {
@@ -138,8 +137,8 @@ CALIFORNIA_CODE_REFERENCES: list[str] = [
 
 
 def sfr_target_sqft(bedrooms: int, priority: str) -> int:
-    """Return target sqft for SFR/ADU based on bedroom count and priority."""
-    lo, hi = SFR_SQFT_RANGES.get(max(1, min(7, bedrooms)), (1200, 1900))
+    """Return target sqft for an SFR based on bedroom count and priority."""
+    lo, hi = SFR_SQFT_RANGES.get(max(1, min(max(SFR_SQFT_RANGES), bedrooms)), (1200, 1900))
     t = PRIORITY_SQFT_POSITION.get(priority, 0.5)
     return round(lo + (hi - lo) * t)
 

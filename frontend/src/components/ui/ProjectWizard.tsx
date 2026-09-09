@@ -72,17 +72,24 @@ const DESIGN_STYLES = [
 const BUILDING_USES = [
   { key: 'single_family', label: 'Single Family' },
   { key: 'multi_family',  label: 'Multi-Family'  },
-  { key: 'adu',           label: 'ADU'           },
 ];
 
 // Sqft ranges per bedroom count: [min, max] — matches backend SFR_SQFT_RANGES
 // priority drives where in range: cost/speed=low, light=mid, space=high
+// Must stay in step with backend/app/constants.py SFR_SQFT_RANGES. The table
+// stopped at 5 bedrooms here while the backend went to 10, so the wizard could
+// not express a large custom home at all.
 const SFR_SQFT_RANGES: Record<number, [number, number]> = {
-  1: [500,  900],
-  2: [800,  1300],
-  3: [1200, 1900],
-  4: [1800, 2800],
-  5: [2500, 4200],
+  1:  [500,    900],
+  2:  [800,   1300],
+  3:  [1200,  1900],
+  4:  [1800,  2800],
+  5:  [2500,  4200],
+  6:  [3500,  6000],
+  7:  [4500,  8000],
+  8:  [6000, 11000],
+  9:  [7500, 15000],
+  10: [9000, 20000],
 };
 
 const PRIORITY_RANGE_POS: Record<string, number> = {
@@ -105,7 +112,6 @@ const ARCHETYPE_HINTS: Record<string, Record<string, string>> = {
     energy: 'Prairie / Contemporary — high insulation, passive solar',
   },
   multi_family: { cost: 'Efficient corridor plan', time: 'Stacked units', light: 'Atrium plan', space: 'U-shape courtyard', energy: 'Passive-house block' },
-  adu:          { cost: 'Compact studio', time: 'Modular box', light: 'South-facing studio', space: 'Loft layout', energy: 'Super-insulated box' },
 };
 
 const STRUCTURAL = ['wood', 'steel', 'concrete'];
@@ -175,7 +181,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function ProjectWizard() {
-  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, generateBuilding, clickedBuilding, drawnParcel, setDrawnParcel, buildingModel } = useAppStore();
+  const { selectedSite, siteContext, neighborConstraints, spec, updateSpec, startBlueprintDraft, clickedBuilding, drawnParcel, setDrawnParcel, buildingModel } = useAppStore();
 
   // Use drawn parcel area when available — more accurate than OSM parcel
   const parcelAreaSqft = useMemo(() =>
@@ -342,12 +348,10 @@ export default function ProjectWizard() {
         ...(clickedMat && !((spec as any).material_overrides?.walls) ? { walls: clickedMat } : {}),
       } : null,
       fine_details: (spec as any).fine_details || null,
-      primary_dwelling_sprinkler_requirement: buildingUse === 'adu'
-        ? (spec.primary_dwelling_sprinkler_requirement ?? 'unknown')
-        : 'unknown',
-      primary_dwelling_sprinkler_determination_source: buildingUse === 'adu'
-        ? (spec.primary_dwelling_sprinkler_determination_source || null)
-        : null,
+      // Retained as accepted-but-neutral: these two fields existed only for the
+      // ADU sprinkler exception, and ProjectSpec still requires the first one.
+      primary_dwelling_sprinkler_requirement: 'unknown',
+      primary_dwelling_sprinkler_determination_source: null,
       max_height_ft: (spec as any).max_height_ft || null,
       max_floors: (spec as any).max_floors || null,
       max_bedrooms: (spec as any).max_bedrooms || null,
@@ -360,7 +364,9 @@ export default function ProjectWizard() {
       },
     };
     try {
-      await generateBuilding(fullSpec, 0);
+      // Draft the floorplan first — the user edits it in the 2D blueprint
+      // stage before anything gets to 3D/MEP generation.
+      await startBlueprintDraft(fullSpec, 0);
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       const msg = Array.isArray(detail)
@@ -696,59 +702,24 @@ export default function ProjectWizard() {
             Selected from supported 2023–2028 filing dates. With no filing date, the preliminary preflight uses the current 2025 cycle.
           </div>
         </div>
-        {((spec as any).building_use || 'multi_family') === 'adu' && (
-          <>
-            <Field label="Primary Dwelling Sprinkler Requirement">
-              <Select
-                value={spec.primary_dwelling_sprinkler_requirement ?? 'unknown'}
-                onChange={(value) => updateSpec({
-                  primary_dwelling_sprinkler_requirement: value as PrimaryDwellingSprinklerRequirement,
-                  primary_dwelling_sprinkler_determination_source: value === 'unknown'
-                    ? null
-                    : spec.primary_dwelling_sprinkler_determination_source,
-                })}
-                options={['unknown', 'required', 'not_required']}
-              />
-            </Field>
-            {spec.primary_dwelling_sprinkler_requirement !== 'unknown' && (
-              <Field label="Determination Source">
-                <input
-                  type="text"
-                  value={spec.primary_dwelling_sprinkler_determination_source ?? ''}
-                  onChange={(event) => updateSpec({
-                    primary_dwelling_sprinkler_determination_source: event.target.value || null,
-                  })}
-                  placeholder="AHJ record, approved permit set, or written determination"
-                  className="w-full bg-[var(--surface-3)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-gold)] transition-colors font-mono"
-                />
-              </Field>
-            )}
-            <div className="text-[9px] font-mono text-[var(--text-secondary)] opacity-70">
-              Whether sprinklers are installed is not, by itself, a legal determination that they are required.
-            </div>
-          </>
-        )}
       </div>
 
       {/* Building parameters */}
       <div className="panel-section space-y-4">
         <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider">Building Parameters</div>
 
-        {/* Bedrooms + Bathrooms — only shown for single-family / ADU */}
-        {['single_family', 'adu'].includes((spec as any).building_use || 'single_family') && (() => {
-          const isAdu = (spec as any).building_use === 'adu';
-          const br = (spec as any).bedrooms ?? (isAdu ? 1 : 3);
-          const ba = (spec as any).bathrooms ?? (isAdu ? 1 : 2);
+        {/* Bedrooms + Bathrooms — single-family only */}
+        {((spec as any).building_use || 'single_family') === 'single_family' && (() => {
+          const br = (spec as any).bedrooms ?? 3;
+          const ba = (spec as any).bathrooms ?? 2;
           const pri = (spec.priority || 'cost') as string;
-          // ADU sqft ranges capped at CA legal limit of 1,200 sqft
-          const ADU_SQFT: Record<number, [number, number]> = { 0: [300, 500], 1: [500, 800], 2: [700, 1200] };
-          const [lo, hi] = isAdu ? (ADU_SQFT[br] ?? [500, 800]) : (SFR_SQFT_RANGES[br] ?? [1200, 1900]);
-          const suggested = Math.min(isAdu ? 1200 : 99999, sfrTargetSqft(Math.max(1, br), pri));
-          const baOptions = isAdu ? [1, 1.5, 2] : [1, 1.5, 2, 2.5, 3, 3.5];
-          const brOptions = isAdu ? [0, 1, 2] : [1, 2, 3, 4, 5];
+          const [lo, hi] = SFR_SQFT_RANGES[br] ?? [1200, 1900];
+          const suggested = sfrTargetSqft(Math.max(1, br), pri);
+          const baOptions = [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+          const brOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
           return (
             <>
-              <Field label={isAdu ? 'Bedrooms (Studio–2BR)' : 'Bedrooms (1–5)'}>
+              <Field label="Bedrooms (1–10)">
                 <div className="flex gap-1.5">
                   {brOptions.map((n) => {
                     const active = br === n;
@@ -766,9 +737,8 @@ export default function ProjectWizard() {
                   })}
                 </div>
                 <div className="text-[10px] font-mono text-[var(--text-secondary)] opacity-70 mt-1">
-                  {br === 0 ? 'Studio' : `${br}BR`} range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
-                  {isAdu && <span className="ml-2 text-[var(--accent-amber)]">CA max 1,200 sqft</span>}
-                  {!isAdu && <span className="ml-2 text-[var(--accent-gold)]">({pri} target: ~{suggested.toLocaleString()} sqft)</span>}
+                  {`${br}BR`} range: {lo.toLocaleString()}–{hi.toLocaleString()} sqft
+                  <span className="ml-2 text-[var(--accent-gold)]">({pri} target: ~{suggested.toLocaleString()} sqft)</span>
                 </div>
               </Field>
               <Field label="Bathrooms">
@@ -816,14 +786,14 @@ export default function ProjectWizard() {
             )}
             {(() => {
               const buildingUseVal = (spec as any).building_use || 'single_family';
-              const isAduVal = buildingUseVal === 'adu';
               const isSfrVal = buildingUseVal === 'single_family';
-              const platformCap = isAduVal ? 1200 : isSfrVal ? 5500 : null;
+              // Mirrors PlatformLimits.sfr_max_sqft in backend/app/constraints.py.
+              const platformCap = isSfrVal ? 25000 : null;
               const enteredArea = spec.target_gross_area_sqft;
               if (platformCap && enteredArea && enteredArea > platformCap) {
                 return (
                   <div className="text-[10px] font-mono text-[var(--accent-amber)]">
-                    ⚠ Will be capped at {platformCap.toLocaleString()} sqft at generation — {isAduVal ? 'CA ADU law (AB-68)' : 'platform SFR limit'}
+                    ⚠ Will be capped at {platformCap.toLocaleString()} sqft at generation — platform SFR limit
                   </div>
                 );
               }

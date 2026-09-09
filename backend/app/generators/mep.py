@@ -19,6 +19,7 @@ from typing import List, Dict, Tuple, Optional, Any, Sequence
 from app.models.schemas import MEPElement, Room, Wall, ProjectSpec, Level
 from shapely.geometry import Polygon, Point as ShpPoint, LineString
 from shapely.ops import polygonize, unary_union
+from app.generators.geometry_utils import footprint_polygon_from_walls_or_rooms
 
 # ── Zone heights relative to floor datum ─────────────────────────────────
 ZONE = {
@@ -46,6 +47,36 @@ FIXTURE_UNITS = {
     "washer":   3.0,
 }
 
+# Fixture units per ROOM, summing the fixtures _route_plumbing actually emits
+# into that room type.
+#
+# FIXTURE_UNITS above is keyed by FIXTURE type ("toilet", "sink"); the stack and
+# branch sizing looked it up with a ROOM type ("bathroom", "laundry"), which
+# silently fell through to the default on every lookup. A 3-bath house summed to
+# 9 DFU and got a 3" soil stack, against the `stack_diameter_in: 4` that every
+# archetype JSON specifies, and every supply branch came out 0.75" regardless of
+# what it served.
+# Values are CPC *bathroom group* DFUs, not the arithmetic sum of the group's
+# individual fixtures — a full bath counts as 6, not toilet 3 + lav 2 + shower 2.
+ROOM_DRAIN_FIXTURE_UNITS = {
+    "bathroom":  6.0,   # full bathroom group
+    "half_bath": 4.0,   # water closet + lavatory
+    "powder":    4.0,
+    "kitchen":   2.0,   # kitchen sink
+    "laundry":   2.0,   # clothes washer standpipe
+    "utility":   2.0,
+}
+
+# Water supply fixture units (WSFU) per room — a different scale from DFU.
+ROOM_SUPPLY_FIXTURE_UNITS = {
+    "bathroom":  4.0,
+    "half_bath": 2.0,
+    "powder":    2.0,
+    "kitchen":   2.0,
+    "laundry":   2.0,
+    "utility":   2.0,
+}
+
 # ── Preliminary pipe sizing by fixture units; verify against adopted CPC ─
 # (max_wsfu, pipe_size_in)
 WATER_PIPE_SIZES = [
@@ -59,13 +90,17 @@ WATER_PIPE_SIZES = [
 
 # ── Preliminary drain sizing by DFU; verify against adopted CPC ──────────
 # (max_dfu, pipe_size_in)
+# Capacities are for a STACK (CPC Table 703.2 order of magnitude), not for a
+# horizontal branch. The old table topped a 4" stack out at 20 DFU, so an
+# ordinary 3-bath house jumped to a 6" stack — against the `stack_diameter_in:
+# 4` that every archetype JSON specifies.
 DRAIN_PIPE_SIZES = [
     (1,   1.25),
-    (3,   1.50),
+    (2,   1.50),
     (6,   2.00),
-    (12,  3.00),
-    (20,  4.00),
-    (160, 6.00),
+    (20,  3.00),
+    (90,  4.00),
+    (700, 6.00),
 ]
 
 # ── Conceptual duct sizing by CFM; final design requires loads/Manual D ──
@@ -168,26 +203,17 @@ class MEPRouter:
             if not (room.type == "unit" and room.id in child_unit_ids)
         ]
 
-        is_adu = getattr(spec, 'building_use', None) in ('adu',)
-        try:
-            from app.constants import BuildingUse as _BU
-            is_adu = is_adu or getattr(spec, 'building_use', None) == _BU.adu
-        except Exception:
-            pass
-
         elements = []
         elements.extend(self._route_fire_protection(rooms_inside, levels, floor_h, fine))
         elements.extend(self._route_plumbing(
             rooms_inside, walls, levels, floor_h, bath_count,
-            is_adu=is_adu, profile=fine,
+            profile=fine,
         ))
         elements.extend(self._route_hvac(
             rooms_inside, levels, spec.hvac_preference, floor_h, fine,
         ))
-        elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine, is_adu=is_adu))
+        elements.extend(self._route_electrical(rooms_inside, walls, levels, floor_h, power_connection, fine))
         elements.extend(self._place_furniture(rooms_inside, levels, floor_h))
-        if is_adu:
-            elements.extend(self._adu_sewer_lateral(rooms_inside, walls))
 
         # Plumbing is generated before electrical, so sanitary vents do not
         # initially know where receptacle wall drops will land. Feed those
@@ -205,7 +231,15 @@ class MEPRouter:
             fp_check = fp_poly.buffer(0.02)
             kept = []
             for el in elements:
-                if el.type in {"utility_lateral", "sewer_lateral"}:
+                # Honour the same opt-out _contain_and_reroute uses. This pass
+                # only knew about the two lateral types, so anything else that
+                # legitimately lives outdoors — a side-yard condenser, its line
+                # set, the condensate drain — was silently deleted here even
+                # though it had already been marked as allowed to sit outside.
+                if (
+                    el.type in {"utility_lateral", "sewer_lateral"}
+                    or (el.metadata or {}).get("allow_outside_footprint")
+                ):
                     meta = dict(el.metadata or {})
                     meta["allow_outside_footprint"] = True
                     kept.append(el.model_copy(update={"metadata": meta}))
@@ -260,6 +294,18 @@ class MEPRouter:
             ):
                 if key in electrical:
                     profile[key] = electrical[key]
+            # Equipment placement guidance the archetypes already carry. These
+            # keys exist in every archetype JSON but were never read, so a
+            # "central_ducted_heat_pump / side_yard condenser / central_attic
+            # air handler" spec still rendered as a single commercial rooftop
+            # unit with no indoor equipment at all.
+            for key in (
+                "air_handler_location", "outdoor_unit_location",
+                "condensate_drain_required", "refrigerant_line_routing",
+                "filter_return_location",
+            ):
+                if key in hvac:
+                    profile[key] = hvac[key]
             if "erv_hrv_required" in hvac:
                 profile["erv_hrv_required"] = bool(hvac["erv_hrv_required"])
             if "heat_pump_design_default" in hvac:
@@ -273,76 +319,27 @@ class MEPRouter:
             if isinstance(sprinkler_rule, bool):
                 profile["fire_sprinklers"] = sprinkler_rule
 
-        # An ADU sprinkler exception is a legal applicability determination,
-        # not an inference from whether sprinklers happen to be installed in
-        # the primary dwelling.  Require the new explicit determination and a
-        # traceable source; the legacy boolean alone must never remove the
-        # conservative sprinkler layout.
         building_use = getattr(getattr(spec, "building_use", None), "value", getattr(spec, "building_use", None))
         profile["building_use"] = building_use
         profile["fire_standard"] = (
-            "NFPA 13D" if building_use in ("single_family", "adu") else "NFPA 13R"
+            "NFPA 13D" if building_use == "single_family" else "NFPA 13R"
         )
         profile.update((getattr(spec, "fine_details", None) or {}))
         # This generator creates new residential buildings. Required life-safety
-        # systems are code applicability, not cosmetic user preferences.  The
-        # statutory ADU exception is the only modeled sprinkler opt-out.
+        # systems are code applicability, not cosmetic user preferences. The
+        # statutory ADU exception used to be the only modeled sprinkler opt-out;
+        # with ADUs removed there is none, so new construction is always
+        # sprinklered. Set after the fine_details merge above so a user flag
+        # cannot switch a required system off.
         profile["fire_alarms"] = True
         profile["carbon_monoxide_detectors"] = True
-        sprinkler_requirement = getattr(
-            spec, "primary_dwelling_sprinkler_requirement", None
-        )
-        sprinkler_requirement = getattr(
-            sprinkler_requirement, "value", sprinkler_requirement
-        )
-        determination_source = getattr(
-            spec, "primary_dwelling_sprinkler_determination_source", None
-        )
-        documented_adu_exception = (
-            building_use == "adu"
-            and str(sprinkler_requirement or "").strip().lower() == "not_required"
-            and isinstance(determination_source, str)
-            and bool(determination_source.strip())
-        )
-        profile["adu_sprinkler_exception_documented"] = documented_adu_exception
-        profile["primary_dwelling_sprinkler_requirement"] = sprinkler_requirement
-        profile["primary_dwelling_sprinkler_determination_source"] = determination_source
-        profile["fire_sprinklers"] = not documented_adu_exception
+        profile["fire_sprinklers"] = True
         return profile
 
     def _footprint_polygon(
         self, rooms: List[Room], walls: List[Wall]
     ) -> Optional[Polygon]:
-        exterior = [
-            LineString([w.start, w.end])
-            for w in walls
-            if getattr(w, "is_exterior", False) and w.level == 0
-            and len(w.start) >= 2 and len(w.end) >= 2
-        ]
-        try:
-            candidates = list(polygonize(unary_union(exterior))) if exterior else []
-            if candidates:
-                shell = max(candidates, key=lambda p: p.area)
-                if shell.is_valid and not shell.is_empty:
-                    return shell
-        except Exception:
-            pass
-
-        # Safe fallback for incomplete wall graphs: union the actual level-zero
-        # room polygons.  A tiny closing buffer bridges wall-thickness gaps.
-        try:
-            room_polys = [
-                Polygon(r.polygon)
-                for r in rooms if r.level == 0 and len(r.polygon) >= 3
-            ]
-            merged = unary_union(room_polys).buffer(0.12, join_style=2)
-            if not merged.is_empty:
-                if merged.geom_type == "MultiPolygon":
-                    merged = max(merged.geoms, key=lambda p: p.area)
-                return merged if merged.is_valid else merged.buffer(0)
-        except Exception:
-            pass
-        return None
+        return footprint_polygon_from_walls_or_rooms(walls, rooms, level_index=0)
 
     def _shortest_horizontal_path(
         self, start: Tuple[float, float], end: Tuple[float, float], footprint: Polygon,
@@ -734,7 +731,7 @@ class MEPRouter:
 
     def _route_plumbing(
         self, rooms: List[Room], walls: List[Wall], levels: List[Level], floor_h: float,
-        bath_count: Optional[float] = None, is_adu: bool = False,
+        bath_count: Optional[float] = None,
         profile: Optional[Dict[str, Any]] = None,
     ) -> List[MEPElement]:
         """
@@ -784,8 +781,9 @@ class MEPRouter:
 
             # Soil stack (main waste): ground slab to roof vent
             total_dfu = sum(
-                FIXTURE_UNITS.get(r.type, 1.0) * 1.5
-                for r in rooms if r.type in ("bathroom", "kitchen", "laundry")
+                ROOM_DRAIN_FIXTURE_UNITS.get(r.type, 1.0)
+                for r in rooms
+                if r.type in ROOM_DRAIN_FIXTURE_UNITS
             )
             drain_d = self._drain_pipe_size(total_dfu)
 
@@ -859,12 +857,12 @@ class MEPRouter:
         else:
             hwh_cx, hwh_cz = stack_positions[0] if stack_positions else (0.0, 0.0)
 
-        # ADU: prefer heat pump water heater (CA Title 24 / energy compliance)
+        # Heat pump water heater by default (CA Title 24 / energy compliance).
         configured_hwh = str(profile.get("water_heater_type", "")).lower()
         use_heat_pump_hwh = bool(profile.get("heat_pump_water_heater", True))
         hwh_type = (
             "heat_pump_water_heater"
-            if is_adu or use_heat_pump_hwh or "heat_pump" in configured_hwh
+            if use_heat_pump_hwh or "heat_pump" in configured_hwh
             else "water_heater"
         )
         elements.append(MEPElement(
@@ -948,7 +946,7 @@ class MEPRouter:
                 }
 
                 # Cold supply branch
-                total_room_fu = FIXTURE_UNITS.get(room.type, 2.0)
+                total_room_fu = ROOM_SUPPLY_FIXTURE_UNITS.get(room.type, 2.0)
                 supply_d = self._water_pipe_size(total_room_fu)
                 cold_branch_id = f"cold_{uuid.uuid4().hex[:5]}"
                 elements.append(MEPElement(
@@ -1369,21 +1367,74 @@ class MEPRouter:
             self._point_keepout(electrical_x, electrical_z, "electrical"),
         ))
 
-        # Rooftop unit
+        # ── Central equipment ────────────────────────────────────────────────
+        # A split system: indoor air handler + outdoor condenser + the line set
+        # and condensate drain between them. This used to be a single
+        # `rooftop_unit` — commercial packaging that no house has — with no
+        # indoor equipment, no condenser and no refrigerant piping anywhere in
+        # central mode, while the archetype JSON asked for an attic air handler
+        # and a side-yard condenser.
+        top_lvl = total_floors - 1
+        ah_y = top_lvl * floor_h + ZONE["duct_supply"] + 0.10
         elements.append(MEPElement(
-            id="rtu_main",
-            system="hvac",
-            type="rooftop_unit",
-            start=[bld_cx, roof_y + 0.2, bld_cz],
-            level=total_floors - 1,
-            width_in=48,
-            height_in=36,
+            id="air_handler_main",
+            system="hvac", type="air_handler",
+            start=[bld_cx, ah_y, bld_cz], level=top_lvl,
+            width_in=24, height_in=48,
             metadata={
                 "heat_pump": bool(profile.get("heat_pump_hvac", True)),
+                "location_guidance": profile.get("air_handler_location", "central_attic"),
                 "seer2": 16.0, "hspf2": 8.5,
-                "anchored": True, "service_clearance_in": 30,
+                "anchored": True, "service_clearance_in": 24,
                 "duct_r_value": 8, "duct_sealed": True,
             },
+        ))
+
+        # Condenser on grade, clear of the footprint on the shorter side.
+        cond_x, cond_z = self._nearest_envelope_point(
+            [r for r in rooms if r.level == 0], bld_cx, bld_cz
+        )
+        cond_x += (cond_x - bld_cx) * 0.06 + (0.9 if cond_x >= bld_cx else -0.9)
+        cond_z += (cond_z - bld_cz) * 0.06
+        elements.append(MEPElement(
+            id="condenser_main",
+            system="hvac", type="condenser_unit",
+            start=[cond_x, 0.35, cond_z], level=0,
+            width_in=34, height_in=34,
+            metadata={
+                "heat_pump": bool(profile.get("heat_pump_hvac", True)),
+                "location_guidance": profile.get("outdoor_unit_location", "side_yard"),
+                "on_pad": True, "anchored": True, "service_clearance_in": 24,
+                # Side-yard condenser genuinely sits outside the footprint.
+                "allow_outside_footprint": True,
+            },
+        ))
+        elements.append(MEPElement(
+            id="refrigerant_lineset_main",
+            system="hvac", type="refrigerant_line",
+            start=[bld_cx, ah_y, bld_cz], end=[cond_x, 0.55, cond_z],
+            level=0, diameter_in=0.875,
+            metadata={
+                "routing": profile.get("refrigerant_line_routing", "through_attic"),
+                "insulated": True, "line_set": "suction_and_liquid",
+                "allow_outside_footprint": True,
+            },
+        ))
+        if profile.get("condensate_drain_required", True):
+            elements.append(MEPElement(
+                id="condensate_drain_main",
+                system="hvac", type="condensate_drain",
+                start=[bld_cx, ah_y - 0.15, bld_cz],
+                end=[cond_x, 0.20, cond_z],
+                level=0, diameter_in=0.75,
+                metadata={"slope_in_per_ft": 0.25, "primary_and_secondary": True,
+                       "allow_outside_footprint": True},
+            ))
+        elements.append(MEPElement(
+            id="thermostat_main",
+            system="hvac", type="thermostat",
+            start=[bld_cx, 1.45, bld_cz], level=0,
+            metadata={"zones": total_floors, "smart": True},
         ))
 
         for level in levels:
@@ -1404,31 +1455,113 @@ class MEPRouter:
                 },
             ))
 
-            # Direct branch from riser to each room centroid — no spanning trunk
-            for room in rooms:
-                if room.level != lvl or room.type in ("stair",):
-                    continue
-                supply_x, supply_z = self._room_slot(room, "hvac_supply")
-                return_x, return_z = self._room_slot(room, "hvac_return")
-                room_area_m2 = room.area_sqft * 0.0929
-                cfm = max(50, int(room_area_m2 * 10.764 *
-                          CFM_PER_100SQFT.get(room.type, 20) / 100))
-                bw, bh, _ = self._duct_size(cfm)
+            # ── Trunk-and-branch supply, not a star ──────────────────────────
+            # Every room used to get its own full-length duct running from the
+            # riser coordinate straight to the room, all overlapping in the
+            # middle of the plan. A real ducted system has a plenum, a trunk
+            # that reduces in section as it sheds air, short takeoffs to each
+            # register, and a balancing damper at every takeoff.
+            level_rooms = [
+                r for r in rooms
+                if r.level == lvl and r.type not in ("stair",)
+            ]
+            if not level_rooms:
+                continue
 
-                elements.append(MEPElement(
-                    id=f"hvac_branch_{uuid.uuid4().hex[:5]}",
-                    system="hvac", type="supply_branch",
-                    start=[bld_cx, ceil_y, bld_cz],
-                    end=[supply_x, ceil_y, supply_z],
-                    level=lvl, width_in=bw, height_in=bh,
-                    metadata={
-                        "room_id": room.id, "network_id": "hvac_supply",
-                        "capacity_cfm": cfm, "duct_r_value": 8,
-                        "duct_sealed": True, "seismic_braced": True,
-                        "_coordination_avoid_points": vertical_trade_keepouts,
-                        "_coordination_clearance_m": 0.32,
-                    },
-                ))
+            supply_pt: Dict[str, Tuple[float, float]] = {}
+            room_cfm: Dict[str, int] = {}
+            for room in level_rooms:
+                supply_pt[room.id] = self._room_slot(room, "hvac_supply")
+                room_area_sqft = room.area_sqft
+                room_cfm[room.id] = max(
+                    50,
+                    int(room_area_sqft * CFM_PER_100SQFT.get(room.type, 20) / 100),
+                )
+            level_cfm = sum(room_cfm.values())
+
+            # Run the trunk down whichever plan axis the registers spread along.
+            xs = [p[0] for p in supply_pt.values()]
+            zs = [p[1] for p in supply_pt.values()]
+            trunk_along_x = (max(xs) - min(xs)) >= (max(zs) - min(zs))
+            cross = bld_cz if trunk_along_x else bld_cx
+            origin = bld_cx if trunk_along_x else bld_cz
+
+            def _station(room_id: str) -> float:
+                return supply_pt[room_id][0] if trunk_along_x else supply_pt[room_id][1]
+
+            def _pt(along_v: float, y: float) -> List[float]:
+                return [along_v, y, cross] if trunk_along_x else [cross, y, along_v]
+
+            pw, ph, _ = self._duct_size(level_cfm)
+            elements.append(MEPElement(
+                id=f"supply_plenum_{lvl}",
+                system="hvac", type="supply_plenum",
+                start=_pt(origin, ceil_y), level=lvl,
+                width_in=pw + 4, height_in=ph + 4,
+                metadata={
+                    "network_id": "hvac_supply", "capacity_cfm": level_cfm,
+                    "duct_r_value": 8, "duct_sealed": True,
+                },
+            ))
+
+            # Two trunk runs leaving the plenum, each shedding air as it goes.
+            for direction in (1, -1):
+                side = sorted(
+                    [r for r in level_rooms
+                     if (_station(r.id) - origin) * direction > 0.05],
+                    key=lambda r: abs(_station(r.id) - origin),
+                )
+                if not side:
+                    continue
+                cursor = origin
+                remaining = sum(room_cfm[r.id] for r in side)
+                for room in side:
+                    station = _station(room.id)
+                    tw, th, _ = self._duct_size(remaining)
+                    if abs(station - cursor) > 0.05:
+                        elements.append(MEPElement(
+                            id=f"supply_trunk_{uuid.uuid4().hex[:5]}",
+                            system="hvac", type="supply_trunk",
+                            start=_pt(cursor, ceil_y), end=_pt(station, ceil_y),
+                            level=lvl, width_in=tw, height_in=th,
+                            metadata={
+                                "network_id": "hvac_supply",
+                                "capacity_cfm": remaining,
+                                "duct_r_value": 8, "duct_sealed": True,
+                                "seismic_braced": True,
+                                "_coordination_avoid_points": vertical_trade_keepouts,
+                                "_coordination_clearance_m": 0.32,
+                            },
+                        ))
+                    cfm = room_cfm[room.id]
+                    bw, bh, _ = self._duct_size(cfm)
+                    supply_x, supply_z = supply_pt[room.id]
+                    elements.append(MEPElement(
+                        id=f"takeoff_{uuid.uuid4().hex[:5]}",
+                        system="hvac", type="supply_takeoff",
+                        start=_pt(station, ceil_y),
+                        end=[supply_x, ceil_y, supply_z],
+                        level=lvl, width_in=bw, height_in=bh,
+                        metadata={
+                            "room_id": room.id, "network_id": "hvac_supply",
+                            "capacity_cfm": cfm, "duct_r_value": 8,
+                            "duct_sealed": True,
+                        },
+                    ))
+                    elements.append(MEPElement(
+                        id=f"damper_{uuid.uuid4().hex[:5]}",
+                        system="hvac", type="balancing_damper",
+                        start=_pt(station, ceil_y), level=lvl,
+                        width_in=bw, height_in=bh,
+                        metadata={"room_id": room.id, "capacity_cfm": cfm},
+                    ))
+                    cursor = station
+                    remaining -= cfm
+
+            for room in level_rooms:
+                cfm = room_cfm[room.id]
+                bw, bh, _ = self._duct_size(cfm)
+                supply_x, supply_z = supply_pt[room.id]
                 elements.append(MEPElement(
                     id=f"diffuser_{uuid.uuid4().hex[:5]}",
                     system="hvac", type="supply_diffuser",
@@ -1436,8 +1569,49 @@ class MEPRouter:
                     level=lvl, width_in=bw, height_in=4,
                     metadata={"room_id": room.id, "capacity_cfm": cfm},
                 ))
-                # A complete central system needs a return/transfer path, not
-                # only supply air.  Keep return branches in their own zone.
+
+            # ── Return path ─────────────────────────────────────────────────
+            # A central filter-back return per level, ducted returns from the
+            # larger rooms, and transfer grilles everywhere else. Bathrooms and
+            # kitchens must NOT be on the return side — pulling air out of them
+            # spreads moisture and odour through the system, and every room
+            # used to get one.
+            rw, rh, _ = self._duct_size(level_cfm)
+            elements.append(MEPElement(
+                id=f"return_plenum_{lvl}",
+                system="hvac", type="return_plenum",
+                start=[bld_cx, ret_y, bld_cz], level=lvl,
+                width_in=rw + 4, height_in=rh + 4,
+                metadata={
+                    "network_id": "hvac_return", "capacity_cfm": level_cfm,
+                    "filter_merv": 13, "duct_sealed": True,
+                },
+            ))
+            elements.append(MEPElement(
+                id=f"filter_grille_{lvl}",
+                system="hvac", type="filter_grille",
+                start=[bld_cx, ret_y + 0.03, bld_cz], level=lvl,
+                width_in=rw + 6, height_in=rh + 6,
+                metadata={"capacity_cfm": level_cfm, "filter_merv": 13},
+            ))
+
+            _NO_RETURN = ("bathroom", "half_bath", "powder", "kitchen", "laundry", "utility")
+            for room in level_rooms:
+                cfm = room_cfm[room.id]
+                bw, bh, _ = self._duct_size(cfm)
+                return_x, return_z = self._room_slot(room, "hvac_return")
+                if room.type in _NO_RETURN:
+                    elements.append(MEPElement(
+                        id=f"transfer_grille_{uuid.uuid4().hex[:5]}",
+                        system="hvac", type="transfer_grille",
+                        start=[return_x, lvl * floor_h + ZONE["duct_return"] + 0.03, return_z],
+                        level=lvl, width_in=max(8, bw), height_in=4,
+                        metadata={
+                            "room_id": room.id, "capacity_cfm": cfm,
+                            "reason": "wet room excluded from ducted return",
+                        },
+                    ))
+                    continue
                 elements.append(MEPElement(
                     id=f"return_{uuid.uuid4().hex[:5]}",
                     system="hvac", type="return_branch",
@@ -1578,11 +1752,20 @@ class MEPRouter:
                             "terminates_outdoors": True,
                         },
                     ))
+                    # Terminate at the nearest point on the BUILDING envelope,
+                    # not at the room's own minimum-x bound. `bds[0]` is an
+                    # interior wall for every room that isn't on the west side,
+                    # so bath, kitchen and laundry exhaust was being discharged
+                    # into the middle of the house while asserting
+                    # "terminates_outdoors": True.
+                    term_x, term_z = self._nearest_envelope_point(
+                        level_rooms, cx, cz
+                    )
                     elements.append(MEPElement(
                         id=f"exhaust_duct_{uuid.uuid4().hex[:5]}",
                         system="hvac", type="exhaust_duct",
                         start=[cx, plenum_y, cz],
-                        end=[bds[0] + 0.02, plenum_y, cz],
+                        end=[term_x, plenum_y, term_z],
                         level=lvl, width_in=6, height_in=6,
                         metadata={
                             "room_id": room.id, "capacity_cfm": exhaust_cfm,
@@ -1612,7 +1795,7 @@ class MEPRouter:
 
     def _route_electrical(
         self, rooms: List[Room], walls: List[Wall], levels: List[Level],
-        floor_h: float, power_connection: dict, fine: dict, is_adu: bool = False,
+        floor_h: float, power_connection: dict, fine: dict,
     ) -> List[MEPElement]:
         """
         Code-informed preliminary residential electrical layout:
@@ -1716,17 +1899,15 @@ class MEPRouter:
         ]
 
         # Service sizing is preliminary until an NEC 220 load calculation is
-        # completed.  Do not infer a separate ADU service from floor area alone.
-        adu_service = str(fine.get("adu_electrical_service", "sub_panel_from_primary"))
-        dedicated_adu_service = is_adu and adu_service == "dedicated_service"
-        panel_type = "main_panel" if not is_adu or dedicated_adu_service else "sub_panel"
-        panel_amps = int(fine.get("service_amps", 100 if is_adu else 200))
+        # completed. Every building now has its own main service.
+        panel_type = "main_panel"
+        panel_amps = int(fine.get("service_amps", 200))
         elements.append(MEPElement(
             id="main_panel", system="electrical", type=panel_type,
             start=[panel_x, 1.2, panel_z], level=0,
             metadata={
                 "amps": panel_amps,
-                "adu_service": adu_service if is_adu else "standard",
+                "service_type": "standard",
                 "load_calculation_required": True,
                 "service_clearance_in": 30,
                 "anchored": True,
@@ -1877,7 +2058,7 @@ class MEPRouter:
                 else:
                     outlet_count = 0
                 outlet_count = min(outlet_count, 24)
-                receptacle_positions: List[Tuple[float, float, bool, float, str]] = []
+                receptacle_positions: List[Tuple[float, float, bool, float, str, float]] = []
                 perimeter_spacing_ft = round(
                     perimeter / outlet_count * 3.28084, 2
                 ) if outlet_count else 0.0
@@ -1886,10 +2067,17 @@ class MEPRouter:
                     move_x = inward_point.x - wall_point.x
                     move_z = inward_point.y - wall_point.y
                     move_length = max(math.hypot(move_x, move_z), 0.001)
+                    # The normalised inward vector is the host wall's normal —
+                    # exactly the facing the renderers need. It was already
+                    # being computed here and then thrown away, which is why
+                    # every outlet came out axis-aligned regardless of which
+                    # wall it sat on.
+                    nx, nz = move_x / move_length, move_z / move_length
                     receptacle_positions.append((
-                        float(wall_point.x + move_x / move_length * 0.05),
-                        float(wall_point.y + move_z / move_length * 0.05), False,
+                        float(wall_point.x + nx * 0.05),
+                        float(wall_point.y + nz * 0.05), False,
                         perimeter_spacing_ft, "room_perimeter_even_spacing",
+                        math.degrees(math.atan2(nx, nz)),
                     ))
 
                 # Kitchen counter wall-line spacing: no point is more than 24
@@ -1906,13 +2094,16 @@ class MEPRouter:
                         px = min_x + 0.06
                         pz = min_room_z + 0.3 + counter_length * (counter_index + 0.5) / counter_count
                         if polygon.buffer(0.01).covers(ShpPoint(px, pz)):
+                            # Counter run sits against the room's -X wall, so
+                            # its receptacles face +X (yaw 90°).
                             receptacle_positions.append((
                                 px, pz, True, counter_spacing_ft,
-                                "modeled_counter_run_even_spacing",
+                                "modeled_counter_run_even_spacing", 90.0,
                             ))
 
                 for outlet_index, (
-                    outlet_x, outlet_z, countertop, design_spacing_ft, spacing_basis
+                    outlet_x, outlet_z, countertop, design_spacing_ft, spacing_basis,
+                    outlet_yaw,
                 ) in enumerate(receptacle_positions):
                     is_wet = room.type in ("bathroom", "kitchen", "laundry", "garage")
                     if room.type == "kitchen":
@@ -1938,6 +2129,7 @@ class MEPRouter:
                     elements.append(MEPElement(
                         id=f"outlet_{uuid.uuid4().hex[:5]}", system="electrical", type="outlet",
                         start=[outlet_x, floor_y + ZONE["outlet"], outlet_z], level=lvl,
+                        rotation_deg=outlet_yaw,
                         metadata={
                             "room_id": room.id, "circuit_id": circuit_id,
                             "gfci": is_wet, "afci": room.type in habitable_types,
@@ -1962,11 +2154,15 @@ class MEPRouter:
                     ))
 
                 switch_point = boundary.interpolate(min(0.45, perimeter * 0.1))
-                sx = switch_point.x + (inward_point.x - switch_point.x) * 0.08
-                sz = switch_point.y + (inward_point.y - switch_point.y) * 0.08
+                s_dx = inward_point.x - switch_point.x
+                s_dz = inward_point.y - switch_point.y
+                s_len = max(math.hypot(s_dx, s_dz), 0.001)
+                sx = switch_point.x + s_dx * 0.08
+                sz = switch_point.y + s_dz * 0.08
                 elements.append(MEPElement(
                     id=f"switch_{uuid.uuid4().hex[:5]}", system="electrical", type="light_switch",
                     start=[float(sx), floor_y + ZONE["switch"], float(sz)], level=lvl,
+                    rotation_deg=math.degrees(math.atan2(s_dx / s_len, s_dz / s_len)),
                     metadata={
                         "room_id": room.id, "circuit_id": lighting_circuit,
                         "controls_room_lighting": True,
@@ -2289,48 +2485,6 @@ class MEPRouter:
 
         return elements
 
-    # ── ADU-specific routing ──────────────────────────────────────────────
-
-    def _adu_sewer_lateral(self, rooms: List[Room], walls: List[Wall]) -> List[MEPElement]:
-        """
-        ADU sewer lateral: exits the ADU and connects to the primary home's existing sewer.
-        Uses a conservative notional 2.1% slope. Final size, material, route,
-        invert elevation, and slope require adopted CPC and utility review.
-        """
-        elements = []
-        all_pts = [p for r in rooms for p in r.polygon]
-        if not all_pts:
-            return elements
-
-        # Exit from rear of ADU (max Z = away from street) — typical CA backyard ADU routing
-        min_x = min(p[0] for p in all_pts)
-        max_x = max(p[0] for p in all_pts)
-        max_z = max(p[1] for p in all_pts)
-        cx = (min_x + max_x) / 2
-
-        # Lateral exits building at sub-slab level (-0.30m) and runs toward primary house
-        # Assume primary home sewer is ~25ft (7.6m) behind the ADU rear wall
-        lateral_run_m = 7.6
-        slope = 0.021     # 1/4" per foot = 2.1% — just above IPC minimum
-        drop = lateral_run_m * slope
-
-        elements.append(MEPElement(
-            id="adu_sewer_lateral",
-            system="plumbing",
-            type="sewer_lateral",
-            start=[cx, -0.30, max_z],
-            end=[cx, -0.30 - drop, max_z + lateral_run_m],
-            level=0,
-            diameter_in=4.0,
-            metadata={
-                "slope_pct": round(slope * 100, 1),
-                "run_ft": round(lateral_run_m * 3.281, 1),
-                "note": "Ties into primary home sewer — verify invert elevation before permit",
-            },
-        ))
-        return elements
-
-    # ── Geometry helpers ──────────────────────────────────────────────────
 
     def _central_hvac_position(
         self, rooms: List[Room], role: str = "hvac_equipment"
@@ -2387,6 +2541,32 @@ class MEPRouter:
         )
         chosen = offset_candidate if usable.covers(offset_candidate) else usable.representative_point()
         return float(chosen.x), float(chosen.y)
+
+    def _nearest_envelope_point(
+        self, level_rooms: List[Room], x: float, z: float
+    ) -> Tuple[float, float]:
+        """Closest point on the level's outer bounding envelope to (x, z).
+
+        Used to terminate exhaust ducts on a real exterior face. Falls back to
+        the given point if the level has no usable geometry.
+        """
+        xs: List[float] = []
+        zs: List[float] = []
+        for room in level_rooms:
+            for px, pz in room.polygon:
+                xs.append(px)
+                zs.append(pz)
+        if not xs or not zs:
+            return x, z
+        min_x, max_x, min_z, max_z = min(xs), max(xs), min(zs), max(zs)
+        # Distance to each of the four faces; push through the closest one.
+        options = [
+            (x - min_x, (min_x - 0.02, z)),
+            (max_x - x, (max_x + 0.02, z)),
+            (z - min_z, (x, min_z - 0.02)),
+            (max_z - z, (x, max_z + 0.02)),
+        ]
+        return min(options, key=lambda option: option[0])[1]
 
     def _room_slot(self, room: Room, role: str) -> Tuple[float, float]:
         """Return a deterministic, contained service point for one trade role.

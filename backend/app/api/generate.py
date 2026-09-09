@@ -1,14 +1,12 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from app.models.schemas import GenerateRequest, JobStatus, ProjectSpec, SiteInput, LatLon
 from app.services.orchestrator import GenerationOrchestrator
+from app.services.job_store import JOBS as _jobs
 from app.api.projects import get_projects_store
 import uuid
 import traceback
 
 router = APIRouter()
-
-# In-memory job store
-_jobs: dict = {}
 
 
 def _validated_massing_choice(choice: int | None) -> int:

@@ -69,7 +69,8 @@ class MassingGenerator:
         target_w = min(target_w, env_w * 0.90)
         target_d = min(target_d, env_d * 0.90)
 
-        target_area_m2 = max(10, self._target_area_m2(spec))
+        _PLATFORM_MAX_SQFT = 5500.0
+        target_area_m2 = max(10, min(self._target_area_m2(spec), _PLATFORM_MAX_SQFT * 0.0929))
         floor_height_m = max(0.1, spec.floor_to_floor_height_ft * 0.3048)
         stories = max(1, spec.stories)
 
@@ -81,20 +82,15 @@ class MassingGenerator:
         grad_z = terrain.get("grad_z", 0.0)
 
         _buse = getattr(spec, 'building_use', None)
-        _is_sfr = _buse in (BuildingUse.single_family, BuildingUse.adu, 'single_family', 'adu')
-        _is_adu = _buse in (BuildingUse.adu, 'adu')
+        _is_sfr = _buse in (BuildingUse.single_family, 'single_family')
 
-        # ADU is always a flat-roof modern box — porch/stair code must never run.
-        if _is_adu:
-            style_val = 'modern_linear'
-        else:
-            # Resolve style: explicit arg → spec.style → building-use default.
-            # Never fall back to brief_shape ('rectangle') as a style name.
-            style_val = style or getattr(spec, 'style', None)
-            if hasattr(style_val, 'value'):
-                style_val = style_val.value
-            if not style_val:
-                style_val = 'classic_gabled' if _is_sfr else 'modern_linear'
+        # Resolve style: explicit arg → spec.style → building-use default.
+        # Never fall back to brief_shape ('rectangle') as a style name.
+        style_val = style or getattr(spec, 'style', None)
+        if hasattr(style_val, 'value'):
+            style_val = style_val.value
+        if not style_val:
+            style_val = 'classic_gabled' if _is_sfr else 'modern_linear'
 
 
         # Human-readable style name for massing labels
@@ -117,8 +113,8 @@ class MassingGenerator:
                        (style_val or 'Standard').replace('_', ' ').title())
 
         # ── Max lot coverage: house must not fill the whole parcel ──
-        # CA residential: SFR ≤45%, ADU ≤75%, multi-family ≤60% of buildable envelope
-        _max_coverage = 0.75 if _is_adu else (0.45 if _is_sfr else 0.60)
+        # CA residential: SFR ≤45%, multi-family ≤60% of buildable envelope
+        _max_coverage = 0.45 if _is_sfr else 0.60
         _max_fp_m2 = max(20.0, envelope_local.area * _max_coverage)
         _max_total_area = _max_fp_m2 * stories
         target_area_m2 = min(target_area_m2, _max_total_area)
@@ -168,6 +164,7 @@ class MassingGenerator:
                     label="A", name="Narrow Plate",
                     desc="Classic narrow-lot plan — maximises street-facade presence",
                     roof_pitch_12=_roof_pitch_12,
+                    lock_width=True,
                 ),
                 self._option_narrow_with_rear_wing(
                     envelope_local, target_w, target_d, target_area_m2, stories,
@@ -232,7 +229,7 @@ class MassingGenerator:
             ]
 
         elif brief_shape == 'rectangle':
-            # ADU / Production Tract: standard variety
+            # Production Tract: standard variety
             options = [
                 self._option_rectangle(
                     envelope_local, target_w, target_d, target_area_m2, stories,
@@ -261,8 +258,80 @@ class MassingGenerator:
                 self._option_stepped(envelope_local, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, roof_pitch_12=_roof_pitch_12),
                 self._option_u_shape(envelope_local, target_area_m2, stories, floor_height_m, spec.priority, mat_color, grad_x, grad_z, neighbor_local, style_val, roof_pitch_12=_roof_pitch_12),
             ]
+        # ── Angled corners ───────────────────────────────────────────────────
+        # Estate plans are not boxes. The reference sheet
+        # backend/app/data/High-End-Custom/R.jpg cuts its master-suite bay, its
+        # dining bay and its loggia corners at 45°. Chamfering the FOOTPRINT is
+        # all that's needed: every room is clipped to it, so the angled walls
+        # propagate into the plan without touching the row layout at all.
+        _angled = bool(
+            (design_brief or {}).get('angled_corners')
+            or brief_shape == 'l_shape'
+            or style_val in ('contemporary_luxury', 'sculpted_stepped')
+        )
+        if _angled:
+            for opt in options:
+                fp = opt.get('footprint')
+                if not fp:
+                    continue
+                cut = self._chamfer_size(fp)
+                if cut <= 0:
+                    continue
+                opt['footprint'] = self._chamfer_corners(fp, cut)
+
         levels = self._build_levels(stories, spec.floor_to_floor_height_ft)
         return options, levels
+
+    @staticmethod
+    def _chamfer_size(footprint: List) -> float:
+        """Corner cut sized off the plan, ~6% of its short side, capped at 2.4 m."""
+        xs = [p[0] for p in footprint]
+        zs = [p[1] for p in footprint]
+        short = min(max(xs) - min(xs), max(zs) - min(zs))
+        if short < 8.0:
+            return 0.0
+        return min(2.4, max(0.9, short * 0.06))
+
+    @staticmethod
+    def _chamfer_corners(footprint: List, cut: float) -> List:
+        """Replace each sufficiently open corner with a 45° cut.
+
+        Only corners whose two edges are both comfortably longer than the cut
+        are touched, so short jogs on an L or U plan keep their square return.
+        """
+        pts = [(float(p[0]), float(p[1])) for p in footprint]
+        if len(pts) >= 2 and pts[0] == pts[-1]:
+            pts = pts[:-1]
+        n = len(pts)
+        if n < 4:
+            return footprint
+
+        out: List[List[float]] = []
+        for i in range(n):
+            px, pz = pts[(i - 1) % n]
+            cx, cz = pts[i]
+            nx, nz = pts[(i + 1) % n]
+
+            in_len = math.hypot(cx - px, cz - pz)
+            out_len = math.hypot(nx - cx, nz - cz)
+            # Leave the corner alone unless both legs can spare the cut with
+            # room to spare — otherwise chamfering eats a whole short segment.
+            if in_len < cut * 3.0 or out_len < cut * 3.0:
+                out.append([cx, cz])
+                continue
+
+            t_in = cut / in_len
+            t_out = cut / out_len
+            out.append([cx + (px - cx) * t_in, cz + (pz - cz) * t_in])
+            out.append([cx + (nx - cx) * t_out, cz + (nz - cz) * t_out])
+
+        try:
+            poly = Polygon(out)
+            if not poly.is_valid or poly.area <= 0:
+                return footprint
+        except Exception:
+            return footprint
+        return out
 
     # ── Neighbor helpers ──────────────────────────────────────────────────
 
@@ -597,23 +666,43 @@ class MassingGenerator:
     def _option_rectangle(self, envelope_local, tw, td, target_area_m2, stories, floor_height_m,
                           priority, mat_color, grad_x, grad_z, neighbors, style='classic_gabled',
                           label="A", name="Rectangle", desc="Rectangular footprint",
-                          roof_pitch_12: int = 12) -> Dict:
+                          roof_pitch_12: int = 12, lock_width: bool = False) -> Dict:
         """Simple rectangular footprint — used for Victorian narrow-lot and other brief_shape='rectangle' archetypes."""
         base = envelope_local.buffer(-0.5)
         if base.is_empty:
             base = envelope_local
         target_fp_area = target_area_m2 / max(1, stories)
         eb = base.bounds
-        # Build an explicit rectangle from tw × td, centered in the envelope
         cx = (eb[0] + eb[2]) / 2
         cz = (eb[1] + eb[3]) / 2
         half_w = min(tw / 2, (eb[2] - eb[0]) / 2 * 0.95)
-        half_d = min(td / 2, (eb[3] - eb[1]) / 2 * 0.95)
+
+        if lock_width:
+            # Narrow-lot mode: width is sacred — grow only in depth to hit target area,
+            # but cap the depth:width ratio. Real narrow-lot Victorians run up to
+            # roughly 2.5:1; past that, a bigger target area should widen the
+            # footprint (still narrow, just less absurd) rather than turn the house
+            # into a hundred-foot-deep sliver.
+            actual_w = half_w * 2
+            needed_d = target_fp_area / max(actual_w, 0.1)
+            _max_depth_ratio = 2.5
+            if needed_d > actual_w * _max_depth_ratio:
+                needed_d = actual_w * _max_depth_ratio
+                actual_w = target_fp_area / needed_d
+                half_w = min(actual_w / 2, (eb[2] - eb[0]) / 2 * 0.95)
+            half_d = min(needed_d / 2, (eb[3] - eb[1]) / 2 * 0.95)
+        else:
+            half_d = min(td / 2, (eb[3] - eb[1]) / 2 * 0.95)
+
         rect = box(cx - half_w, cz - half_d, cx + half_w, cz + half_d)
         clipped = base.intersection(rect)
         if clipped.is_empty or not hasattr(clipped, 'exterior'):
             clipped = self._fit_to_area(base, target_fp_area)
-        footprint = self._fit_to_area(clipped, target_fp_area)
+
+        if lock_width:
+            footprint = clipped  # already sized correctly; don't uniform-scale
+        else:
+            footprint = self._fit_to_area(clipped, target_fp_area)
         total_area = footprint.area * stories
         meshes = self._extrude_footprint(footprint, stories, floor_height_m, f"massing_{label.lower()}", mat_color, grad_x, grad_z, style=style, roof_pitch_12=roof_pitch_12)
         meshes += self._terrain_and_overlap(footprint, neighbors, grad_x, grad_z)
@@ -671,7 +760,7 @@ class MassingGenerator:
 
         # ── Floor-line belt: thin dark slab at each inter-floor boundary ──
         # Pushed 3 cm outward so it's always visible above the main wall surface.
-        # Applied to multi-story modern/contemporary builds (including ADU).
+        # Applied to multi-story modern/contemporary builds.
         _modern_style = any(k in style for k in ('modern', 'contemporary', 'minimalist', 'urban'))
         if stories >= 2 and _modern_style:
             BELT_H    = 0.14   # 14 cm slab depth
@@ -965,7 +1054,16 @@ class MassingGenerator:
             return spec.target_gross_area_sqft * 0.0929
         if spec.unit_count:
             return spec.unit_count * 800 * 0.0929
-        return 500
+        # Neither an explicit area nor unit count was given. A flat 500 sqft here
+        # used to size the WHOLE building regardless of stories/bedrooms — for a
+        # 2-story house that's 250 sqft/floor, nowhere near enough to hold real
+        # rooms, and completely disconnected from however many units the
+        # AI/floorplan step later decides to pack into the footprint. Scale by
+        # stories using the same ~800 sqft/unit assumption used just above, so a
+        # 2-story building defaults to roughly one reasonably-sized unit per floor
+        # instead of a number with no relationship to the building at all.
+        stories = max(1, getattr(spec, 'stories', None) or 1)
+        return stories * 800 * 0.0929
 
     def _build_levels(self, stories: int, floor_height_ft: float) -> List[Level]:
         return [Level(

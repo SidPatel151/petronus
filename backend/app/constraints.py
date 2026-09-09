@@ -13,13 +13,25 @@ from typing import Dict, List
 
 @dataclass(frozen=True)
 class PlatformLimits:
-    sfr_max_sqft:      int   = 5_500   # CA middle-market SFR ceiling
-    adu_max_sqft:      int   = 1_200   # CA AB-68 / AB-881 ADU law
+    # Platform ceiling for a detached house. 5,500 was a middle-market number
+    # and it clamped the whole high-end range flat: a 6BR and a 7BR both landed
+    # on exactly 5,500, so "bigger house" stopped meaning anything. Custom homes
+    # of 8-15k sqft are ordinary in this segment.
+    sfr_max_sqft:      int   = 25_000
+    # Per-archetype ceiling for genuinely large custom work (see
+    # ARCHETYPE_RULES["high_end_custom"]). Kept separate so the tract/infill
+    # archetypes stay at a realistic middle-market size.
+    #
+    # Sized off the reference plans, not a guess: High-End-Custom/R.jpg is a
+    # single-storey mansion whose interior alone sums to ~5,100 sqft — more
+    # than the entire old 5,500 platform cap — plus two 646 sqft garages and a
+    # 416 sqft loggia, on a 151 x 120 ft footprint. Two storeys of that is
+    # 10-12k, and estate work runs past 20k.
+    custom_max_sqft:   int   = 25_000
+    tract_max_sqft:    int   = 6_500   # production/infill/townhome ceiling
     mf_max_sqft:       int   = 50_000  # multi-family generous cap
-    sfr_max_bedrooms:  int   = 7       # blueprints rarely exceed this
-    adu_max_bedrooms:  int   = 2       # CA ADU law: detached ADU ≤ 2 BR
+    sfr_max_bedrooms:  int   = 10      # large custom homes run past 7
     max_stories:       int   = 3       # wizard UI max
-    adu_max_stories:   int   = 2       # CA AB-68: detached ADU max 2 stories
     min_bedroom_w_m:   float = 2.7     # IRC R304.1 minimum habitable room width
     min_bathroom_w_m:  float = 1.5
     min_kitchen_w_m:   float = 2.4
@@ -65,13 +77,6 @@ ARCHETYPE_RULES: Dict[str, ArchetypeRule] = {
         max_stories=LIMITS.max_stories,
         note="25 ft wide lot, 2-3 stories, pitched gabled roof, front porch.",
     ),
-    "adu_compact": ArchetypeRule(
-        display_name="ADU Compact",
-        max_sqft=LIMITS.adu_max_sqft,
-        max_bedrooms=LIMITS.adu_max_bedrooms,
-        max_stories=LIMITS.adu_max_stories,
-        note="CA ADU law: max 1,200 sqft, max 2 stories, detached or attached.",
-    ),
     "mid_century_modern": ArchetypeRule(
         display_name="Mid-Century Modern",
         max_sqft=LIMITS.sfr_max_sqft,
@@ -88,10 +93,12 @@ ARCHETYPE_RULES: Dict[str, ArchetypeRule] = {
     ),
     "high_end_custom": ArchetypeRule(
         display_name="High-End Custom",
-        max_sqft=LIMITS.sfr_max_sqft,
+        max_sqft=LIMITS.custom_max_sqft,
         max_bedrooms=LIMITS.sfr_max_bedrooms,
         max_stories=LIMITS.max_stories,
-        note="Complex L/U/stepped massing, quality priority, premium materials.",
+        note="Complex L/U/stepped massing, quality priority, premium materials. "
+             "Large plate with a wide spread of room sizes — great room and "
+             "primary suite are multiples of a secondary bedroom.",
     ),
     "urban_infill_zero_lot": ArchetypeRule(
         display_name="Urban Infill / Zero-Lot",
@@ -126,7 +133,6 @@ CA_CODE_COMPACT: List[str] = [
     "Solar PV ready + battery pre-wire (NEC 705)",
     "EV charging: 1 dedicated 240 V/40 A circuit per garage space (CA T-24)",
     "Seismic: ASCE 7-22 SDC D+ → special ductile detailing, no soft stories",
-    "ADU: max 1,200 sqft, max 2 stories, 4 ft side/rear setback (CA HCD)",
     "WUI zone: Class A roofing, ember-resistant vents, 1-hour exterior walls",
 ]
 
@@ -142,9 +148,8 @@ def limits_for_prompt() -> str:
         for aid, r in ARCHETYPE_RULES.items()
     )
     return f"""PLATFORM LIMITS (hard constraints — never exceed):
-  SFR max: {LIMITS.sfr_max_sqft:,} sqft | ADU max: {LIMITS.adu_max_sqft:,} sqft
-  Max bedrooms SFR: {LIMITS.sfr_max_bedrooms} | ADU: {LIMITS.adu_max_bedrooms}
-  Max stories: SFR {LIMITS.max_stories} | ADU {LIMITS.adu_max_stories}
+  SFR max: {LIMITS.sfr_max_sqft:,} sqft | Max bedrooms: {LIMITS.sfr_max_bedrooms}
+  Max stories: {LIMITS.max_stories}
   Min room widths: bedroom {LIMITS.min_bedroom_w_m}m, bath {LIMITS.min_bathroom_w_m}m, kitchen {LIMITS.min_kitchen_w_m}m
 
 ARCHETYPE RULES:

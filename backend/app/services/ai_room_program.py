@@ -14,6 +14,7 @@ Token budget per call: ~400 tokens in, ~300 tokens out  ≈ $0.001 (Haiku pricin
 """
 import asyncio
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -47,7 +48,7 @@ def _find_examples(archetype_id: str, bedrooms: int, target_sqft: float, n: int 
 
     def _score(bp: dict, primary: bool) -> float:
         score = 100.0 if primary else 0.0  # archetype match = decisive
-        if bp.get("building_type") in ("sfr", "adu", "townhouse", "victorian"):
+        if bp.get("building_type") in ("sfr", "townhouse", "victorian"):
             score += 1.0
         bp_br = bp.get("bedrooms") or 0
         if bp_br == bedrooms:
@@ -138,7 +139,7 @@ def _archetype_layout_brief(arch: Optional[Dict]) -> str:
             if note:
                 lines.append(f"    MEP: {note[:120]}")
 
-    # ADU bedroom programs (compact)
+    # Per-variant bedroom programs, where an archetype declares them
     bp = arch.get("bedroom_programs", {})
     if bp:
         lines.append("  Bedroom program variants:")
@@ -313,9 +314,19 @@ garage, mechanical, utility, stair, deck, half_bath"""
         msg = await asyncio.to_thread(
             client.messages.create,
             model="claude-haiku-4-5-20251001",
-            max_tokens=2500,
+            # A multi-floor room program runs well past 2,500 tokens; the old
+            # cap truncated the response mid-JSON, so json.loads raised
+            # "Expecting ',' delimiter" and every request silently fell back
+            # to the static SFR_PROGRAMS templates.
+            max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
         )
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            logging.getLogger(__name__).warning(
+                "[ai_room_program] response hit max_tokens and is truncated — "
+                "falling back to static programs"
+            )
+            return None
         raw = msg.content[0].text.strip()
         # Strip markdown fences if present
         if "```" in raw:
@@ -338,11 +349,147 @@ garage, mechanical, utility, stair, deck, half_bath"""
         if not floors:
             return None
         # Validate + normalise fractions
-        return _normalise(floors)
+        return _enforce_floor_assignment(_normalise(floors), stories, archetype_data)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"[ai_room_program] failed: {e}", exc_info=True)
         return None
+
+
+# Room types that belong on the ground floor of a multi-storey house. The
+# prompt already states this as non-negotiable, but nothing verified it, so a
+# model that answered with a kitchen or living room on floor 1 had it built
+# exactly as written — the "why is there a kitchen upstairs" bug.
+_GROUND_ONLY_TYPES = {
+    "kitchen", "living", "dining", "family_room", "foyer", "entry",
+    "mudroom", "pantry", "garage",
+}
+
+# The archetype JSONs name rooms in prose ("primary_bedroom", "living_room");
+# the generator's vocabulary is narrower. Map one onto the other so
+# floor_program can be compared against generated room types.
+_ARCHETYPE_ROOM_ALIASES = {
+    "entry_hall": "foyer", "entry": "foyer",
+    "parlor": "living", "living_room": "living", "great_room": "living",
+    "dining_room": "dining", "family": "family_room",
+    "primary_bedroom": "bedroom", "master_bedroom": "bedroom",
+    "guest_bedroom": "bedroom",
+    "full_bath": "bathroom", "primary_bath": "bathroom", "bath": "bathroom",
+    "powder_room": "half_bath", "powder": "half_bath",
+    "hall": "corridor", "hallway": "corridor",
+    "closets": "walk_in_closet", "closet": "walk_in_closet",
+    "flex_room": "office", "bonus": "bonus_room", "den": "office",
+    "utility": "utility", "mechanical": "mechanical",
+}
+
+
+def _normalise_archetype_room(name: str) -> str:
+    key = str(name).strip().lower().replace(" ", "_")
+    return _ARCHETYPE_ROOM_ALIASES.get(key, key)
+
+
+def archetype_floor_rooms(archetype: Optional[Dict]) -> Dict[int, set]:
+    """Allowed room types per level index, from the archetype's floor_program.
+
+    Every archetype JSON declares exactly which rooms belong on which storey —
+    the Victorian, for instance, puts the single kitchen on floor_1 and only
+    bedrooms/baths on floor_2. That data was only ever pasted into the prompt as
+    advice; nothing checked the result against it. Returns {} when the archetype
+    has no usable floor_program, meaning "no constraint".
+    """
+    if not archetype:
+        return {}
+    program = archetype.get("floor_program") or {}
+    if not isinstance(program, dict):
+        return {}
+
+    # Keys are ordered ground → up. "floor_3_optional" and similar suffixes are
+    # tolerated; "note" is prose, not a storey.
+    ordered = [
+        key for key, value in program.items()
+        if key != "note" and isinstance(value, dict) and value.get("rooms")
+    ]
+    out: Dict[int, set] = {}
+    for index, key in enumerate(ordered):
+        rooms = program[key].get("rooms") or []
+        out[index] = {_normalise_archetype_room(r) for r in rooms}
+    return out
+
+
+def _enforce_floor_assignment(
+    floors: Optional[List[Dict]], stories: int,
+    archetype: Optional[Dict] = None,
+) -> Optional[List[Dict]]:
+    """Reject or repair programs that put public rooms on an upper floor.
+
+    Repairable case: the type also exists on floor 0, so the upper one is a
+    duplicate and becomes a bedroom (or a closet if the slot is too narrow).
+    Unrepairable case: the house's ONLY kitchen/living room is upstairs —
+    rewriting it would leave the ground floor without one, so the whole program
+    is rejected and the caller falls back to the static templates.
+    """
+    if not floors or stories < 2:
+        return floors
+
+    # The archetype's own floor_program is authoritative where it applies. Only
+    # trust it when it describes exactly as many storeys as we're building —
+    # the Victorian's program covers a 3-4 storey house (garage / living /
+    # sleeping / attic), and forcing that onto a 2-storey build would put the
+    # bedrooms nowhere.
+    by_level = archetype_floor_rooms(archetype)
+    if len(by_level) != stories:
+        by_level = {}
+
+    # Which floors each room type currently occupies in the model's answer.
+    present: Dict[str, set] = {}
+    for floor in floors:
+        for row in floor["rows"]:
+            for room in row["rooms"]:
+                present.setdefault(room["type"], set()).add(floor["floor"])
+
+    def _replacement(allowed: Optional[set], frac_w: float) -> str:
+        if allowed:
+            for candidate in ("bedroom", "office", "bonus_room", "walk_in_closet"):
+                if candidate in allowed:
+                    if candidate == "walk_in_closet" and frac_w >= 0.22:
+                        continue
+                    return candidate
+            for candidate in sorted(allowed):
+                if candidate not in ("corridor", "stair", "hall"):
+                    return candidate
+        return "bedroom" if frac_w >= 0.22 else "walk_in_closet"
+
+    log = logging.getLogger(__name__)
+    for floor in floors:
+        level = floor["floor"]
+        allowed = by_level.get(level)
+        for row in floor["rows"]:
+            for room in row["rooms"]:
+                room_type = room["type"]
+                if allowed is not None:
+                    if room_type in allowed:
+                        continue
+                    correct_levels = {
+                        lvl for lvl, types in by_level.items() if room_type in types
+                    }
+                else:
+                    # No usable floor_program: fall back to the generic rule
+                    # that public rooms belong on the ground floor.
+                    if level == 0 or room_type not in _GROUND_ONLY_TYPES:
+                        continue
+                    correct_levels = {0}
+
+                # Safe to rewrite only if this type already appears on a floor
+                # where it belongs. Otherwise rewriting it would delete the
+                # house's only kitchen rather than relocating it.
+                if not (present.get(room_type, set()) & correct_levels):
+                    log.warning(
+                        "[ai_room_program] '%s' appears only on floor %s, which is "
+                        "not where it belongs — rejecting program, falling back to "
+                        "static templates", room_type, level,
+                    )
+                    return None
+                room["type"] = _replacement(allowed, room["frac_w"])
+    return floors
 
 
 def _normalise(floors: List[Dict]) -> List[Dict]:
@@ -367,7 +514,19 @@ def _normalise(floors: List[Dict]) -> List[Dict]:
                 for rm in rooms
             ]
             norm_rows.append({"row_frac_d": rd, "rooms": norm_rooms})
-        out.append({"floor": fl.get("floor", len(out)), "rows": norm_rows})
+        # Coerce the floor index to int and keep it unique. floorplan.py keys
+        # its lookup by `level.index` (an int), so a model that answered
+        # "floor": "1" produced a str key that never matched and that level
+        # silently dropped to the static program — one AI floor and one
+        # hardcoded floor in the same house. Duplicate indices used to
+        # overwrite each other in that dict for the same reason.
+        try:
+            floor_idx = int(fl.get("floor", len(out)))
+        except (TypeError, ValueError):
+            floor_idx = len(out)
+        if any(o["floor"] == floor_idx for o in out):
+            floor_idx = max(o["floor"] for o in out) + 1
+        out.append({"floor": floor_idx, "rows": norm_rows})
     return out if out else None
 
 
@@ -394,7 +553,6 @@ async def get_ai_unit_program(
       }
     Returns None on failure → caller uses hardcoded UNIT_TEMPLATES.
     """
-    import logging
     api_key = _get_api_key()
     if not api_key:
         return None
@@ -464,9 +622,17 @@ Return ONLY valid JSON, no markdown:
         msg = await asyncio.to_thread(
             client.messages.create,
             model="claude-haiku-4-5-20251001",
-            max_tokens=2500,
+            # See get_ai_room_program: 2,500 tokens truncated the unit-template
+            # JSON mid-object, so this always fell back to static UNIT_TEMPLATES.
+            max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
         )
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            logging.getLogger(__name__).warning(
+                "[ai_unit_program] response hit max_tokens and is truncated — "
+                "falling back to static unit templates"
+            )
+            return None
         raw = msg.content[0].text.strip()
         if "```" in raw:
             parts = raw.split("```")

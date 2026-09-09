@@ -79,7 +79,7 @@ class ProjectSpec(BaseModel):
 
     # Building type
     building_use: BuildingUse = BuildingUse.single_family
-    # Residential: number of bedrooms (0=studio for ADU, 1–7 for SFR/MF).
+    # Residential: number of bedrooms.
     bedrooms: Optional[int] = Field(default=None, ge=0, le=7)
     # Bathrooms: whole number = full bath (toilet+sink+shower/tub), .5 = half bath (toilet+sink only).
     # e.g. 2.5 means two full baths + one half bath.
@@ -222,6 +222,12 @@ class Wall(BaseModel):
     level: int
     is_exterior: bool = False
     is_shear: bool = False
+    # A cased opening rather than a built wall — the boundary still exists in
+    # the plan (rooms stay distinct, and it can still be dragged), but nothing
+    # is constructed on it. This is how an open-plan house reads: the great
+    # room runs into the kitchen, and the hall has no wall between it and the
+    # living space, while a Victorian keeps every one of those walls.
+    is_open: bool = False
 
 class Column(BaseModel):
     id: str
@@ -250,6 +256,13 @@ class MEPElement(BaseModel):
     diameter_in: Optional[float] = None
     width_in: Optional[float] = None
     height_in: Optional[float] = None
+    # Yaw about +Y, in degrees, for wall-hosted point devices (outlets,
+    # switches, panels): the direction the device's FACE points, i.e. into the
+    # room. Without it every renderer had to assume an axis-aligned device, so
+    # an outlet on an east or west wall was drawn edge-on and read as a small
+    # square block poking out of the wall instead of a faceplate lying on it.
+    # None means "unoriented" (ceiling discs, in-line fittings).
+    rotation_deg: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
 
 class ComplianceIssue(BaseModel):
@@ -283,6 +296,13 @@ class BuildingModel(BaseModel):
     # permit-review limitations.  This prevents "no issues" from being
     # mistaken for a stamped construction-document approval.
     compliance_summary: Dict[str, Any] = Field(default_factory=dict)
+    semantic_model: Optional[Dict[str, Any]] = None
+    # ── Blender photorealistic render output (additive, optional) ──────────
+    # base64-encoded GLB, or None if the render worker is unavailable/failed —
+    # every existing code path that never runs the render step keeps behaving
+    # exactly as before (glb_data=None, render_source="fallback").
+    glb_data: Optional[str] = None
+    render_source: Literal["blender", "fallback"] = "fallback"
 
 # ── API response models ────────────────────────────────────────────────────
 
@@ -307,4 +327,62 @@ class JobStatus(BaseModel):
     progress: int         # 0-100
     current_step: str
     result: Optional[Dict[str, Any]] = None
+
+# ── Blueprint editor (2D floorplan stage, pre-3D) ──────────────────────────
+
+class BlueprintDraftRequest(BaseModel):
+    spec: ProjectSpec
+    massing_choice: int = Field(default=0, ge=0, le=2)
+
+class BlueprintWarning(BaseModel):
+    id: str
+    severity: Literal["warning", "info"]
+    type: str            # overlap | over_sqft | below_min_size | missing_stair |
+                          # non_orthogonal | unassigned_area
+    message: str
+    room_ids: List[str] = Field(default_factory=list)
+    level: Optional[int] = None
+
+class BlueprintDraftResponse(BaseModel):
+    draft_id: str
+    levels: List[Level]
+    rooms: List[Room]
+    walls: List[Wall]
+    footprint_envelopes: Dict[str, List[List[float]]] = Field(default_factory=dict)  # level index (str) -> polygon coords
+    warnings: List[BlueprintWarning] = Field(default_factory=list)
+    target_sqft: float = 0.0
+    massing_options: List[Dict[str, Any]] = Field(default_factory=list)
+    chosen_massing_index: int = 0
+    spec: Optional[ProjectSpec] = None
+
+class BlueprintEditOp(BaseModel):
+    op_type: Literal[
+        "move_wall", "resize_room", "add_room",
+        "delete_room", "retype_room", "relocate_room",
+    ]
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class BlueprintEditRequest(BaseModel):
+    op: BlueprintEditOp
+
+class BlueprintEditResponse(BaseModel):
+    ok: bool
+    rooms: List[Room] = Field(default_factory=list)
+    walls: List[Wall] = Field(default_factory=list)
+    warnings: List[BlueprintWarning] = Field(default_factory=list)
+    error: Optional[str] = None
+
+class BlueprintChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+class BlueprintChatRequest(BaseModel):
+    messages: List[BlueprintChatMessage]
+
+class BlueprintChatResponse(BaseModel):
+    reply: str
+    applied_ops: List[BlueprintEditOp] = Field(default_factory=list)
+    rooms: List[Room] = Field(default_factory=list)
+    walls: List[Wall] = Field(default_factory=list)
+    warnings: List[BlueprintWarning] = Field(default_factory=list)
     error: Optional[str] = None

@@ -6,8 +6,6 @@ and writes structured labels into backend/app/data/training/.
 Output layout:
   backend/app/data/training/
     manifest.jsonl          one JSON object per line: {id, source_file, label_file, building_type, ...}
-    adu/
-      adu_001_label.json
     victorian/
       victorian_001_label.json
     sfr/
@@ -38,8 +36,6 @@ _DATASET_ID_RE = re.compile(r"^(?P<bucket>.+)_(?P<index>\d+)$")
 
 # Map folder names to building type hints (extractor can override)
 FOLDER_TYPE_HINTS: dict[str, str] = {
-    "adus": "adu",
-    "adu": "adu",
     "victorian-house": "victorian",
     "victorian": "victorian",
     "sfr": "sfr",
@@ -65,7 +61,7 @@ def find_images(data_dir: Path) -> list[Path]:
 
 def bucket_for(label: dict, folder_hint: str) -> str:
     bt = label.get("building_type", "unknown") or "unknown"
-    if bt not in ("adu", "sfr", "victorian", "townhouse"):
+    if bt not in ("sfr", "victorian", "townhouse"):
         bt = folder_hint if folder_hint != "unknown" else "other"
     return bt
 

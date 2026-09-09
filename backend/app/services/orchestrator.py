@@ -6,16 +6,21 @@ import uuid
 import asyncio
 import logging
 from typing import Callable, Optional
+from app.core.config import settings
 from app.models.schemas import BuildingModel, ProjectSpec, GenerateRequest, Wall
+from app.services.draft_state import DraftState
+from app.generators.geometry_utils import footprint_polygon_from_walls_or_rooms
 from app.services.site_context import SiteContextService
 from app.services.ai_room_program import get_ai_room_program, get_ai_unit_program
+from app.services.render_payload import build_render_payload
+from app.services.blender_render import render_building_glb
 
 logger = logging.getLogger(__name__)
 from app.services.ai_semantic_builder import generate_semantic_building
 from app.constraints import LIMITS, limits_for_prompt
 from app.generators.massing import MassingGenerator
 from app.generators.floorplan import FloorplanGenerator
-from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS, ADU_MAX_SQFT
+from app.constants import sfr_target_sqft, BuildingUse, FACADE_COLORS
 from app.generators.mep import MEPRouter
 from app.generators.compliance import ComplianceEngine
 from app.generators.facade import FacadeGenerator, extract_neighbor_style
@@ -38,26 +43,41 @@ class GenerationOrchestrator:
         self.facade_gen = FacadeGenerator()
 
     async def run(self, spec: ProjectSpec, massing_choice: int = 0) -> BuildingModel:
+        """Full one-shot pipeline — unchanged external behavior. Composes the
+        two halves so /generate/quick and /generate/ keep working exactly as
+        before; the blueprint editor calls run_draft()/run_finalize() directly
+        instead, with a user-editing step in between."""
+        draft = await self.run_draft(spec, massing_choice)
+        return await self.run_finalize(draft)
+
+    async def run_draft(self, spec: ProjectSpec, massing_choice: int = 0) -> DraftState:
         project_id = str(uuid.uuid4())
 
         _use_raw = getattr(spec, 'building_use', 'multi_family')
         _use_str = getattr(_use_raw, 'value', str(_use_raw))
-        is_sfr = _use_str in ('single_family', 'adu')
-        is_adu = _use_str == 'adu'
+        is_sfr = _use_str == 'single_family'
+        # A single-dwelling building is laid out as a house even when it was
+        # requested as "multi_family" — a townhouse or rowhouse is one home
+        # stacked vertically, not one apartment per storey. The multi-family
+        # path repeats the same unit template on every floor, which is what put
+        # a second kitchen, living room and bathroom upstairs.
+        _unit_count = getattr(spec, 'unit_count', None)
+        if not is_sfr and _unit_count is not None and int(_unit_count) <= 1:
+            is_sfr = True
 
         # ── Hard platform caps — single source of truth is constraints.py ──
         PLATFORM_MAX_SFR_SQFT  = LIMITS.sfr_max_sqft
         PLATFORM_MAX_MF_SQFT   = LIMITS.mf_max_sqft
         PLATFORM_MAX_STORIES   = LIMITS.max_stories
-        PLATFORM_MAX_BEDROOMS  = LIMITS.adu_max_bedrooms if is_adu else LIMITS.sfr_max_bedrooms
+        PLATFORM_MAX_BEDROOMS  = LIMITS.sfr_max_bedrooms
 
         updates: dict = {}
 
         # Clamp bedrooms
         if is_sfr:
-            br = getattr(spec, 'bedrooms', None) or (1 if is_adu else 3)
-            max_br = getattr(spec, 'max_bedrooms', None) or (2 if is_adu else PLATFORM_MAX_BEDROOMS)
-            br = min(br, max_br, 2 if is_adu else PLATFORM_MAX_BEDROOMS)
+            br = getattr(spec, 'bedrooms', None) or 3
+            max_br = getattr(spec, 'max_bedrooms', None) or PLATFORM_MAX_BEDROOMS
+            br = min(br, max_br, PLATFORM_MAX_BEDROOMS)
             updates['bedrooms'] = br
 
         # Clamp stories
@@ -68,15 +88,10 @@ class GenerationOrchestrator:
         if max_h:
             floor_h = spec.floor_to_floor_height_ft or 10.0
             max_floors = min(max_floors, max(1, int(max_h / floor_h)))
-        if is_adu and getattr(spec, 'max_floors', None) is None:
-            # Conservative default only. California ADU law permits local
-            # objective height standards and some jurisdictions allow a taller
-            # form, which can be supplied explicitly through ``max_floors``.
-            max_floors = min(max_floors, 2)
         stories = min(stories, max_floors, PLATFORM_MAX_STORIES)
         updates['stories'] = stories
 
-        # For SFR/ADU: derive target area from bedroom count + priority if not set
+        # For SFR: derive target area from bedroom count + priority if not set
         pri = getattr(spec.priority, 'value', str(spec.priority))
         br_final = updates.get('bedrooms') or (getattr(spec, 'bedrooms', None) or 3)
         if is_sfr and not spec.target_gross_area_sqft:
@@ -85,13 +100,7 @@ class GenerationOrchestrator:
         # Clamp target area: user max_sqft → then platform cap
         raw_area = updates.get('target_gross_area_sqft') or spec.target_gross_area_sqft or 0
         user_max = getattr(spec, 'max_sqft', None)
-        # 1,200 sqft is the conservative statewide detached-ADU default; local
-        # ordinances may be less restrictive. ``adu_max_sqft`` lets a verified
-        # jurisdiction-specific workflow raise that ceiling without silently
-        # discarding the user's selected area.
-        adu_cap = int((getattr(spec, 'fine_details', None) or {}).get('adu_max_sqft', ADU_MAX_SQFT))
-        adu_cap = max(150, min(adu_cap, PLATFORM_MAX_SFR_SQFT))
-        platform_cap = adu_cap if is_adu else (PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT)
+        platform_cap = PLATFORM_MAX_SFR_SQFT if is_sfr else PLATFORM_MAX_MF_SQFT
         if raw_area > 0:
             capped = raw_area
             if user_max:
@@ -166,7 +175,8 @@ class GenerationOrchestrator:
                 id="AREA-001",
                 type="compliance",
                 severity="error",
-                message=f"Requested area {raw_req:,.0f} sqft exceeds the 5,500 sqft SFR platform cap. "
+                message=f"Requested area {raw_req:,.0f} sqft exceeds the "
+                        f"{PLATFORM_MAX_SFR_SQFT:,} sqft SFR platform cap. "
                         f"Design has been clamped to {PLATFORM_MAX_SFR_SQFT:,} sqft.",
                 fix_suggestion=f"Reduce target area to {PLATFORM_MAX_SFR_SQFT:,} sqft or below.",
                 elements_involved=[],
@@ -302,7 +312,15 @@ class GenerationOrchestrator:
         if archetype:
             log.append(f"Archetype detected: {archetype['display_name']}")
             neighbor_style = apply_archetype_to_neighbor_style(archetype, neighbor_style)
-            design_brief   = apply_archetype_to_design_brief(archetype, design_brief)
+            # Rowhouse-style multi-family: units sit side by side per floor, so the
+            # narrow-lot width cap must scale by units-per-floor, not stay pinned to
+            # one unit's width while depth balloons to fit the whole building's area.
+            _units_wide = (
+                max(1, -(-int(spec.unit_count) // max(spec.stories, 1)))
+                if getattr(spec, 'unit_count', None) and spec.building_use == BuildingUse.multi_family
+                else 1
+            )
+            design_brief = apply_archetype_to_design_brief(archetype, design_brief, units_wide=_units_wide)
 
         # Step 3: Massing with neighbor awareness
         self.progress_cb(30, "Generating massing options…")
@@ -413,6 +431,67 @@ class GenerationOrchestrator:
         model.walls = walls
         unit_count = len(set(r.unit_id for r in rooms if r.unit_id))
         log.append(f"Generated {len(rooms)} rooms across {len(levels)} levels ({unit_count} units)")
+        # Report the plate the layout actually had to work with. A floor that
+        # comes back with no habitable rooms is almost always a too-small
+        # footprint, and without these numbers in the log there was no way to
+        # tell a layout bug from an undersized massing option.
+        try:
+            _fp = chosen.get("footprint") or []
+            if _fp:
+                _fxs = [p[0] for p in _fp]
+                _fzs = [p[1] for p in _fp]
+                _fw2, _fd2 = max(_fxs) - min(_fxs), max(_fzs) - min(_fzs)
+                log.append(
+                    f"Floor plate: {_fw2:.1f}m x {_fd2:.1f}m "
+                    f"({_fw2 * _fd2 * 10.764:.0f} sqft/floor), target {_target_sqft:.0f} sqft"
+                )
+            _habitable = sum(
+                1 for r in rooms
+                if r.type not in ("stair", "corridor", "hall", "hallway", "unit")
+            )
+            if _habitable == 0:
+                log.append("⚠ No habitable rooms generated — floor plate is too small to lay out")
+        except Exception:
+            pass
+
+        # Fixed per-level exterior envelope for the blueprint editor: rooms/
+        # walls may be edited between here and run_finalize(), but the
+        # exterior footprint never moves (confirmed product requirement).
+        footprint_envelopes = {}
+        for lvl_idx in sorted(set(r.level for r in rooms) | set(w.level for w in walls)):
+            poly = footprint_polygon_from_walls_or_rooms(walls, rooms, lvl_idx)
+            if poly is not None:
+                footprint_envelopes[lvl_idx] = poly
+
+        return DraftState(
+            draft_id="",
+            model=model,
+            is_sfr=is_sfr,
+            chosen_massing=chosen,
+            infra=infra,
+            resolved_site=resolved_site,
+            neighbor_style=neighbor_style,
+            design_brief=design_brief,
+            sem_result=sem_result,
+            archetype=archetype,
+            footprint_envelopes=footprint_envelopes,
+        )
+
+    async def run_finalize(self, draft: DraftState) -> BuildingModel:
+        model = draft.model
+        spec = model.spec
+        log = model.generation_log
+        rooms = model.rooms
+        walls = model.walls
+        levels = model.levels
+        chosen = draft.chosen_massing
+        neighbor_style = draft.neighbor_style
+        design_brief = draft.design_brief
+        sem_result = draft.sem_result
+        archetype = draft.archetype
+        infra = draft.infra
+        resolved_site = draft.resolved_site
+        is_sfr = draft.is_sfr
 
         # Step 5: Facade details
         self.progress_cb(60, "Generating facade details…")
@@ -428,6 +507,7 @@ class GenerationOrchestrator:
         if wall_splits:
             model.walls = [seg for w in walls
                            for seg in (wall_splits.get(w.id) or [w])]
+        walls = model.walls
         model.meshes = facade_meshes + stair_meshes + door_meshes  # type: ignore
         log.append(f"Facade: {len(facade_meshes)} detail meshes + {len(door_meshes)} interior doors")
 
@@ -477,8 +557,8 @@ class GenerationOrchestrator:
             levels=levels,
             structural_system=spec.structural_system,
             site_ctx_dict={
-                "seismic_category": site_ctx.seismic_category,
-                "wind_speed_mph": site_ctx.wind_speed_mph,
+                "seismic_category": model.site_context.seismic_category,
+                "wind_speed_mph": model.site_context.wind_speed_mph,
             },
             target_area_m2=chosen.get("total_area_m2", 200.0),
             is_sfr=is_sfr,
@@ -506,6 +586,26 @@ class GenerationOrchestrator:
         warnings = len([i for i in issues if i.severity == "warning"])
         log.append(f"Compliance: {errors} errors, {warnings} warnings")
 
+        # Step 8: Photorealistic render (Blender, best-effort, additive only —
+        # every generator above is untouched; this step can be deleted with zero
+        # effect on existing behavior).
+        if settings.BLENDER_RENDER_ENABLED:
+            self.progress_cb(94, "Rendering photorealistic geometry…")
+            try:
+                payload = build_render_payload(model)
+                glb_b64, source = await render_building_glb(payload)
+                model.glb_data = glb_b64
+                model.render_source = source
+                log.append(
+                    "Blender render: photorealistic GLB generated" if source == "blender"
+                    else "Blender render: unavailable — using procedural fallback"
+                )
+            except Exception as e:
+                logger.error(f"Blender render step failed: {e}", exc_info=True)
+                model.glb_data = None
+                model.render_source = "fallback"
+                log.append("Blender render: failed — using procedural fallback")
+
         # Semantic model came from the parallel call at the top — attach it here
         model.semantic_model = sem_result if sem_result else None
 
@@ -525,8 +625,9 @@ class GenerationOrchestrator:
         level_elevations = {lvl.index: lvl.elevation_ft * 0.3048 for lvl in levels}
         max_level = max(level_elevations.keys()) if level_elevations else 0
 
-        # One staircase per level — take the first stair room found on each level
-        # (the ground-floor ADU program places two stair fragments; only one set of steps needed).
+        # One staircase per level — take the first stair room found on each
+        # level (some programs place two stair fragments; only one flight is
+        # needed).
         seen_levels: set = set()
         stair_rooms = []
         for r in rooms:
@@ -711,47 +812,99 @@ class GenerationOrchestrator:
 
             room_by_id = {r.id: r for r in lvl_rooms}
 
-            # ── Step 3: BFS from open rooms ───────────────────────────────────
-            open_ids = [r.id for r in lvl_rooms if r.type in OPEN_TYPES]
-            if not open_ids:
-                # Fallback: start from the largest room on this level
-                open_ids = [max(lvl_rooms, key=lambda r: r.area_sqft).id]
+            # ── Step 3: spanning-tree traversal from a SINGLE entry root ──────
+            # Previously every open-typed room was seeded as a root at once, so
+            # the graph merely *assumed* the corridor, living room and foyer
+            # were connected to each other and to the entry — no door was ever
+            # cut between them, and a level whose open rooms were in separate
+            # components silently produced a house you could not walk through.
+            #
+            # Now one root per level (the entry on the ground floor, the stair
+            # landing above it) and one door on EVERY tree edge, so the tree is
+            # a real circulation path. Each room still receives exactly one
+            # door, because a spanning tree gives each node exactly one parent.
+            def _pick_root() -> str:
+                if lvl_idx == 0:
+                    for preferred in ("foyer", "entry", "mudroom"):
+                        for room in lvl_rooms:
+                            if room.type == preferred:
+                                return room.id
+                else:
+                    for room in lvl_rooms:
+                        if room.type == "stair":
+                            return room.id
+                for room in lvl_rooms:
+                    if room.type in OPEN_TYPES:
+                        return room.id
+                return max(lvl_rooms, key=lambda r: r.area_sqft).id
 
-            # door_granted[room_id] = True once that room has been given one door.
-            # Acts as the per-room weight: False = no door yet, True = door placed.
-            door_granted: dict = {}
-            reachable: set = set(open_ids)
-            queue: list = list(open_ids)
-            door_walls: list = []
+            root_id = _pick_root()
+            reachable: set = {root_id}
+            queue: list = [root_id]
+            door_edges: list = []          # (child_room_id, wall)
 
             while queue:
                 cur_id = queue.pop(0)
-
                 for nbr_id, wall in room_nbrs.get(cur_id, []):
                     if nbr_id in reachable:
-                        continue  # already accessible — no second door ever
-
+                        continue  # one parent per room — never a second door
                     reachable.add(nbr_id)
                     queue.append(nbr_id)
-
                     nbr_room = room_by_id.get(nbr_id)
                     if nbr_room is None or nbr_room.type in NO_DOOR_TYPES:
-                        continue  # stair/attic — open passage, no door
+                        continue
+                    # Every tree edge becomes an opening. Open→open edges used
+                    # to be skipped, which left the wall between the corridor
+                    # and the living room solid.
+                    door_edges.append((nbr_id, wall))
 
-                    # Place exactly ONE door the first time we reach a closed room.
-                    # Open rooms (corridor, living, hallway…) need no door.
-                    if nbr_room.type not in OPEN_TYPES and not door_granted.get(nbr_id):
-                        door_walls.append(wall)
-                        door_granted[nbr_id] = True
+            # ── Step 3b: connect anything the tree missed ─────────────────────
+            # A room can be unreachable when the midpoint probe failed to see it
+            # or when its component never touched the root. There was no repair
+            # pass at all, so such rooms simply had no door and no way in.
+            unreached = [
+                r for r in lvl_rooms
+                if r.id not in reachable and r.type not in NO_DOOR_TYPES
+            ]
+            for room in unreached:
+                candidates = room_nbrs.get(room.id, [])
+                edge = next(
+                    ((nid, w) for nid, w in candidates if nid in reachable), None
+                )
+                if edge is None and candidates:
+                    edge = candidates[0]
+                if edge is not None:
+                    door_edges.append((room.id, edge[1]))
+                    reachable.add(room.id)
 
-            # ── Step 4: generate door mesh for each recorded wall ──────────────
-            for wall in door_walls:
+            # Ordered list of (room_id, [candidate walls]) so the mesh step can
+            # fall back to another wall when the first is too short to hold a
+            # door, rather than dropping that room's only opening.
+            door_walls = []
+            for room_id, wall in door_edges:
+                alternates = [w for _n, w in room_nbrs.get(room_id, []) if w is not wall]
+                door_walls.append((room_id, [wall] + alternates))
+
+            # ── Step 4: generate door mesh for each room's chosen wall ─────────
+            for _room_id, _candidates in door_walls:
+                # Take the first candidate wall wide enough to hold a leaf. The
+                # old code hit `continue` on a short wall having already marked
+                # the room as served, so that room ended up with no door at all
+                # and no other wall was ever tried.
+                wall = None
+                for _cand in _candidates:
+                    _cs, _ce = _cand.start, _cand.end
+                    _cl = _math.hypot(_ce[0] - _cs[0], _ce[1] - _cs[1])
+                    if _cl >= 1.0 and min(0.92, _cl - 0.25) >= 0.7:
+                        wall = _cand
+                        break
+                if wall is None:
+                    continue
+
                 s, e = wall.start, wall.end
                 dx = e[0] - s[0]
                 dz = e[1] - s[1]
                 wl = _math.sqrt(dx * dx + dz * dz)
-                if wl < 1.0:
-                    continue
 
                 ux, uz = dx / wl, dz / wl
                 nx_d = -dz / wl
@@ -761,8 +914,6 @@ class GenerationOrchestrator:
                 cz = (s[1] + e[1]) / 2
 
                 door_w = min(0.92, wl - 0.25)
-                if door_w < 0.7:
-                    continue
                 door_h = 2.05
                 hw = door_w / 2
 

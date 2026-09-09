@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useAppStore } from '@/lib/store';
@@ -7,6 +7,7 @@ import ProjectWizard from '@/components/ui/ProjectWizard';
 import IssuesPanel from '@/components/ui/IssuesPanel';
 import MassingPicker from '@/components/ui/MassingPicker';
 import AIChat from '@/components/ui/AIChat';
+import BlueprintEditor from '@/components/ui/BlueprintEditor';
 import api from '@/lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -15,7 +16,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const SiteMap = dynamic(() => import('@/components/map/SiteMap'), { ssr: false });
 const BuildingViewer = dynamic(() => import('@/components/viewer/BuildingViewer'), { ssr: false });
 
-type Tab = 'map' | '3d';
+type Tab = 'map' | 'blueprint' | '3d';
 type RightTab = 'setup' | 'massing' | 'issues' | 'ai';
 
 function AppContent() {
@@ -29,10 +30,10 @@ function AppContent() {
   const [savedToast, setSavedToast] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
   const {
-    buildingModel, selectedSite, spec,
+    buildingModel, selectedSite, spec, blueprintDraftId,
     setBuildingModel, setSelectedSite, setSiteContext,
     setInfrastructure, setNeighborConstraints, setFeasibilityData, setDrawnParcel,
-    updateSpec, user, token,
+    updateSpec, user, token, clearBlueprintDraft,
   } = useAppStore();
 
   // Auth guard — redirect to login if not authenticated
@@ -97,14 +98,26 @@ function AppContent() {
     setNeighborConstraints(null);
     setFeasibilityData(null);
     setDrawnParcel(null);
+    clearBlueprintDraft();
     setMainTab('map');
     setRightTab('setup');
   };
 
   const handleRedesign = () => {
     setBuildingModel(null);
+    clearBlueprintDraft();
     setRightTab('setup');
   };
+
+  // Generating a blueprint draft (from Project Setup or a massing change)
+  // switches into the editor automatically; finalizing it (draft clears,
+  // buildingModel appears) switches into the 3D view automatically.
+  const prevDraftId = useRef(blueprintDraftId);
+  useEffect(() => {
+    if (blueprintDraftId && !prevDraftId.current) setMainTab('blueprint');
+    if (prevDraftId.current && !blueprintDraftId && buildingModel) setMainTab('3d');
+    prevDraftId.current = blueprintDraftId;
+  }, [blueprintDraftId, buildingModel]);
 
   useEffect(() => {
     document.documentElement.classList.add('app-page');
@@ -144,15 +157,22 @@ function AppContent() {
 
         {/* Main view tabs */}
         <div className="flex items-center gap-1 bg-[var(--surface-2)] rounded-lg p-1">
-          {([['map', '🗺 Site Map'], ['3d', '🏢 3D Model']] as [Tab, string][]).map(([key, label]) => (
+          {([
+            ['map', '🗺 Site Map', true],
+            ['blueprint', '📐 Blueprint', !!blueprintDraftId],
+            ['3d', '🏢 3D Model', !!buildingModel],
+          ] as [Tab, string, boolean][]).map(([key, label, enabled]) => (
             <button
               key={key}
-              onClick={() => setMainTab(key)}
+              onClick={() => enabled && setMainTab(key)}
+              disabled={!enabled}
               className="px-4 py-1.5 rounded-md text-xs font-mono transition-all"
               style={{
                 background: mainTab === key ? 'var(--surface-4)' : 'transparent',
-                color: mainTab === key ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                color: !enabled ? 'var(--text-secondary)' : mainTab === key ? 'var(--accent-cyan)' : 'var(--text-secondary)',
                 border: mainTab === key ? '1px solid var(--border)' : '1px solid transparent',
+                opacity: enabled ? 1 : 0.4,
+                cursor: enabled ? 'pointer' : 'not-allowed',
               }}
             >
               {label}
@@ -195,6 +215,21 @@ function AppContent() {
                 + New Site
               </button>
             </>
+          ) : blueprintDraftId ? (
+            <>
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <div className="w-2 h-2 rounded-full bg-[var(--accent-cyan)] animate-pulse" />
+                <span className="text-[var(--accent-cyan)]">Editing blueprint…</span>
+              </div>
+              <button
+                onClick={handleNewSite}
+                title="Pick a new parcel and start fresh"
+                className="text-xs font-mono px-2.5 py-1 rounded-md border transition-all"
+                style={{ borderColor: 'var(--accent-cyan)', color: 'var(--accent-cyan)', background: 'var(--surface-2)' }}
+              >
+                + New Site
+              </button>
+            </>
           ) : selectedSite ? (
             <>
               <div className="flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
@@ -223,6 +258,9 @@ function AppContent() {
         <div className="flex-1 min-w-0 relative">
           <div className={mainTab === 'map' ? 'absolute inset-0' : 'hidden'}>
             <SiteMap />
+          </div>
+          <div className={mainTab === 'blueprint' ? 'absolute inset-0' : 'hidden'}>
+            <BlueprintEditor />
           </div>
           <div className={mainTab === '3d' ? 'absolute inset-0' : 'hidden'}>
             <BuildingViewer />
@@ -264,7 +302,7 @@ function AppContent() {
             )}
             {rightTab === 'massing' && (
               <div className="h-full overflow-y-auto">
-                {buildingModel ? (
+                {buildingModel || blueprintDraftId ? (
                   <MassingPicker />
                 ) : (
                   <div className="p-4 text-xs font-mono text-[var(--text-secondary)] italic">

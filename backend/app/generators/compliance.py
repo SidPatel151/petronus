@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
 
-from app.constants import ADU_MAX_SQFT, BuildingUse
+from app.constants import BuildingUse
 from app.models.schemas import BuildingModel, ComplianceIssue, MEPElement, Room
 
 
@@ -39,9 +39,6 @@ RULES: Dict[str, Dict[str, str]] = {
     },
     "CBC-EGRESS-PRESENCE": {
         "citation": "2025 California Building Code (Title 24, Part 2), Chapter 10",
-    },
-    "ADU-AREA": {
-        "citation": "California Government Code sections 66314 and 66325; local ADU standards apply",
     },
     "CEC-ELECTRICAL": {
         "citation": "2025 California Electrical Code (Title 24, Part 3), Articles 210, 220 and 408",
@@ -149,6 +146,10 @@ KNOWN_ROOM_TYPES: Set[str] = (
     | {
         "stair", "pantry", "closet", "storage", "entry", "open_to_below",
         "walk_in_closet", "library", "gym", "balcony", "patio", "porch", "deck",
+        # Estate program (see High-End-Custom reference plans)
+        "wine_cellar", "butler_pantry", "cinema_room", "game_room",
+        "sitting_room", "sauna", "pool_bath", "loggia", "great_room",
+        "dressing_room",
     }
 )
 
@@ -181,12 +182,6 @@ class ComplianceEngine:
         compliance_issues.extend(self._check_corridor_width(model))
         compliance_issues.extend(self._check_egress(model))
         compliance_issues.extend(self._check_flood(model))
-
-        is_adu = getattr(model.spec, "building_use", None) in ("adu", BuildingUse.adu)
-        if is_adu:
-            compliance_issues.extend(self._check_adu(model))
-        else:
-            self._record("ADU-SCOPE", "not_applicable", "Building use is not ADU.")
 
         compliance_issues.extend(self._check_mep_room_coverage(model))
         compliance_issues.extend(self._check_cec_electrical(model))
@@ -800,97 +795,6 @@ class ComplianceEngine:
             return []
         self._pass("FLOOD-REVIEW", "Site context does not flag a mapped special flood hazard.")
         return []
-
-    def _check_adu(self, model: BuildingModel) -> List[ComplianceIssue]:
-        issues: List[ComplianceIssue] = []
-        total_sqft = self._modeled_floor_area_sqft(model)
-        fine = model.spec.fine_details or {}
-        configured_area_limit = float(fine.get("adu_max_sqft", ADU_MAX_SQFT))
-        area_source = str(fine.get("adu_max_sqft_source", "")).strip()
-        if configured_area_limit > ADU_MAX_SQFT and not area_source:
-            issues.append(self._issue(
-                "ADU-AREA-LOCAL-STANDARD",
-                "info",
-                f"Configured ADU area limit {configured_area_limit:,.0f} sqft exceeds the statewide default without a cited local less-restrictive ordinance.",
-                "Attach adu_max_sqft_source from the applicable adopted local ordinance.",
-                citation_key="ADU-AREA",
-                status="unverified",
-            ))
-        elif total_sqft > configured_area_limit + 1.0:
-            issues.append(self._issue(
-                "ADU-AREA",
-                "error",
-                f"Modeled ADU floor area is {total_sqft:,.0f} sqft, above the configured {configured_area_limit:,.0f} sqft preflight limit.",
-                "Reduce the modeled floor area or set adu_max_sqft from a verified local ordinance that permits a larger unit.",
-                citation_key="ADU-AREA",
-            ))
-        elif configured_area_limit <= ADU_MAX_SQFT or area_source:
-            self._pass("ADU-AREA", f"Modeled ADU area is {total_sqft:,.0f} sqft (configured limit {configured_area_limit:,.0f} sqft).")
-
-        configured_story_limit = model.spec.max_floors
-        height_source = str(
-            fine.get("adu_height_standard_source", fine.get("adu_story_limit_source", ""))
-        ).strip()
-        if configured_story_limit is None or not height_source:
-            issues.append(self._issue(
-                "ADU-HEIGHT-LOCAL-STANDARD",
-                "info",
-                "ADU height/story applicability cannot be verified without a sourced local objective standard; no universal two-story limit is assumed.",
-                "Attach max_floors/max_height_ft and adu_height_standard_source from the applicable local ordinance.",
-                citation_key="ADU-AREA",
-                status="unverified",
-            ))
-        elif model.spec.stories > configured_story_limit:
-            issues.append(self._issue(
-                "ADU-STORIES",
-                "error",
-                f"Modeled ADU has {model.spec.stories} stories, above the configured {configured_story_limit}-story preflight limit.",
-                "Reduce the ADU height or set max_floors from verified local objective standards.",
-                citation_key="ADU-AREA",
-            ))
-        else:
-            self._pass("ADU-STORIES", f"ADU has {model.spec.stories} stories against the sourced {configured_story_limit}-story local standard.")
-
-        setback = fine.get("adu_setback_evidence")
-        if not isinstance(setback, dict) or not setback.get("source"):
-            issues.append(self._issue(
-                "ADU-SETBACK-EVIDENCE",
-                "info",
-                "Georeferenced ADU side/rear setback or qualifying conversion-path evidence is absent.",
-                "Attach surveyed parcel/building geometry and the applicable setback source, or document the qualifying conversion path.",
-                citation_key="ADU-AREA",
-                status="unverified",
-            ))
-        elif bool(setback.get("conversion_path_verified")):
-            self._pass("ADU-SETBACK-EVIDENCE", "A sourced qualifying conversion-path determination is documented.")
-        else:
-            side = self._numeric_metadata(setback, "side_setback_ft")
-            rear = self._numeric_metadata(setback, "rear_setback_ft")
-            required = self._numeric_metadata(setback, "required_setback_ft")
-            if side is None or rear is None or required is None or not setback.get("georeferenced"):
-                issues.append(self._issue(
-                    "ADU-SETBACK-EVIDENCE",
-                    "info",
-                    "ADU setback metadata lacks georeferenced side/rear measurements and the applicable required setback.",
-                    "Attach georeferenced side_setback_ft, rear_setback_ft, required_setback_ft, and source.",
-                    citation_key="ADU-AREA",
-                    status="unverified",
-                ))
-            elif min(side, rear) + 1e-6 < required:
-                issues.append(self._issue(
-                    "ADU-SETBACK",
-                    "error",
-                    f"Documented ADU side/rear setback ({side:.2f}ft/{rear:.2f}ft) is below the sourced {required:.2f}ft requirement.",
-                    "Revise the siting or document a qualifying conversion/exception path.",
-                    citation_key="ADU-AREA",
-                ))
-            else:
-                self._pass("ADU-SETBACK", "Georeferenced side/rear setbacks meet the documented local requirement.")
-        return issues
-
-    # ------------------------------------------------------------------
-    # Cross-system completeness
-    # ------------------------------------------------------------------
 
     def _check_mep_room_coverage(self, model: BuildingModel) -> List[ComplianceIssue]:
         issues: List[ComplianceIssue] = []
@@ -1681,38 +1585,16 @@ class ComplianceEngine:
             element for element in model.mep_elements
             if element.system == "fire" and element.type in {"sprinkler", "sprinkler_head"}
         ]
-        is_adu = getattr(model.spec, "building_use", None) in ("adu", BuildingUse.adu)
-        primary_requirement = str(
-            getattr(getattr(model.spec, "primary_dwelling_sprinkler_requirement", None), "value",
-                    getattr(model.spec, "primary_dwelling_sprinkler_requirement", ""))
-            or ""
-        ).lower()
-        primary_determination_source = str(
-            getattr(model.spec, "primary_dwelling_sprinkler_determination_source", "") or ""
-        ).strip()
-        valid_adu_exception = (
-            is_adu
-            and primary_requirement == "not_required"
-            and bool(primary_determination_source)
-        )
-        legacy_unsprinklered = is_adu and getattr(model.spec, "primary_dwelling_sprinklered", None) is False
         construction_scope = str(
             getattr(getattr(model.spec, "construction_scope", "new_construction"), "value",
                     getattr(model.spec, "construction_scope", "new_construction"))
         ).lower()
         new_construction = construction_scope in {"new", "new_build", "new_construction"}
 
-        if legacy_unsprinklered and not valid_adu_exception:
-            issues.append(self._issue(
-                "FIRE-ADU-SPRINKLER-DETERMINATION",
-                "info",
-                "Legacy primary_dwelling_sprinklered=False does not establish that sprinklers were legally not required for the primary dwelling, so it cannot establish the ADU exception.",
-                "Set primary_dwelling_sprinkler_requirement='not_required' and attach the nonempty AHJ/code determination source.",
-                citation_key="CBC-FIRE-LIFE-SAFETY",
-                status="unverified",
-            ))
-
-        sprinklers_required = new_construction and not valid_adu_exception
+        # The statutory ADU exception was the only modeled way to waive
+        # sprinklers; with ADUs removed, new residential construction is always
+        # sprinklered.
+        sprinklers_required = new_construction
 
         if sprinklers_required and not heads:
             issues.append(self._issue(
@@ -1777,12 +1659,6 @@ class ComplianceEngine:
                         elements=[head.id for head in heads],
                         status="unverified",
                     ))
-        elif valid_adu_exception:
-            self._record(
-                "FIRE-SPRINKLER-APPLICABILITY",
-                "not_applicable",
-                "A sourced determination states sprinklers were not legally required for the primary dwelling; the modeled California ADU exception was applied.",
-            )
         else:
             issues.append(self._issue(
                 "FIRE-SPRINKLER-ALTERATION-APPLICABILITY",

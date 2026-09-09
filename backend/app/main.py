@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import projects, site, generate, exports, chat, auth
+from app.api import projects, site, generate, exports, chat, auth, blueprint
 from app.core.persistence import init_db
 
 app = FastAPI(
@@ -33,6 +33,7 @@ app.include_router(site.router, prefix="/api/site", tags=["site"])
 app.include_router(generate.router, prefix="/api/generate", tags=["generate"])
 app.include_router(exports.router, prefix="/api/exports", tags=["exports"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(blueprint.router, prefix="/api/blueprint", tags=["blueprint"])
 
 @app.get("/health")
 def health():

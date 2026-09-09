@@ -499,49 +499,6 @@ def test_required_fire_systems_cannot_be_disabled_into_a_pass() -> None:
 
     assert {"FIRE-SPRINKLER-SYSTEM", "FIRE-SMOKE-ALARM-SYSTEM"} <= _rule_ids(issues)
     assert model.compliance_summary["status"] == "failed"
-
-
-def test_legacy_unsprinklered_primary_dwelling_boolean_cannot_exempt_adu() -> None:
-    model = _complete_model()
-    model.spec = ProjectSpec(
-        site=model.spec.site,
-        building_use=BuildingUse.adu,
-        bedrooms=1,
-        bathrooms=1,
-        stories=1,
-        primary_dwelling_sprinklered=False,
-    )
-    model.mep_elements = [element for element in model.mep_elements if element.system != "fire"]
-
-    issues = ComplianceEngine().run(model)
-
-    assert {"FIRE-ADU-SPRINKLER-DETERMINATION", "FIRE-SPRINKLER-SYSTEM"} <= _rule_ids(issues)
-    assert model.compliance_summary["status"] == "failed"
-
-
-def test_sourced_primary_dwelling_requirement_can_establish_adu_exception() -> None:
-    model = _complete_model()
-    model.spec = ProjectSpec(
-        site=model.spec.site,
-        building_use=BuildingUse.adu,
-        bedrooms=1,
-        bathrooms=1,
-        stories=1,
-        primary_dwelling_sprinkler_requirement="not_required",
-        primary_dwelling_sprinkler_determination_source="AHJ determination ADU-2026-001",
-    )
-    model.mep_elements = [element for element in model.mep_elements if element.system != "fire"]
-
-    issues = ComplianceEngine().run(model)
-
-    assert "FIRE-SPRINKLER-SYSTEM" not in _rule_ids(issues)
-    applicability = next(
-        check for check in model.compliance_summary["checks"]
-        if check["rule_id"] == "FIRE-SPRINKLER-APPLICABILITY"
-    )
-    assert applicability["status"] == "not_applicable"
-
-
 def test_earlier_code_cycle_needs_matching_filing_date_and_is_unverified() -> None:
     model = _complete_model()
     model.spec = ProjectSpec(
@@ -893,29 +850,6 @@ def test_addition_scope_does_not_apply_new_dwelling_sprinkler_assumption() -> No
     assert "FIRE-SPRINKLER-SYSTEM" not in _rule_ids(issues)
     assert "FIRE-SPRINKLER-ALTERATION-APPLICABILITY" in _rule_ids(issues)
     assert model.compliance_summary["status"] == "unverified"
-
-
-def test_adu_local_area_height_and_setbacks_require_sourced_evidence() -> None:
-    model = _complete_model()
-    model.spec = ProjectSpec(
-        site=model.spec.site,
-        building_use=BuildingUse.adu,
-        bedrooms=1,
-        bathrooms=1,
-        stories=1,
-        max_floors=2,
-        fine_details={"exhaust_fans": True, "adu_max_sqft": 1400},
-    )
-
-    issues = ComplianceEngine().run(model)
-
-    assert {
-        "ADU-AREA-LOCAL-STANDARD",
-        "ADU-HEIGHT-LOCAL-STANDARD",
-        "ADU-SETBACK-EVIDENCE",
-    } <= _rule_ids(issues)
-    assert model.compliance_summary["status"] == "unverified"
-
 
 def test_fire_citation_uses_current_2025_crc_sections() -> None:
     model = _complete_model()

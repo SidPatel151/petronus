@@ -22,7 +22,7 @@ from typing import Any, Iterable, Optional
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 ALLOWED_IMAGE_TYPES = {"floor_plan", "exterior_photo", "3d_render", "sketch", "unknown"}
-ALLOWED_BUILDING_TYPES = {"adu", "sfr", "victorian", "townhouse", "unknown"}
+ALLOWED_BUILDING_TYPES = {"sfr", "victorian", "townhouse", "unknown"}
 MANIFEST_REQUIRED_FIELDS = {
     "id",
     "source_file",

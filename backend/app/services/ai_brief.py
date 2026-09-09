@@ -11,6 +11,15 @@ from typing import Dict, Any, Optional
 _INDEX_PATH = Path(__file__).parent.parent / "data" / "blueprint_index.json"
 _INDEX_CACHE: Optional[list] = None
 
+CALIFORNIA_CODE_REFERENCES = [
+    "CBC 2022 (California Building Code, 26th edition)",
+    "CRC 2022 (California Residential Code)",
+    "CALGreen 2022 (CAC Title 24 Part 11)",
+    "Title 24 Part 6 2022 Energy Code",
+    "ASCE 7-22 (loads & seismic)",
+    "CA Fire Code 2022",
+]
+
 
 def _load_index() -> list:
     global _INDEX_CACHE
@@ -100,6 +109,16 @@ async def get_design_brief(
         struct   = spec_dict.get("structural_system", "wood")
         # Max footprint per floor so width_m × depth_m stays within the sqft cap
         _max_fp_m2 = (sqft / max(stories, 1)) / 10.764
+
+        if slope < 4:
+            terrain_desc = "flat to gentle"
+        elif slope < 8:
+            terrain_desc = f"moderate slope ({slope:.1f}%)"
+        else:
+            terrain_desc = f"steep slope ({slope:.1f}%)"
+
+        blueprints = _find_blueprints(archetype_id, bedrooms, sqft, n=3)
+        bp_block = "\n".join(_bp_summary(b) for b in blueprints) or "  (no matching blueprints)"
 
         code_reference_list = "\n".join(f"- {c}" for c in CALIFORNIA_CODE_REFERENCES)
         prompt = f"""You are a California residential conceptual-design assistant. Given this site and its neighbors, output a concise JSON massing brief for a new residential building. Do not claim that the result is engineered, code-verified, permit-ready, or approved.
@@ -198,6 +217,7 @@ def _default_brief(spec_dict: Dict, nav: Dict) -> Dict[str, Any]:
         "roof_type": "gabled",
         "roof_pitch_12": 5,
         "ground_floor_height_boost_m": 0.3,
+        "penthouse_setback": False,
         "rationale": "Fallback defaults — Claude unavailable",
         "source": "fallback",
     }

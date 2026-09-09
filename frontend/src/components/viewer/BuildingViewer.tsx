@@ -8,6 +8,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useAppStore, LayerKey } from '@/lib/store';
 import { getTexture, resolveTexture } from '@/lib/textures';
+import GlbBuildingScene from './GlbBuildingScene';
 
 // ── PBR texture sets — diff JPG + optional roughness JPG (no EXR) ─────
 const PBR_SETS: Record<string, {
@@ -518,9 +519,19 @@ function MEPLine({ el }: { el: any }) {
 // ── MEP point (fixtures, panels, outlets, alarms, etc) ────────────────
 function MEPPoint({ el }: { el: any }) {
   if (!el.start) return null;
+  // Schedule/record elements, not physical devices — mep.py emits one
+  // branch_circuit per breaker at the panel position purely for compliance
+  // auditing, so rendering them piles blobs on top of every panel.
+  // Mirrors NON_GEOMETRIC_MEP_TYPES in backend/app/services/render_payload.py.
+  if (el.type === 'branch_circuit') return null;
   const [x, y, z] = el.start;
   const color = COLORS[el.type] || COLORS[el.system] || '#888';
   const type = el.type;
+  // Yaw for wall-hosted devices, from the host wall's inward normal (see
+  // MEPElement.rotation_deg). Devices used to be drawn axis-aligned no matter
+  // which wall they sat on, so anything on an east/west wall rendered edge-on
+  // — a thin plate seen end-, which is what read as a floating square block.
+  const yaw = typeof el.rotation_deg === 'number' ? (el.rotation_deg * Math.PI) / 180 : 0;
 
   if (type === 'toilet') {
     return (
@@ -546,32 +557,100 @@ function MEPPoint({ el }: { el: any }) {
       </group>
     );
   }
-  if (type === 'outlet') {
+  if (type === 'outlet' || type === 'ceiling_outlet') {
+    // Duplex receptacle: a 70 x 115 mm plate with two stacked outlets, each
+    // with its NEMA 5-15R blade slots and ground pin. GFCI devices get the
+    // test/reset buttons instead of a second outlet.
+    const gfci = !!el?.metadata?.gfci;
+    const socket = (cy: number) => (
+      <group position={[0, cy, 0.006]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.019, 0.019, 0.004, 12]} />
+          <meshStandardMaterial color="#e8e6de" roughness={0.7} /></mesh>
+        <mesh position={[-0.006, 0.004, 0.003]}><boxGeometry args={[0.0025, 0.011, 0.004]} />
+          <meshStandardMaterial color="#12141a" roughness={1} /></mesh>
+        <mesh position={[0.006, 0.004, 0.003]}><boxGeometry args={[0.0025, 0.011, 0.004]} />
+          <meshStandardMaterial color="#12141a" roughness={1} /></mesh>
+        <mesh position={[0, -0.008, 0.003]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.0022, 0.0022, 0.004, 6]} />
+          <meshStandardMaterial color="#12141a" roughness={1} /></mesh>
+      </group>
+    );
     return (
-      <group position={[x, y, z]}>
-        {/* Outlet face plate */}
-        <mesh>
-          <boxGeometry args={[0.12, 0.18, 0.025]} />
-          <meshStandardMaterial color="#f0f0ea" roughness={0.6} />
+      <group position={[x, y, z]} rotation={[0, yaw, 0]}>
+        {/* Cover plate */}
+        <mesh castShadow>
+          <boxGeometry args={[0.070, 0.115, 0.008]} />
+          <meshStandardMaterial color="#f4f2ec" roughness={0.55} />
         </mesh>
-        {/* Two socket holes (emissive so they read as real openings) */}
-        <mesh position={[-0.025, 0.03, 0.013]}>
-          <boxGeometry args={[0.015, 0.025, 0.005]} />
-          <meshStandardMaterial color="#1a1a1a" emissive="#000" roughness={1} />
+        {/* Device body proud of the plate */}
+        <mesh position={[0, 0, 0.005]}>
+          <boxGeometry args={[0.046, 0.106, 0.004]} />
+          <meshStandardMaterial color="#eceae2" roughness={0.6} />
         </mesh>
-        <mesh position={[0.025, 0.03, 0.013]}>
-          <boxGeometry args={[0.015, 0.025, 0.005]} />
-          <meshStandardMaterial color="#1a1a1a" emissive="#000" roughness={1} />
-        </mesh>
+        {gfci ? (
+          <>
+            {socket(0.030)}
+            <mesh position={[0, -0.020, 0.009]}><boxGeometry args={[0.020, 0.014, 0.004]} />
+              <meshStandardMaterial color="#d94a4a" roughness={0.6} /></mesh>
+            <mesh position={[0, -0.038, 0.009]}><boxGeometry args={[0.020, 0.014, 0.004]} />
+              <meshStandardMaterial color="#3b3b3b" roughness={0.6} /></mesh>
+          </>
+        ) : (
+          <>{socket(0.028)}{socket(-0.028)}</>
+        )}
+        {/* Centre mounting screw */}
+        <mesh position={[0, 0, 0.010]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.0035, 0.0035, 0.003, 8]} />
+          <meshStandardMaterial color="#b9b5a8" metalness={0.6} roughness={0.4} /></mesh>
       </group>
     );
   }
-  if (type === 'fire_alarm') {
+  if (type === 'fire_alarm' || type === 'smoke_alarm') {
+    // mep.py emits type "smoke_alarm"; only "fire_alarm" was handled here, so
+    // every smoke detector in the building fell through to the generic
+    // emissive sphere at the bottom of this function.
+    const isSmoke = type === 'smoke_alarm';
+    if (isSmoke) {
+      // Ceiling-mounted photoelectric detector: shallow disc, vent ring, LED.
+      return (
+        <group position={[x, y, z]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.065, 0.070, 0.030, 20]} />
+            <meshStandardMaterial color="#f6f5f1" roughness={0.65} />
+          </mesh>
+          <mesh position={[0, -0.017, 0]}>
+            <cylinderGeometry args={[0.045, 0.045, 0.008, 20]} />
+            <meshStandardMaterial color="#e2e0da" roughness={0.7} />
+          </mesh>
+          <mesh position={[0.030, -0.017, 0]}>
+            <sphereGeometry args={[0.005, 8, 8]} />
+            <meshStandardMaterial color="#22c55e" emissive="#16a34a" emissiveIntensity={0.7} />
+          </mesh>
+        </group>
+      );
+    }
     return (
       <mesh position={[x, y, z]}>
         <cylinderGeometry args={[0.1, 0.1, 0.04, 12]} />
         <meshStandardMaterial color="#dd2200" emissive="#aa1100" emissiveIntensity={0.4} roughness={0.5} />
       </mesh>
+    );
+  }
+  if (type === 'ev_charger') {
+    // Wall-mounted EVSE: body, cable hook, and a status LED strip.
+    return (
+      <group position={[x, y, z]} rotation={[0, yaw, 0]}>
+        <mesh castShadow>
+          <boxGeometry args={[0.20, 0.34, 0.11]} />
+          <meshStandardMaterial color="#2b3138" roughness={0.5} metalness={0.25} />
+        </mesh>
+        <mesh position={[0, 0.10, 0.058]}>
+          <boxGeometry args={[0.10, 0.012, 0.004]} />
+          <meshStandardMaterial color="#38bdf8" emissive="#0ea5e9" emissiveIntensity={0.8} />
+        </mesh>
+        <mesh position={[0, -0.10, 0.075]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.035, 0.010, 8, 16]} />
+          <meshStandardMaterial color="#1a1d22" roughness={0.75} />
+        </mesh>
+      </group>
     );
   }
   if (type === 'sprinkler') {
@@ -647,16 +726,27 @@ function MEPPoint({ el }: { el: any }) {
     );
   }
   if (type === 'light_switch') {
+    // Single-gang toggle: 70 x 115 mm plate, 12 mm toggle proud of the face.
     return (
-      <group position={[x, y, z]}>
-        <mesh>
-          <boxGeometry args={[0.11, 0.18, 0.025]} />
-          <meshStandardMaterial color="#f1f5f9" roughness={0.65} />
+      <group position={[x, y, z]} rotation={[0, yaw, 0]}>
+        <mesh castShadow>
+          <boxGeometry args={[0.070, 0.115, 0.008]} />
+          <meshStandardMaterial color="#f4f2ec" roughness={0.55} />
         </mesh>
-        <mesh position={[0, 0.015, 0.02]} rotation={[0.25, 0, 0]}>
-          <boxGeometry args={[0.025, 0.07, 0.018]} />
-          <meshStandardMaterial color="#cbd5e1" roughness={0.55} />
+        <mesh position={[0, 0, 0.005]}>
+          <boxGeometry args={[0.030, 0.075, 0.004]} />
+          <meshStandardMaterial color="#eceae2" roughness={0.6} />
         </mesh>
+        <mesh position={[0, 0.006, 0.011]} rotation={[0.22, 0, 0]}>
+          <boxGeometry args={[0.011, 0.030, 0.010]} />
+          <meshStandardMaterial color="#e6e3da" roughness={0.5} />
+        </mesh>
+        {[0.048, -0.048].map((sy) => (
+          <mesh key={sy} position={[0, sy, 0.006]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.003, 0.003, 0.003, 8]} />
+            <meshStandardMaterial color="#b9b5a8" metalness={0.6} roughness={0.4} />
+          </mesh>
+        ))}
       </group>
     );
   }
@@ -703,11 +793,99 @@ function MEPPoint({ el }: { el: any }) {
     );
   }
 
-  // Generic: panel, lighting_point, mini_split_head, rooftop_unit
-  const size = type === 'panel' ? 0.3 : type === 'rooftop_unit' ? 1.2 : 0.18;
+  // Electrical panels — real load centers are ~0.36 x 0.10 x 0.50 m.
+  // "main_panel" previously matched none of the branches above and fell
+  // through to the generic blob below.
+  if (type === 'panel' || type === 'main_panel' || type === 'sub_panel') {
+    // Load centre with the deadfront open: two columns of breaker handles
+    // sized off the panel's actual amperage, a main breaker at the top, and a
+    // hinged door. Previously a plain grey box.
+    const sub = type === 'sub_panel';
+    const h = sub ? 0.40 : 0.50;
+    const w = 0.36, d = 0.10;
+    const amps = Number(el?.metadata?.amps) || (sub ? 125 : 200);
+    const poles = Math.max(6, Math.min(20, Math.round(amps / 10)));
+    const rows = Math.ceil(poles / 2);
+    const slotH = (h - 0.14) / rows;
+    return (
+      <group position={[x, y, z]} rotation={[0, yaw, 0]}>
+        {/* Can */}
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[w, h, d]} />
+          <meshStandardMaterial color="#3f3f46" roughness={0.6} metalness={0.35} />
+        </mesh>
+        {/* Deadfront */}
+        <mesh position={[0, 0, d / 2 + 0.002]}>
+          <boxGeometry args={[w - 0.03, h - 0.03, 0.004]} />
+          <meshStandardMaterial color="#5a5a63" roughness={0.5} metalness={0.4} />
+        </mesh>
+        {/* Main breaker */}
+        <mesh position={[0, h / 2 - 0.055, d / 2 + 0.012]}>
+          <boxGeometry args={[0.10, 0.030, 0.016]} />
+          <meshStandardMaterial color="#22252b" roughness={0.55} />
+        </mesh>
+        <mesh position={[0, h / 2 - 0.055, d / 2 + 0.021]}>
+          <boxGeometry args={[0.030, 0.014, 0.006]} />
+          <meshStandardMaterial color="#c0392b" roughness={0.5} />
+        </mesh>
+        {/* Branch breaker handles, two columns */}
+        {Array.from({ length: rows }).flatMap((_, r) =>
+          [-1, 1].map((col) => {
+            const idx = r * 2 + (col > 0 ? 1 : 0);
+            if (idx >= poles) return null;
+            const by = h / 2 - 0.10 - (r + 0.5) * slotH;
+            return (
+              <group key={`${r}-${col}`} position={[col * 0.075, by, d / 2 + 0.010]}>
+                <mesh><boxGeometry args={[0.115, slotH * 0.68, 0.012]} />
+                  <meshStandardMaterial color="#22252b" roughness={0.6} /></mesh>
+                <mesh position={[col * -0.036, 0, 0.008]}>
+                  <boxGeometry args={[0.020, slotH * 0.44, 0.007]} />
+                  <meshStandardMaterial color="#1d1f24" roughness={0.5} /></mesh>
+              </group>
+            );
+          })
+        )}
+        {/* Hinged door, swung open toward the room */}
+        <group position={[-w / 2, 0, d / 2]} rotation={[0, -1.15, 0]}>
+          <mesh position={[w / 2, 0, 0.006]} castShadow>
+            <boxGeometry args={[w, h, 0.012]} />
+            <meshStandardMaterial color="#48484f" roughness={0.55} metalness={0.4} />
+          </mesh>
+        </group>
+      </group>
+    );
+  }
+  // Recessed ceiling downlight (~6 in trim) — also previously a floating blob.
+  if (type === 'lighting_point') {
+    return (
+      <group position={[x, y, z]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh>
+          <cylinderGeometry args={[0.075, 0.075, 0.02, 16]} />
+          <meshStandardMaterial color="#f4f1e8" roughness={0.5} />
+        </mesh>
+        <mesh position={[0, -0.012, 0]}>
+          <cylinderGeometry args={[0.055, 0.055, 0.008, 16]} />
+          <meshStandardMaterial color="#fffbe8" emissive="#fff3c4" emissiveIntensity={0.6} />
+        </mesh>
+      </group>
+    );
+  }
+  if (type === 'carbon_monoxide_alarm') {
+    return (
+      <group position={[x, y, z]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh>
+          <cylinderGeometry args={[0.055, 0.055, 0.022, 16]} />
+          <meshStandardMaterial color="#f8fafc" roughness={0.6} />
+        </mesh>
+      </group>
+    );
+  }
+
+  // Generic: mini_split_head, rooftop_unit, and anything without a model yet
+  const size = type === 'rooftop_unit' ? 1.2 : 0.18;
   return (
     <mesh position={[x, y, z]}>
-      {type === 'panel' ? <boxGeometry args={[0.1, 0.6, 0.4]} /> : <sphereGeometry args={[size / 2, 8, 8]} />}
+      <sphereGeometry args={[size / 2, 8, 8]} />
       <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} />
     </mesh>
   );
@@ -1447,6 +1625,12 @@ function Scene() {
       {/* Generated building */}
       {buildingModel && (
         <>
+        {buildingModel.glb_data ? (
+          <Suspense fallback={null}>
+            <GlbBuildingScene glbBase64={buildingModel.glb_data} />
+          </Suspense>
+        ) : (
+          <>
           {/* ── Exterior shell + interior walls (architecture layer) ── */}
           {(() => {
             const massing = buildingModel.massing_options?.[massingIndex];
@@ -1559,7 +1743,11 @@ function Scene() {
             if (!activeLayers['architecture']) return null;
             return <FacadeMesh key={`facade_${i}`} mesh={mesh} floorH={FLOOR_H} />;
           })}
+          </>
+        )}
 
+          {/* ── Compliance issue markers — render on top of either building
+               representation (procedural or Blender GLB), not tied to either ── */}
           {activeLayers['issues'] && buildingModel.issues.map((issue: any) => {
             if (!issue.location) return null;
             const { min_x, max_x, min_y, max_y, min_z, max_z } = issue.location;
@@ -1606,6 +1794,7 @@ function Scene() {
 
 const LAYER_GROUPS: { group: string; domain: string; layers: { key: LayerKey; label: string; color: string }[] }[] = [
   { group: 'Building', domain: '#c4a882', layers: [
+    { key: 'shell',        label: 'Exterior Shell',   color: '#64748b' },
     { key: 'architecture', label: 'Walls & Windows', color: '#94a3b8' },
     { key: 'floors',       label: 'Floors & Rooms',  color: '#c8d0dc' },
     { key: 'roof',         label: 'Roof',             color: '#7c8fa8' },
@@ -1866,7 +2055,7 @@ export default function BuildingViewer() {
           <div className="absolute top-4 left-4 panel p-3 animate-fade-in" style={{ minWidth: '180px' }}>
             <div className="text-[var(--text-secondary)] font-mono text-xs uppercase tracking-wider mb-2">Building Summary</div>
             <div className="space-y-1">
-              {use === 'single_family' || use === 'adu' ? (
+              {use === 'single_family' ? (
                 <>
                   <div className="flex justify-between gap-4">
                     <span className="text-[11px] font-mono text-[var(--text-secondary)]">Bedrooms</span>
@@ -1938,8 +2127,13 @@ export default function BuildingViewer() {
         const mep     = buildingModel.mep_elements || [];
         const log     = (buildingModel as any).generation_log || [];
 
-        const totalSqft = Math.round(rooms.reduce((s: number, r: any) => s + (r.area_sqft || 0), 0));
-        const roomCount = rooms.length;  // show all rooms including corridors/stairs
+        // 'unit' is a bounding box around a whole unit's real rooms (its area
+        // duplicates its own children's areas — see Building Summary panel above),
+        // and corridors/stairs aren't occupiable rooms — exclude all three from
+        // both the displayed count/total and the room list itself.
+        const displayRooms = rooms.filter((r: any) => !['unit', 'corridor', 'stair'].includes(r.type));
+        const totalSqft = Math.round(displayRooms.reduce((s: number, r: any) => s + (r.area_sqft || 0), 0));
+        const roomCount = displayRooms.length;
 
         // MEP summary counts
         const plumbingCount  = mep.filter((e: any) => e.system === 'plumbing').length;
@@ -1956,7 +2150,7 @@ export default function BuildingViewer() {
         };
 
         const byFloor: Record<number, any[]> = {};
-        rooms.forEach((r: any) => {
+        displayRooms.forEach((r: any) => {
           const fl = r.level ?? 0;
           if (!byFloor[fl]) byFloor[fl] = [];
           byFloor[fl].push(r);

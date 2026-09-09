@@ -1,0 +1,41 @@
+{
+  "meshes": [
+    {
+      "element_id": "roof001",
+      "element_type": "roof",
+      "layer": "roof",
+      "level": 1,
+      "color": "#5c4a3d",
+      "vertices": [[0,6,0],[8,6,0],[8,6,10],[0,6,10],[4,8,5]],
+      "faces": [[0,1,4],[1,2,4],[2,3,4],[3,0,4]]
+    }
+  ],
+  "rooms": [
+    {"id": "room001", "level": 0, "polygon": [[0.5,0.5],[4.5,0.5],[4.5,5.5],[0.5,5.5]]}
+  ],
+  "walls": [
+    {"id": "wall001", "level": 0, "start": [0,0], "end": [8,0], "height_ft": 9.0, "is_exterior": true},
+    {"id": "wall002", "level": 0, "start": [8,0], "end": [8,10], "height_ft": 9.0, "is_exterior": true}
+  ],
+  "mep_runs": [
+    {
+      "parent_id": "pipe_run_1", "system": "plumbing", "type": "pipe", "layer": "plumbing",
+      "diameter_in": 1.5, "width_in": null, "height_in": null,
+      "polyline": [[1,0.2,1],[3,0.2,1],[3,0.2,4],[5,0.2,4]]
+    },
+    {
+      "parent_id": "duct_run_1", "system": "hvac", "type": "duct", "layer": "hvac",
+      "diameter_in": null, "width_in": 12.0, "height_in": 8.0,
+      "polyline": [[1,2.5,1],[4,2.5,1],[4,2.5,4]]
+    }
+  ],
+  "mep_points": [
+    {"id": "spr1", "system": "fire", "type": "sprinkler", "layer": "fixtures", "level": 0, "position": [2,2.4,2], "metadata": {}},
+    {"id": "toilet1", "system": "plumbing", "type": "toilet", "layer": "fixtures", "level": 0, "position": [3.8,0.05,1], "metadata": {}}
+  ],
+  "levels": [
+    {"index": 0, "elevation_ft": 0.0, "height_ft": 9.0},
+    {"index": 1, "elevation_ft": 9.0, "height_ft": 9.0}
+  ],
+  "units": "meters"
+}

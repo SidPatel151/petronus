@@ -7,7 +7,7 @@ Returned schema:
 {
   "source_file": str,          relative path from data/ root
   "image_type": str,           "floor_plan" | "exterior_photo" | "3d_render" | "sketch"
-  "building_type": str,        "adu" | "sfr" | "victorian" | "townhouse" | "unknown"
+  "building_type": str,        "sfr" | "victorian" | "townhouse" | "unknown"
   "bedrooms": int | null,
   "bathrooms": int | null,
   "half_baths": int | null,
@@ -41,7 +41,7 @@ Return ONLY valid JSON matching this exact schema (use null for fields you canno
 
 {
   "image_type": "<floor_plan | exterior_photo | 3d_render | sketch>",
-  "building_type": "<adu | sfr | victorian | townhouse | unknown>",
+  "building_type": "<sfr | victorian | townhouse | unknown>",
   "bedrooms": <integer or null>,
   "bathrooms": <integer or null>,
   "half_baths": <integer or null>,

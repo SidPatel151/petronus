@@ -2,8 +2,9 @@
 These helpers are intentionally conservative and do not mutate original inputs
 unless explicitly requested by callers.
 """
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 from shapely.geometry import Polygon, Point, LineString
+from shapely.ops import polygonize, unary_union
 import math
 
 
@@ -44,6 +45,49 @@ def validate_mep_coverage(rooms: List, elements: List, min_rooms_fraction: float
     fraction = len(covered) / max(1, len(rooms))
     ok = fraction >= min_rooms_fraction
     return {"ok": ok, "fraction": fraction, "covered": covered, "uncovered": uncovered}
+
+
+def footprint_polygon_from_walls_or_rooms(
+    walls: List, rooms: List, level_index: int
+) -> Optional[Polygon]:
+    """Polygonize this level's exterior walls; fall back to a buffered union
+    of this level's room polygons if the walls don't close cleanly.
+
+    Shared by MEPRouter (which needs "the fixed envelope" to bound routing
+    and containment checks) and the blueprint editor (which needs "the fixed
+    envelope" to bound where rooms/walls may be edited) so the two agree on
+    exactly the same footprint for a given level.
+    """
+    exterior = [
+        LineString([w.start, w.end])
+        for w in walls
+        if getattr(w, "is_exterior", False) and w.level == level_index
+        and len(w.start) >= 2 and len(w.end) >= 2
+    ]
+    try:
+        candidates = list(polygonize(unary_union(exterior))) if exterior else []
+        if candidates:
+            shell = max(candidates, key=lambda p: p.area)
+            if shell.is_valid and not shell.is_empty:
+                return shell
+    except Exception:
+        pass
+
+    # Safe fallback for incomplete wall graphs: union this level's room
+    # polygons. A tiny closing buffer bridges wall-thickness gaps.
+    try:
+        room_polys = [
+            Polygon(r.polygon)
+            for r in rooms if r.level == level_index and len(r.polygon) >= 3
+        ]
+        merged = unary_union(room_polys).buffer(0.12, join_style=2)
+        if not merged.is_empty:
+            if merged.geom_type == "MultiPolygon":
+                merged = max(merged.geoms, key=lambda p: p.area)
+            return merged if merged.is_valid else merged.buffer(0)
+    except Exception:
+        pass
+    return None
 
 
 def snap_facade_to_massing(massing_footprint: List[Tuple[float, float]], facade_meshes: List[Dict], max_snap: float = 0.12) -> List[Dict]:

@@ -17,8 +17,31 @@ from app.models.schemas import Room, Wall, ProjectSpec, Level
 from app.constants import BuildingUse, SFR_SQFT_RANGES, PRIORITY_SQFT_POSITION, sfr_target_sqft
 
 # Interior inset from exterior wall face — one constant, used everywhere.
-# All rooms, walls, and MEP elements must have their CENTER inside fp.buffer(-FP_INSET).
+# All rooms, walls, and MEP elements must have their CENTER inside fp.buffer(-FP_INSET, join_style=2).
 FP_INSET = 0.20
+
+# Minimum room widths (metres), by room type — mirrors the more complete of
+# the two per-function `_MIN_W` locals below (ground-floor row layout).
+# Exported for reuse by app.generators.floorplan_editor; intentionally NOT
+# wired back into the two local `_MIN_W` dicts below, since they differ
+# slightly and consolidating them would change existing layout behavior.
+MIN_ROOM_WIDTH_M: Dict[str, float] = {
+    "bedroom": 2.7, "bathroom": 1.5, "kitchen": 2.4,
+    "living": 3.0, "dining": 2.4, "family_room": 3.0,
+    "office": 2.4, "loft": 2.4, "media_room": 2.7,
+    "laundry": 1.5, "mudroom": 1.5, "foyer": 1.5,
+    "corridor": 1.1, "hall": 1.1, "walk_in_closet": 1.2,
+    "deck": 1.5, "garage": 2.7, "half_bath": 1.2,
+    # Estate rooms. Minimums come off High-End-Custom/R.jpg, where a wine
+    # cellar and pantry are 6 x 7 ft and the loggia is 13 x 32 ft — the small
+    # service rooms genuinely are small, and clamping them to a generic 1.2 m
+    # is part of why generated plans had no size spread at the bottom end.
+    "wine_cellar": 1.6, "butler_pantry": 1.6, "cinema_room": 3.2,
+    "game_room": 3.2, "sitting_room": 2.4, "sauna": 1.8,
+    "pool_bath": 1.5, "loggia": 3.0, "gym": 2.4, "library": 2.4,
+    "bonus_room": 2.7, "utility": 1.5, "mechanical": 1.5,
+    "dressing_room": 1.8, "great_room": 4.2,
+}
 
 # ── Multi-family unit templates (row-based: each row is a horizontal band,
 #    rooms within a row are placed side-by-side left→right) ─────────────────
@@ -419,66 +442,70 @@ SFR_UPPER_LARGE: Dict[int, List[Dict]] = {
             {"type": "media_room", "frac_w": 0.50},
         ]},
     ],
-    5: [  # 5BR large upper
-        {"row_frac_d": 0.32, "rooms": [
-            {"type": "bedroom",         "frac_w": 0.26},  # master suite
-            {"type": "bathroom",        "frac_w": 0.14},  # master bath
-            {"type": "walk_in_closet",  "frac_w": 0.10},
-            {"type": "bedroom",         "frac_w": 0.22},  # br2
-            {"type": "bedroom",         "frac_w": 0.28},  # br3
+    5: [  # 5BR large upper — primary suite is the dominant room on the floor
+        # The primary suite gets a deep row of its own. Reference plans run the
+        # primary at 2.0-2.5x a secondary bedroom (400 vs 160 sqft); the old
+        # fracs put it at 1.36x, and in the 5BR case bedroom 3 was actually
+        # LARGER than the primary. Bathrooms are also pulled back hard — they
+        # used to end up the biggest rooms on the floor.
+        {"row_frac_d": 0.38, "rooms": [
+            {"type": "bedroom",         "frac_w": 0.46},  # primary suite
+            {"type": "bathroom",        "frac_w": 0.20},  # primary bath
+            {"type": "walk_in_closet",  "frac_w": 0.14},
+            {"type": "bedroom",         "frac_w": 0.20},  # br2
         ]},
-        {"row_frac_d": 0.33, "rooms": [
-            {"type": "bedroom",    "frac_w": 0.20},  # br4
-            {"type": "bedroom",    "frac_w": 0.20},  # br5
-            {"type": "bathroom",   "frac_w": 0.16},
-            {"type": "bathroom",   "frac_w": 0.16},
-            {"type": "bonus_room", "frac_w": 0.28},
+        {"row_frac_d": 0.34, "rooms": [
+            {"type": "bedroom",    "frac_w": 0.30},  # br3
+            {"type": "bedroom",    "frac_w": 0.28},  # br4
+            {"type": "bedroom",    "frac_w": 0.27},  # br5
+            {"type": "bathroom",   "frac_w": 0.15},
         ]},
-        {"row_frac_d": 0.35, "rooms": [
-            {"type": "loft",       "frac_w": 0.35},
-            {"type": "media_room", "frac_w": 0.35},
-            {"type": "gym",        "frac_w": 0.30},
+        {"row_frac_d": 0.28, "rooms": [
+            {"type": "loft",       "frac_w": 0.42},
+            {"type": "media_room", "frac_w": 0.36},
+            {"type": "bathroom",   "frac_w": 0.22},
         ]},
     ],
-    6: [  # 6BR large upper — 3 rows keep each bedroom ≥ 2.7 m wide
-        {"row_frac_d": 0.30, "rooms": [
-            {"type": "bedroom",        "frac_w": 0.30},  # master
-            {"type": "bathroom",       "frac_w": 0.15},  # master bath
-            {"type": "walk_in_closet", "frac_w": 0.11},
-            {"type": "bedroom",        "frac_w": 0.22},  # br2
-            {"type": "bedroom",        "frac_w": 0.22},  # br3
+    6: [  # 6BR large upper
+        {"row_frac_d": 0.36, "rooms": [
+            {"type": "bedroom",        "frac_w": 0.44},  # primary suite
+            {"type": "bathroom",       "frac_w": 0.19},  # primary bath
+            {"type": "walk_in_closet", "frac_w": 0.13},
+            {"type": "bedroom",        "frac_w": 0.24},  # br2
+        ]},
+        {"row_frac_d": 0.34, "rooms": [
+            {"type": "bedroom",    "frac_w": 0.28},  # br3
+            {"type": "bedroom",    "frac_w": 0.26},  # br4
+            {"type": "bedroom",    "frac_w": 0.26},  # br5
+            {"type": "bathroom",   "frac_w": 0.20},
         ]},
         {"row_frac_d": 0.30, "rooms": [
-            {"type": "bedroom",    "frac_w": 0.33},  # br4
-            {"type": "bedroom",    "frac_w": 0.33},  # br5
             {"type": "bedroom",    "frac_w": 0.34},  # br6
-        ]},
-        {"row_frac_d": 0.40, "rooms": [
-            {"type": "bathroom",   "frac_w": 0.28},
-            {"type": "bathroom",   "frac_w": 0.28},
-            {"type": "bonus_room", "frac_w": 0.22},
+            {"type": "bonus_room", "frac_w": 0.30},
             {"type": "loft",       "frac_w": 0.22},
+            {"type": "bathroom",   "frac_w": 0.14},
         ]},
     ],
     7: [  # 7BR large upper
-        {"row_frac_d": 0.28, "rooms": [
-            {"type": "bedroom",        "frac_w": 0.28},  # master
-            {"type": "bathroom",       "frac_w": 0.14},  # master bath
-            {"type": "walk_in_closet", "frac_w": 0.10},
-            {"type": "bedroom",        "frac_w": 0.24},  # br2
-            {"type": "bedroom",        "frac_w": 0.24},  # br3
+        {"row_frac_d": 0.34, "rooms": [
+            {"type": "bedroom",        "frac_w": 0.42},  # primary suite
+            {"type": "bathroom",       "frac_w": 0.18},  # primary bath
+            {"type": "walk_in_closet", "frac_w": 0.12},
+            {"type": "bedroom",        "frac_w": 0.28},  # br2
         ]},
-        {"row_frac_d": 0.30, "rooms": [
-            {"type": "bedroom",  "frac_w": 0.34},  # br4
-            {"type": "bedroom",  "frac_w": 0.33},  # br5
-            {"type": "bedroom",  "frac_w": 0.33},  # br6
+        {"row_frac_d": 0.26, "rooms": [
+            {"type": "bedroom",  "frac_w": 0.30},  # br3
+            {"type": "bedroom",  "frac_w": 0.28},  # br4
+            {"type": "bedroom",  "frac_w": 0.27},  # br5
+            {"type": "bathroom", "frac_w": 0.15},
         ]},
         {"row_frac_d": 0.24, "rooms": [
-            {"type": "bedroom",    "frac_w": 0.40},  # br7
-            {"type": "bathroom",   "frac_w": 0.30},
-            {"type": "bathroom",   "frac_w": 0.30},
+            {"type": "bedroom",    "frac_w": 0.36},  # br6
+            {"type": "bedroom",    "frac_w": 0.34},  # br7
+            {"type": "bathroom",   "frac_w": 0.16},
+            {"type": "bathroom",   "frac_w": 0.14},
         ]},
-        {"row_frac_d": 0.18, "rooms": [
+        {"row_frac_d": 0.16, "rooms": [
             {"type": "loft",       "frac_w": 0.45},
             {"type": "bonus_room", "frac_w": 0.30},
             {"type": "media_room", "frac_w": 0.25},
@@ -487,6 +514,68 @@ SFR_UPPER_LARGE: Dict[int, List[Dict]] = {
 }
 
 # Threshold: floor plate above this uses expanded large-house programs
+# ── Estate / mansion programs ────────────────────────────────────────────────
+# frac_w values are the measured room proportions from the reference plan
+# backend/app/data/High-End-Custom/R.jpg, not invented ratios. That plan is a
+# single-storey mansion: living 20x23.5, kitchen 17x23.5, dining 17x22, master
+# 17x21 with a 14x17 bath, down to a 6x7 wine cellar — an 11:1 spread within
+# one floor, which is the size hierarchy the large tables never produced.
+SFR_GROUND_MANSION: List[Dict] = [
+    {"row_frac_d": 0.30, "rooms": [
+        {"type": "foyer",       "frac_w": 0.11},
+        {"type": "great_room",  "frac_w": 0.59},   # R.jpg living, 470 sqft
+        {"type": "office",      "frac_w": 0.24},
+        {"type": "wine_cellar", "frac_w": 0.06},   # 6x7 — genuinely small
+    ]},
+    {"row_frac_d": 0.30, "rooms": [
+        {"type": "kitchen",       "frac_w": 0.44},
+        {"type": "dining",        "frac_w": 0.41},
+        {"type": "butler_pantry", "frac_w": 0.05},
+        {"type": "mudroom",       "frac_w": 0.10},
+    ]},
+    {"row_frac_d": 0.24, "rooms": [
+        {"type": "cinema_room", "frac_w": 0.25},
+        {"type": "game_room",   "frac_w": 0.25},
+        {"type": "laundry",     "frac_w": 0.22},
+        {"type": "gym",         "frac_w": 0.19},
+        {"type": "half_bath",   "frac_w": 0.09},
+    ]},
+    {"row_frac_d": 0.16, "rooms": [
+        {"type": "loggia",    "frac_w": 0.62},     # 13x32 covered outdoor room
+        {"type": "sauna",     "frac_w": 0.17},
+        {"type": "pool_bath", "frac_w": 0.21},
+    ]},
+]
+
+# Upper floor: primary suite occupies most of one row, exactly as R.jpg's
+# master + master bath + his/hers closets + sitting room do.
+SFR_UPPER_MANSION: List[Dict] = [
+    {"row_frac_d": 0.38, "rooms": [
+        {"type": "bedroom",        "frac_w": 0.43},   # primary suite
+        {"type": "bathroom",       "frac_w": 0.29},   # primary bath
+        {"type": "walk_in_closet", "frac_w": 0.17},
+        {"type": "sitting_room",   "frac_w": 0.11},
+    ]},
+    {"row_frac_d": 0.34, "rooms": [
+        {"type": "bedroom",  "frac_w": 0.30},
+        {"type": "bathroom", "frac_w": 0.13},
+        {"type": "bedroom",  "frac_w": 0.30},
+        {"type": "bathroom", "frac_w": 0.13},
+        {"type": "library",  "frac_w": 0.14},
+    ]},
+    {"row_frac_d": 0.28, "rooms": [
+        {"type": "bedroom",    "frac_w": 0.32},
+        {"type": "bedroom",    "frac_w": 0.30},
+        {"type": "bathroom",   "frac_w": 0.16},
+        {"type": "bonus_room", "frac_w": 0.22},
+    ]},
+]
+
+# Per-floor plate above which the estate programs are used instead of the
+# "large" ones. 230 m2 = ~2,475 sqft per floor; R.jpg's own interior floor is
+# roughly twice that.
+MANSION_THRESHOLD_M2 = 230.0
+
 LARGE_HOUSE_THRESHOLD_M2 = 80.0  # ~860 sqft per floor
 
 # For multi-story SFR: floor 0 is public, floor 1+ is private (bedrooms)
@@ -499,15 +588,322 @@ SFR_GROUND_ROWS = {  # standard — keyed by bedrooms
     6: [SFR_PROGRAMS[6][0], SFR_PROGRAMS[6][1]],
     7: [SFR_PROGRAMS[7][0], SFR_PROGRAMS[7][1]],
 }
-SFR_UPPER_ROWS = {  # standard — upper floor(s) get bedroom rows
-    1: [SFR_PROGRAMS[1][2]],
-    2: [SFR_PROGRAMS[2][2]],
-    3: [SFR_PROGRAMS[3][2]],
-    4: [SFR_PROGRAMS[4][2]],
-    5: [SFR_PROGRAMS[5][2]],
-    6: [SFR_PROGRAMS[6][2], SFR_PROGRAMS[6][3]],  # 2 bedroom rows for 6 BR
-    7: [SFR_PROGRAMS[7][2], SFR_PROGRAMS[7][3]],  # 2 bedroom rows for 7 BR
+def _upper_rows(br: int) -> List[Dict]:
+    """Private upper-floor program: a shallow landing/hall band, then the
+    bedroom rows.
+
+    Rows 0 and 1 of SFR_PROGRAMS (living / kitchen / dining) are deliberately
+    excluded — they are exactly what SFR_GROUND_ROWS already emits, so any
+    upper floor built from the full program renders as a pixel-copy of floor 0.
+    The leading hall band also gives the staircase somewhere to land instead
+    of arriving in the middle of a bedroom.
+    """
+    hall = {"row_frac_d": 0.18, "rooms": [
+        {"type": "corridor",       "frac_w": 0.62},
+        {"type": "walk_in_closet", "frac_w": 0.38},
+    ]}
+    # Bedroom rows carry their own master bath, so no extra bath is added here.
+    return [hall] + [dict(row) for row in SFR_PROGRAMS[br][2:]]
+
+
+SFR_UPPER_ROWS = {br: _upper_rows(br) for br in SFR_PROGRAMS}
+
+# Rooms that are circulation/service only — a floor made up of nothing but
+# these has no habitable space and is a layout failure, not a valid plan.
+_CIRCULATION_ONLY_TYPES = {"stair", "corridor", "hall", "hallway", "unit"}
+
+# ── Room size ceilings ───────────────────────────────────────────────────────
+# Medians measured across the training-label plans (backend/app/data/training)
+# and blueprint_index: garage 520, living 280, dining 182, bedroom 160, kitchen
+# 153, bathroom 72, closet 36 sqft. A room program has a FIXED number of rooms,
+# so on a big plate the extra area inflated every room instead of adding any —
+# a 6,800 sqft single-storey house came out with the same 16 rooms as a 4,200
+# one, giving an 881 sqft kitchen and a 540 sqft dining room. Past these
+# ceilings a cell is split and the remainder becomes a companion room.
+ROOM_MAX_SQFT: Dict[str, float] = {
+    "great_room": 520, "living": 420, "family_room": 400, "dining": 340,
+    "kitchen": 340, "office": 260, "library": 260, "bedroom": 340,
+    "bathroom": 160, "half_bath": 70, "walk_in_closet": 130,
+    "cinema_room": 320, "game_room": 320, "media_room": 300, "gym": 300,
+    "loggia": 420, "garage": 700, "laundry": 160, "mudroom": 140,
+    "pantry": 90, "butler_pantry": 90, "wine_cellar": 90, "sauna": 90,
+    "pool_bath": 90, "utility": 140, "mechanical": 140, "bonus_room": 380,
+    "loft": 380, "sitting_room": 220, "foyer": 200, "corridor": 260,
+    "dressing_room": 150, "storage": 110, "closet": 70, "deck": 320,
 }
+
+# What the leftover half of an oversized room becomes.
+_SPLIT_COMPANION: Dict[str, str] = {
+    "great_room": "sitting_room", "living": "sitting_room",
+    "family_room": "sitting_room", "dining": "butler_pantry",
+    "kitchen": "pantry", "bedroom": "walk_in_closet",
+    "bathroom": "walk_in_closet", "office": "library",
+    "library": "office", "cinema_room": "game_room",
+    "game_room": "cinema_room", "gym": "sauna", "loggia": "deck",
+    "garage": "utility", "bonus_room": "loft", "loft": "bonus_room",
+    "corridor": "corridor", "foyer": "corridor",
+    # Terminating links, so a very large cell keeps splitting down to
+    # realistically small service rooms instead of leaving a 500 sqft pantry.
+    "sitting_room": "office", "pantry": "storage",
+    "butler_pantry": "pantry", "storage": "closet",
+    "walk_in_closet": "closet", "laundry": "storage",
+    "utility": "storage", "media_room": "storage", "deck": "deck",
+}
+
+_MIN_SPLIT_SQFT = 55.0   # never create a room smaller than this by splitting
+
+
+def subdivide_cell(
+    x0: float, y0: float, x1: float, y1: float, room_type: str, depth: int = 0,
+) -> List[Tuple[Tuple[float, float, float, float], str]]:
+    """Split an oversized cell into a room plus a companion, recursively.
+
+    Splits across the cell's longer axis so neither half becomes a slot, and
+    stops as soon as either half would fall under _MIN_SPLIT_SQFT or the room
+    type has no sensible companion.
+    """
+    rect = (x0, y0, x1, y1)
+    area_sqft = abs(x1 - x0) * abs(y1 - y0) * 10.764
+    cap = ROOM_MAX_SQFT.get(room_type)
+    companion = _SPLIT_COMPANION.get(room_type)
+    if (
+        cap is None or companion is None or depth >= 4
+        or area_sqft <= cap or area_sqft < _MIN_SPLIT_SQFT * 2
+    ):
+        return [(rect, room_type)]
+
+    # Give the primary room its full allowance and the remainder to the
+    # companion, rather than halving — a great room should stay the big room.
+    keep = min(max(cap / area_sqft, 0.35), 0.80)
+    wide = abs(x1 - x0) >= abs(y1 - y0)
+    if wide:
+        cut = x0 + (x1 - x0) * keep
+        a, b = (x0, y0, cut, y1), (cut, y0, x1, y1)
+    else:
+        cut = y0 + (y1 - y0) * keep
+        a, b = (x0, y0, x1, cut), (x0, cut, x1, y1)
+
+    for r in (a, b):
+        if abs(r[2] - r[0]) * abs(r[3] - r[1]) * 10.764 < _MIN_SPLIT_SQFT:
+            return [(rect, room_type)]
+
+    return (
+        subdivide_cell(*a, room_type, depth + 1)
+        + subdivide_cell(*b, companion, depth + 1)
+    )
+
+
+# ── Open-plan circulation ────────────────────────────────────────────────────
+# Whether a house walls its halls off or lets them run into the living space is
+# an era/style decision, not a geometric one. A mid-century or contemporary
+# plan opens the hall to the great room and the kitchen to the dining; a
+# Victorian or a tract builder walls all of it.
+OPEN_PLAN_ARCHETYPES = {
+    "mid_century_modern", "prefab_modern", "high_end_custom",
+    "urban_infill_zero_lot", "high_density_townhome",
+}
+
+# Pairs that lose their wall in an open-plan house.
+_OPEN_PAIRS_FULL = {
+    frozenset(p) for p in [
+        ("great_room", "kitchen"), ("great_room", "dining"),
+        ("great_room", "corridor"), ("great_room", "hall"),
+        ("great_room", "foyer"), ("great_room", "loggia"),
+        ("living", "kitchen"), ("living", "dining"),
+        ("living", "family_room"), ("living", "corridor"),
+        ("living", "hall"), ("living", "foyer"),
+        ("kitchen", "dining"), ("kitchen", "family_room"),
+        ("dining", "corridor"), ("dining", "hall"), ("dining", "loggia"),
+        ("family_room", "corridor"), ("family_room", "hall"),
+        ("foyer", "corridor"), ("foyer", "hall"),
+        ("sitting_room", "bedroom"),
+    ]
+}
+
+# Even a traditional plan runs the kitchen into the breakfast/dining area and
+# leaves the entry open to the hall — it just keeps its living rooms walled.
+_OPEN_PAIRS_TRADITIONAL = {
+    frozenset(p) for p in [
+        ("kitchen", "dining"),
+        ("foyer", "corridor"), ("foyer", "hall"),
+    ]
+}
+
+
+def open_pairs_for(archetype_id: str) -> set:
+    return (
+        _OPEN_PAIRS_FULL if archetype_id in OPEN_PLAN_ARCHETYPES
+        else _OPEN_PAIRS_TRADITIONAL
+    )
+
+
+def _rooms_along_wall(
+    wall: Wall, level_rooms: List[Room], horizontal: bool, line_coord: float,
+) -> List[Tuple[float, float, str, bool]]:
+    """Every room edge lying on this wall's line, as (lo, hi, type, is_far).
+
+    `is_far` is which side of the line the room's body sits on.
+    """
+    spans: List[Tuple[float, float, str, bool]] = []
+    for room in level_rooms:
+        pts = room.polygon
+        vals = [p[1] if horizontal else p[0] for p in pts]
+        far = (sum(vals) / len(vals)) >= line_coord
+        for i in range(len(pts)):
+            ex0, ey0 = pts[i]
+            ex1, ey1 = pts[(i + 1) % len(pts)]
+            if horizontal:
+                if abs(ey0 - line_coord) > 0.03 or abs(ey1 - line_coord) > 0.03:
+                    continue
+                lo, hi = min(ex0, ex1), max(ex0, ex1)
+            else:
+                if abs(ex0 - line_coord) > 0.03 or abs(ex1 - line_coord) > 0.03:
+                    continue
+                lo, hi = min(ey0, ey1), max(ey0, ey1)
+            if hi - lo > 0.05:
+                spans.append((lo, hi, room.type, far))
+    return spans
+
+
+def split_and_mark_open_walls(
+    rooms: List[Room], walls: List[Wall], archetype_id: str,
+) -> List[Wall]:
+    """Split interior walls where the rooms either side change, then flag the
+    stretches that should be cased openings.
+
+    A row-based layout produces one long wall between two rows, so the same
+    wall object is simultaneously the great-room/kitchen boundary and the
+    office/kitchen boundary. Marking whole walls therefore opened almost
+    nothing: any stretch that also backed onto a study or a closet kept the
+    entire run walled. Splitting first lets the great room open to the kitchen
+    while the study beside it stays enclosed.
+    """
+    pairs = open_pairs_for(archetype_id)
+    by_level: Dict[int, List[Room]] = {}
+    for room in rooms:
+        if len(room.polygon) >= 3:
+            by_level.setdefault(room.level, []).append(room)
+
+    out: List[Wall] = []
+    for wall in walls:
+        x0, y0 = wall.start[0], wall.start[1]
+        x1, y1 = wall.end[0], wall.end[1]
+        horizontal = abs(y1 - y0) <= 1e-3
+        vertical = abs(x1 - x0) <= 1e-3
+        if wall.is_exterior or not (horizontal or vertical):
+            out.append(wall)
+            continue
+
+        line_coord = (y0 + y1) / 2 if horizontal else (x0 + x1) / 2
+        w_lo, w_hi = (
+            (min(x0, x1), max(x0, x1)) if horizontal else (min(y0, y1), max(y0, y1))
+        )
+        spans = _rooms_along_wall(wall, by_level.get(wall.level, []), horizontal, line_coord)
+        if not spans:
+            out.append(wall)
+            continue
+
+        cuts = sorted({w_lo, w_hi} | {
+            v for lo, hi, _t, _f in spans for v in (lo, hi) if w_lo < v < w_hi
+        })
+        segments: List[Tuple[float, float, bool]] = []
+        for a, b in zip(cuts, cuts[1:]):
+            if b - a < 0.12:          # ignore slivers
+                continue
+            mid = (a + b) / 2
+            near = {t for lo, hi, t, far in spans if lo <= mid <= hi and not far}
+            far_ = {t for lo, hi, t, far in spans if lo <= mid <= hi and far}
+            is_open = bool(near and far_) and all(
+                frozenset((p, q)) in pairs for p in near for q in far_
+            )
+            segments.append((a, b, is_open))
+
+        if not segments:
+            out.append(wall)
+            continue
+        # Nothing to gain from splitting a run that is uniformly one or the other.
+        if all(seg[2] == segments[0][2] for seg in segments):
+            wall.is_open = segments[0][2]
+            out.append(wall)
+            continue
+
+        for idx, (a, b, is_open) in enumerate(segments):
+            start = [a, line_coord] if horizontal else [line_coord, a]
+            end = [b, line_coord] if horizontal else [line_coord, b]
+            out.append(Wall(
+                id=f"{wall.id}_s{idx}", start=start, end=end,
+                height_ft=wall.height_ft, level=wall.level,
+                is_exterior=False, is_shear=wall.is_shear, is_open=is_open,
+            ))
+    return out
+
+
+def mark_open_walls(rooms: List[Room], walls: List[Wall], archetype_id: str) -> None:
+    """Flag interior walls that should be cased openings instead of walls.
+
+    Runs after wall derivation because that step works from bare rectangles and
+    has no idea what room types sit either side. Matching mirrors
+    floorplan_editor.move_wall: same supporting line, and a real overlap along
+    the wall rather than a midpoint test.
+    """
+    pairs = open_pairs_for(archetype_id)
+    if not pairs:
+        return
+    by_level: Dict[int, List[Room]] = {}
+    for room in rooms:
+        if len(room.polygon) >= 3:
+            by_level.setdefault(room.level, []).append(room)
+
+    for wall in walls:
+        if wall.is_exterior:
+            continue
+        x0, y0 = wall.start[0], wall.start[1]
+        x1, y1 = wall.end[0], wall.end[1]
+        horizontal = abs(y1 - y0) <= 1e-3
+        vertical = abs(x1 - x0) <= 1e-3
+        if not (horizontal or vertical):
+            continue
+        line_coord = (y0 + y1) / 2 if horizontal else (x0 + x1) / 2
+        w_lo, w_hi = (
+            (min(x0, x1), max(x0, x1)) if horizontal else (min(y0, y1), max(y0, y1))
+        )
+        min_overlap = min(0.25, (w_hi - w_lo) * 0.6)
+
+        # Rooms touching this wall, split by which side of it they sit on. A
+        # single long wall commonly separates a set of rooms from another set —
+        # the great room from both the kitchen and the dining, say — so
+        # requiring exactly two touching rooms left most boundaries
+        # unclassifiable and almost nothing opened up.
+        near: List[str] = []
+        far: List[str] = []
+        for room in by_level.get(wall.level, []):
+            best = 0.0
+            pts = room.polygon
+            for i in range(len(pts)):
+                ex0, ey0 = pts[i]
+                ex1, ey1 = pts[(i + 1) % len(pts)]
+                if horizontal:
+                    if abs(ey0 - line_coord) > 0.03 or abs(ey1 - line_coord) > 0.03:
+                        continue
+                    e_lo, e_hi = min(ex0, ex1), max(ex0, ex1)
+                else:
+                    if abs(ex0 - line_coord) > 0.03 or abs(ex1 - line_coord) > 0.03:
+                        continue
+                    e_lo, e_hi = min(ey0, ey1), max(ey0, ey1)
+                best = max(best, min(w_hi, e_hi) - max(w_lo, e_lo))
+            if best < min_overlap:
+                continue
+            vals = [p[1] if horizontal else p[0] for p in room.polygon]
+            centre = sum(vals) / len(vals)
+            (far if centre >= line_coord else near).append(room.type)
+
+        # Open only when EVERY pairing across the boundary is an open one — a
+        # wall that also backs onto a bedroom stays a wall.
+        if near and far and all(
+            frozenset((a, b)) in pairs for a in set(near) for b in set(far)
+        ):
+            wall.is_open = True
+
 
 CORRIDOR_WIDTH_M = 1.8
 STAIR_W_M = 3.0
@@ -536,7 +932,7 @@ class FloorplanGenerator:
         all_walls: List[Wall] = []
 
         is_sfr = getattr(spec, 'building_use', None) in (
-            'single_family', 'adu', BuildingUse.single_family, BuildingUse.adu
+            'single_family', BuildingUse.single_family
         )
         bedrooms = getattr(spec, 'bedrooms', None) or 1
 
@@ -545,6 +941,15 @@ class FloorplanGenerator:
         if ai_room_program:
             for fl in ai_room_program:
                 ai_floors[fl["floor"]] = fl["rows"]
+
+        # get_ai_unit_program's unit_mix is a PER-FLOOR unit count (see
+        # ai_room_program.py's prompt: "unit_mix values are PER FLOOR"). This was
+        # being computed and logged but never actually consumed by the layout —
+        # _layout_multifamily_floor independently packed as many units as the
+        # footprint could geometrically fit, silently ignoring what the AI decided.
+        ai_units_per_floor: Optional[int] = None
+        if ai_unit_program and ai_unit_program.get("unit_mix"):
+            ai_units_per_floor = sum(int(v) for v in ai_unit_program["unit_mix"].values())
 
         for level in levels:
             if is_sfr:
@@ -560,27 +965,142 @@ class FloorplanGenerator:
                         footprint, bounds, w, d, level, levels, bedrooms, archetype=archetype
                     )
             else:
-                rooms, walls = self._layout_multifamily_floor(footprint, bounds, w, d, level, spec)
+                rooms, walls = self._layout_multifamily_floor(
+                    footprint, bounds, w, d, level, spec, ai_units_per_floor=ai_units_per_floor
+                )
+
+            # Never ship a floor that is nothing but circulation.
+            #
+            # Every layout path filters out rooms that fall below their minimum
+            # width/area, and on a tight plate that filter can reject ALL of
+            # them — the corridor and stair survive because they're generated
+            # separately, so the floor silently came out as "2 rooms, 0 units"
+            # with no error anywhere in the log. Fall back to the single-unit
+            # SFR layout, which degrades far better on small footprints, and
+            # only accept the circulation-only result if that fails too.
+            if not any(r.type not in _CIRCULATION_ONLY_TYPES for r in rooms):
+                rescue_rooms, rescue_walls = self._layout_sfr_floor(
+                    footprint, bounds, w, d, level, levels, bedrooms, archetype=archetype
+                )
+                if any(r.type not in _CIRCULATION_ONLY_TYPES for r in rescue_rooms):
+                    rooms, walls = rescue_rooms, rescue_walls
+
             all_rooms.extend(rooms)
             all_walls.extend(walls)
 
-        return self._carve_vertical_cores(all_rooms), all_walls
+        all_rooms = self._add_stair_landings(all_rooms)
+        carved = self._carve_vertical_cores(all_rooms)
+        all_walls = split_and_mark_open_walls(
+            carved, all_walls, (archetype or {}).get('id', ''),
+        )
+        return carved, all_walls
+
+    def _add_stair_landings(self, rooms: List[Room]) -> List[Room]:
+        """Give every staircase a landing.
+
+        The stair is placed after the row program and then carves itself out of
+        whatever it overlaps, so it ended up as an isolated box floating in the
+        middle of the plate with rooms butted straight against it — you arrive
+        at the top of the flight into the side of a bedroom. A real plan always
+        has circulation at the head of the stair. Skipped when the stair already
+        touches a hall or corridor.
+        """
+        CIRC = {"corridor", "hall", "hallway", "foyer", "entry"}
+        by_level: Dict[int, List[Room]] = {}
+        for room in rooms:
+            if len(room.polygon) >= 3:
+                by_level.setdefault(room.level, []).append(room)
+
+        landings: List[Room] = []
+        for stair in [r for r in rooms if r.type == "stair" and len(r.polygon) >= 3]:
+            level_rooms = by_level.get(stair.level, [])
+            try:
+                stair_poly = Polygon(stair.polygon)
+            except Exception:
+                continue
+            touching_circ = any(
+                other.type in CIRC
+                and Polygon(other.polygon).buffer(0.12).intersects(stair_poly)
+                for other in level_rooms
+                if other.id != stair.id and len(other.polygon) >= 3
+            )
+            if touching_circ:
+                continue
+
+            sxs = [p[0] for p in stair.polygon]
+            szs = [p[1] for p in stair.polygon]
+            sx0, sx1 = min(sxs), max(sxs)
+            sz0, sz1 = min(szs), max(szs)
+            depth = 1.25
+            # Try each side, keep the first that lands inside the building and
+            # doesn't simply sit on top of another staircase.
+            candidates = [
+                (sx1, sz0, sx1 + depth, sz1), (sx0 - depth, sz0, sx0, sz1),
+                (sx0, sz1, sx1, sz1 + depth), (sx0, sz0 - depth, sx1, sz0),
+            ]
+            host = None
+            for (lx0, lz0, lx1, lz1) in candidates:
+                cand = Polygon([[lx0, lz0], [lx1, lz0], [lx1, lz1], [lx0, lz1]])
+                if cand.area < 1.0:
+                    continue
+                covered = sum(
+                    cand.intersection(Polygon(o.polygon)).area
+                    for o in level_rooms
+                    if o.id != stair.id and o.type != "stair" and len(o.polygon) >= 3
+                )
+                # Must be substantially inside the building, not hanging out of it.
+                if covered >= cand.area * 0.75:
+                    host = cand
+                    break
+            if host is None:
+                continue
+            landings.append(Room(
+                id=f"landing_{stair.level}_{uuid.uuid4().hex[:5]}",
+                type="corridor", unit_id=stair.unit_id or "house",
+                polygon=[[c[0], c[1]] for c in list(host.exterior.coords)[:-1]],
+                level=stair.level, area_sqft=host.area * 10.764,
+            ))
+        return rooms + landings
 
     def _carve_vertical_cores(self, rooms: List[Room]) -> List[Room]:
-        """Remove stair/core footprints from every overlapping programmed room."""
+        """Remove stair/core footprints from every overlapping programmed room.
+
+        A room is carved by the cores on its OWN level and by those on the
+        level BELOW it. The second half is what opens the stairwell: a flight
+        rising from level N needs a hole in level N+1's floor to arrive
+        through, but the AI room program is told not to place a stair room on
+        the topmost floor, so nothing on level N+1 used to mark that void and
+        the upper slab sealed over the staircase — you could see the steps run
+        up into the underside of a bedroom floor. Carving level N's core out of
+        level N+1's rooms creates the opening whether or not the upper level
+        programmed a stair of its own. (Floor slabs are skipped for rooms typed
+        "stair", so the carved-out region renders as an actual void.)
+        """
         cores_by_level: Dict[int, List[Polygon]] = {}
+        # Stair landings carve their host rooms the same way the stair does,
+        # otherwise the landing simply overlaps whatever it was placed against.
+        landing_by_level: Dict[int, List[Polygon]] = {}
         for room in rooms:
-            if room.type == "stair" and len(room.polygon) >= 3:
+            if len(room.polygon) < 3:
+                continue
+            if room.type == "stair":
                 cores_by_level.setdefault(room.level, []).append(Polygon(room.polygon))
+            elif room.id.startswith("landing_"):
+                landing_by_level.setdefault(room.level, []).append(Polygon(room.polygon))
         if not cores_by_level:
             return rooms
         carved: List[Room] = []
         for room in rooms:
-            if room.type == "stair" or room.level not in cores_by_level:
+            applicable = (
+                cores_by_level.get(room.level, [])
+                + cores_by_level.get(room.level - 1, [])
+                + landing_by_level.get(room.level, [])
+            )
+            if room.type == "stair" or room.id.startswith("landing_") or not applicable:
                 carved.append(room)
                 continue
             remainder = Polygon(room.polygon)
-            for core in cores_by_level[room.level]:
+            for core in applicable:
                 if remainder.intersects(core):
                     remainder = remainder.difference(core.buffer(0.02, join_style=2))
             if hasattr(remainder, "geoms"):
@@ -650,6 +1170,7 @@ class FloorplanGenerator:
     def _layout_multifamily_floor(
         self, footprint: Polygon, bounds, w: float, d: float,
         level: Level, spec: ProjectSpec,
+        ai_units_per_floor: Optional[int] = None,
     ) -> Tuple[List[Room], List[Wall]]:
         """Lay out a complete double-loaded multifamily floor.
 
@@ -673,7 +1194,17 @@ class FloorplanGenerator:
                 level=lvl, area_sqft=core.area * 10.764,
             ))
         available = interior.difference(core.buffer(0.02, join_style=2)) if core is not None else interior
+        MIN_BAND_DEPTH_M = 2.5
 
+        # Try a double-loaded corridor plan (front + back bands split by a central
+        # hallway) first — that's the normal apartment-building layout. But a
+        # narrow-lot rowhouse is architecturally single-loaded (one unit
+        # front-to-back, no central hallway), and once the stair core eats into a
+        # shallow footprint there may not be enough depth left for BOTH bands to
+        # clear their minimum size — that wiped out every unit, leaving only the
+        # stair/corridor rooms behind. If the corridor attempt yields zero usable
+        # components, discard it and fall back to a single-loaded plan that uses
+        # the whole available footprint as one component instead.
         corridor_z0 = min_z + (d - CORRIDOR_WIDTH_M) / 2.0
         corridor_strip = box(min_x, corridor_z0, max_x, corridor_z0 + CORRIDOR_WIDTH_M)
         corridor_shape = available.intersection(corridor_strip)
@@ -683,12 +1214,6 @@ class FloorplanGenerator:
                 if geometry.geom_type == "Polygon" and geometry.area >= 1.0
             ]
             corridor_shape = max(corridor_parts, key=lambda geometry: geometry.area) if corridor_parts else None
-        if corridor_shape is not None and not corridor_shape.is_empty and hasattr(corridor_shape, "exterior"):
-            rooms.append(Room(
-                id=f"corridor_{lvl}", type="corridor",
-                polygon=[[c[0], c[1]] for c in list(corridor_shape.exterior.coords)[:-1]],
-                level=lvl, area_sqft=corridor_shape.area * 10.764,
-            ))
 
         band_shapes = [
             available.intersection(box(min_x, min_z, max_x, corridor_z0)),
@@ -700,18 +1225,49 @@ class FloorplanGenerator:
             components.extend(
                 geometry for geometry in geometries
                 if geometry.geom_type == "Polygon" and geometry.area >= 6.0
-                and (geometry.bounds[3] - geometry.bounds[1]) >= 2.5
+                and (geometry.bounds[3] - geometry.bounds[1]) >= MIN_BAND_DEPTH_M
             )
+
+        if components:
+            if corridor_shape is not None and not corridor_shape.is_empty and hasattr(corridor_shape, "exterior"):
+                rooms.append(Room(
+                    id=f"corridor_{lvl}", type="corridor",
+                    polygon=[[c[0], c[1]] for c in list(corridor_shape.exterior.coords)[:-1]],
+                    level=lvl, area_sqft=corridor_shape.area * 10.764,
+                ))
+        else:
+            geometries = list(available.geoms) if hasattr(available, "geoms") else [available]
+            components = [
+                geometry for geometry in geometries
+                if geometry.geom_type == "Polygon" and geometry.area >= 6.0
+                and (geometry.bounds[3] - geometry.bounds[1]) >= MIN_BAND_DEPTH_M
+            ]
+        # Priority: an explicit user-set total unit_count beats everything; next,
+        # the AI's own per-floor decision (get_ai_unit_program's unit_mix, already
+        # a per-floor count); only pack "as many units as geometrically fit" when
+        # neither said anything — that geometric default is what silently doubled
+        # the AI's intended unit count whenever unit_count wasn't set explicitly.
+        explicit_requested: Optional[int] = None
+        if spec.unit_count:
+            explicit_requested = max(1, math.ceil(spec.unit_count / max(spec.stories, 1)))
+        elif ai_units_per_floor:
+            explicit_requested = max(1, ai_units_per_floor)
+
+        # "Every disconnected wing gets at least one cell" only makes sense as a
+        # default when nobody said how many units they want — it must not
+        # override an explicit request. A shallow band split (or the stair core
+        # clipping a corner) can fragment one architectural wing into several
+        # small polygons; forcing a unit into each one silently inflated the
+        # count past whatever was actually requested. When a count IS explicit
+        # and there are more raw components than that, keep only the largest
+        # ones (an explicit request caps things; it doesn't get overridden by
+        # incidental geometry fragmentation).
+        if explicit_requested is not None and len(components) > explicit_requested:
+            components = sorted(components, key=lambda geometry: geometry.area, reverse=True)[:explicit_requested]
         components.sort(key=lambda geometry: (geometry.bounds[1], geometry.bounds[0]))
 
-        # Start with conventional ~7.5m-wide units, but honor the user's total
-        # count where geometry permits. Every disconnected wing retains at
-        # least one programmed cell.
         slots = [max(1, round((component.bounds[2] - component.bounds[0]) / 7.5)) for component in components]
-        requested_per_floor = (
-            max(1, math.ceil(spec.unit_count / max(spec.stories, 1)))
-            if spec.unit_count else sum(slots)
-        )
+        requested_per_floor = explicit_requested if explicit_requested is not None else sum(slots)
         target_slots = max(len(components), requested_per_floor)
         while sum(slots) < target_slots and components:
             candidates = [
@@ -794,7 +1350,7 @@ class FloorplanGenerator:
         minx, miny = bounds[0], bounds[1]
         floor_h_m  = level.height_ft * 0.3048 if hasattr(level, 'height_ft') else 3.05
 
-        fp_interior = footprint.buffer(-FP_INSET)
+        fp_interior = footprint.buffer(-FP_INSET, join_style=2)
 
         _MIN_W: Dict[str, float] = {
             "bedroom": 2.7, "bathroom": 1.5, "kitchen": 2.4,
@@ -828,39 +1384,50 @@ class FloorplanGenerator:
             x_cursor = minx
             for rdef, rw in zip(row["rooms"], adj):
                 rx0, rx1 = x_cursor, x_cursor + rw
-                row_area  = rw * row_d
-                cell      = Polygon([[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]])
-                try:
-                    clipped = fp_interior.intersection(cell)
-                    if hasattr(clipped, 'geoms'):
-                        clipped = max(clipped.geoms, key=lambda g: g.area)
-                    if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < max(0.5, row_area * 0.25):
-                        x_cursor += rw
-                        continue
-                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                    cb   = clipped.bounds
-                    area = clipped.area * 10.764
-                except Exception:
-                    cell_cx = (rx0 + rx1) / 2
-                    cell_cz = (row_y0 + row_y1) / 2
-                    if not fp_interior.contains(Point(cell_cx, cell_cz)):
-                        x_cursor += rw
-                        continue
-                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                    cb   = (rx0, row_y0, rx1, row_y1)
-                    area = row_area * 10.764
+                # A program has a fixed room count, so on a large plate the
+                # spare area used to inflate every room rather than add any:
+                # the same 16 rooms whether the floor was 4,200 or 6,800 sqft,
+                # which is how a kitchen ended up at 881 sqft. Cells past their
+                # type's ceiling are split, the remainder becoming a companion
+                # room (kitchen -> pantry, bedroom -> closet, and so on).
+                for (sx0, sy0, sx1, sy1), stype in subdivide_cell(
+                    rx0, row_y0, rx1, row_y1, rdef["type"]
+                ):
+                    sub_area = (sx1 - sx0) * (sy1 - sy0)
+                    cell = Polygon([
+                        [sx0, sy0], [sx1, sy0], [sx1, sy1], [sx0, sy1],
+                    ])
+                    try:
+                        clipped = fp_interior.intersection(cell)
+                        if hasattr(clipped, 'geoms'):
+                            clipped = max(clipped.geoms, key=lambda g: g.area)
+                        if (clipped.is_empty or not hasattr(clipped, 'exterior')
+                                or clipped.area < max(0.5, sub_area * 0.25)):
+                            continue
+                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                        cb = clipped.bounds
+                        area = clipped.area * 10.764
+                    except Exception:
+                        if not fp_interior.contains(
+                            Point((sx0 + sx1) / 2, (sy0 + sy1) / 2)
+                        ):
+                            continue
+                        poly = [[sx0, sy0], [sx1, sy0], [sx1, sy1], [sx0, sy1]]
+                        cb = (sx0, sy0, sx1, sy1)
+                        area = sub_area * 10.764
 
-                rooms.append(Room(
-                    id=f"ai_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                    type=rdef["type"],
-                    unit_id="house",
-                    level=lvl,
-                    polygon=poly,
-                    area_sqft=round(area, 1),
-                    center=[(cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2],
-                    dimensions={"w_m": round(cb[2] - cb[0], 2), "d_m": round(cb[3] - cb[1], 2)},
-                ))
-                room_rects.append((rx0, row_y0, rx1, row_y1))
+                    rooms.append(Room(
+                        id=f"ai_{stype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type=stype,
+                        unit_id="house",
+                        level=lvl,
+                        polygon=poly,
+                        area_sqft=round(area, 1),
+                        center=[(cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2],
+                        dimensions={"w_m": round(cb[2] - cb[0], 2),
+                                    "d_m": round(cb[3] - cb[1], 2)},
+                    ))
+                    room_rects.append((sx0, sy0, sx1, sy1))
                 x_cursor += rw
             y_cursor += row_d
 
@@ -879,8 +1446,15 @@ class FloorplanGenerator:
             else:  # rear_right / default
                 sr_x0 = maxx_sfr - stair_w_s
             sr_y0 = miny + (d - stair_d_s) / 2
-            raw_stair = Polygon([[sr_x0, sr_y0], [maxx_sfr, sr_y0],
-                                  [maxx_sfr, sr_y0 + stair_d_s], [sr_x0, sr_y0 + stair_d_s]])
+            # Right edge is sr_x0 + stair_w_s, NOT maxx_sfr: pinning it to the
+            # far wall made the "left"/"spine" archetypes (
+            # hillside_stepped, the townhomes) emit a stair band spanning the
+            # entire footprint width, and "center" one spanning half of it.
+            # _carve_vertical_cores then subtracted that band from every room
+            # it crossed, keeping only the largest fragment of each.
+            sr_x1 = sr_x0 + stair_w_s
+            raw_stair = Polygon([[sr_x0, sr_y0], [sr_x1, sr_y0],
+                                  [sr_x1, sr_y0 + stair_d_s], [sr_x0, sr_y0 + stair_d_s]])
             stair_poly = None
             try:
                 cs = fp_interior.intersection(raw_stair)
@@ -914,7 +1488,7 @@ class FloorplanGenerator:
         walls: List[Wall] = []
         lvl = level.index
         minx, miny, maxx, maxy = bounds
-        fp_interior_mf = footprint.buffer(-FP_INSET)
+        fp_interior_mf = footprint.buffer(-FP_INSET, join_style=2)
         try:
             cs = fp_interior_mf.intersection(raw_stair)
             if hasattr(cs, 'geoms'):
@@ -1202,7 +1776,7 @@ class FloorplanGenerator:
         walls: List[Wall] = []
         lvl = level.index
         minx, miny, maxx, maxy = bounds
-        fp_interior = footprint.buffer(-FP_INSET)
+        fp_interior = footprint.buffer(-FP_INSET, join_style=2)
 
         def _clip_polygon(raw_shape) -> List[List[float]]:
             """Clip a raw rectangular polygon to fp_interior so it never extends outside walls."""
@@ -1433,7 +2007,7 @@ class FloorplanGenerator:
         walls: List[Wall] = []
         lvl = level.index
         minx, miny = bounds[0], bounds[1]
-        fp_interior = footprint.buffer(-FP_INSET)
+        fp_interior = footprint.buffer(-FP_INSET, join_style=2)
 
         def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
             cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
@@ -1505,18 +2079,23 @@ class FloorplanGenerator:
     def _layout_garage_ground(
         self, footprint, bounds, w, d, level: Level, archetype_id: str,
         all_levels: List[Level] = None,
+        back_row_program: Optional[List[Dict]] = None,
     ) -> Tuple[List[Room], List[Wall]]:
         """Ground floor with front-facing attached garage + entry zone behind it."""
         rooms: List[Room] = []
         walls: List[Wall] = []
         lvl = level.index
         minx, miny = bounds[0], bounds[1]
-        fp_interior = footprint.buffer(-FP_INSET)
+        fp_interior = footprint.buffer(-FP_INSET, join_style=2)
 
-        # Garage takes the front 40% of the depth; entry+utility gets the back 60%.
-        garage_depth_frac = 0.40
-        garage_d = d * garage_depth_frac
-        entry_d  = d * (1.0 - garage_depth_frac)
+        # Garage sized like a real garage, not as a fraction of the whole plate.
+        # A full-width 40%-depth band on a 22 m plate came out at 1,628 sqft —
+        # three times the largest garage in the reference plans (median 520 sqft).
+        # Capped at roughly a 3-car bay; whatever front area is left over goes to
+        # the living program alongside it.
+        garage_d = min(d * 0.40, 6.8)     # ~22 ft deep, enough for a car
+        garage_w = min(w, 9.8)            # ~32 ft, three bays
+        entry_d  = d - garage_d
 
         def _clip_room(x0: float, y0: float, x1: float, y1: float, rtype: str) -> None:
             cell = Polygon([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
@@ -1537,22 +2116,57 @@ class FloorplanGenerator:
                 pass
 
         # Garage (front)
-        _clip_room(minx, miny, minx + w, miny + garage_d, "garage")
+        _clip_room(minx, miny, minx + garage_w, miny + garage_d, "garage")
 
-        # Entry + utility behind garage
-        entry_w = w * 0.55
-        utility_w = w - entry_w
         entry_y0 = miny + garage_d
         entry_y1 = miny + d
-        _clip_room(minx,           entry_y0, minx + entry_w,   entry_y1, "foyer")
-        _clip_room(minx + entry_w, entry_y0, minx + entry_w + utility_w, entry_y1, "utility")
+
+        # Behind the garage, lay out the real ground-floor program rather than a
+        # bare foyer + utility. This branch used to emit exactly three rooms and
+        # return, so every archetype with garage_at_grade — high_end_custom
+        # among them — lost its whole main floor: no great room, no kitchen, no
+        # dining, despite its own floor_program listing them.
+        back_rooms: List[Room] = []
+        if back_row_program and (entry_y1 - entry_y0) > 2.5:
+            garage_rect = Polygon([
+                [minx, miny], [minx + garage_w, miny],
+                [minx + garage_w, miny + garage_d], [minx, miny + garage_d],
+            ])
+            try:
+                # Everything the garage doesn't occupy — an L when the garage is
+                # narrower than the plate, so the front strip beside it is
+                # programmed rather than left as dead area.
+                back_fp = footprint.difference(garage_rect)
+                if hasattr(back_fp, "geoms"):
+                    back_fp = max(back_fp.geoms, key=lambda g: g.area)
+                if not back_fp.is_empty and back_fp.area > 4.0:
+                    _bb = back_fp.bounds
+                    back_rooms, back_walls = self._layout_sfr_floor_from_rows(
+                        back_fp, _bb, _bb[2] - _bb[0], _bb[3] - _bb[1],
+                        level, all_levels or [level], back_row_program,
+                    )
+                    rooms.extend(back_rooms)
+                    walls.extend(w_ for w_ in back_walls if not w_.is_exterior)
+            except Exception:
+                back_rooms = []
+
+        if not back_rooms:
+            # Fallback: the original entry + utility split.
+            entry_w = w * 0.55
+            utility_w = w - entry_w
+            _clip_room(minx,           entry_y0, minx + entry_w,   entry_y1, "foyer")
+            _clip_room(minx + entry_w, entry_y0, minx + entry_w + utility_w, entry_y1, "utility")
 
         # Collect room rects for wall generation
         room_rects: List[Tuple[float, float, float, float]] = [
-            (minx, miny, minx + w, miny + garage_d),
-            (minx, miny + garage_d, minx + entry_w, miny + d),
-            (minx + entry_w, miny + garage_d, minx + w, miny + d),
+            (minx, miny, minx + garage_w, miny + garage_d),
         ]
+        if not back_rooms:
+            _entry_w = w * 0.55
+            room_rects += [
+                (minx, entry_y0, minx + _entry_w, entry_y1),
+                (minx + _entry_w, entry_y0, minx + w, entry_y1),
+            ]
         self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
         walls.extend(self._place_exterior_walls(footprint, level))
 
@@ -1617,24 +2231,40 @@ class FloorplanGenerator:
         lvl = level.index
         minx, miny = bounds[0], bounds[1]
         n_floors = len(all_levels)
+        # Row programs are defined up to 7BR; larger houses reuse the 7BR
+        # program and gain their extra area through the plate, not more rows.
         br = max(1, min(7, bedrooms))
 
         # ── Archetype overrides ───────────────────────────────────────────────
         archetype_id = (archetype or {}).get('id', '')
         if archetype_id == 'victorian_narrow_lot' and lvl == 0:
             return self._layout_victorian_ground(footprint, bounds, w, d, level, all_levels)
-        if archetype_id == 'adu_compact':
-            return self._layout_adu_floor(footprint, bounds, w, d, level, all_levels, bedrooms, archetype)
         # Hillside street level: richer 4-room ground (garage+entry+mudroom+utility)
         if archetype_id == 'hillside_stepped' and lvl == 0:
             return self._layout_hillside_ground(footprint, bounds, w, d, level, all_levels)
         # Archetypes with ground-level garage (Urban Infill, Production Tract, etc.)
         _garage_at_grade = (archetype or {}).get('massing_hints', {}).get('garage_at_grade', False)
         if _garage_at_grade and lvl == 0:
-            return self._layout_garage_ground(footprint, bounds, w, d, level, archetype_id, all_levels)
+            # Hand the ground-floor program through so the space behind the
+            # garage gets the real living plan instead of a foyer and a closet.
+            if footprint.area > MANSION_THRESHOLD_M2:
+                _back = SFR_GROUND_MANSION
+            elif footprint.area > LARGE_HOUSE_THRESHOLD_M2:
+                _back = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
+            else:
+                _back = SFR_GROUND_ROWS[br]
+            _tot = sum(r["row_frac_d"] for r in _back) or 1.0
+            _back = [{**r, "row_frac_d": r["row_frac_d"] / _tot} for r in _back]
+            return self._layout_garage_ground(
+                footprint, bounds, w, d, level, archetype_id, all_levels,
+                back_row_program=_back,
+            )
 
         floor_area_m2 = footprint.area
         use_large = floor_area_m2 > LARGE_HOUSE_THRESHOLD_M2
+        # Estate plate: use the mansion programs, whose room proportions come
+        # from a measured reference plan rather than from near-uniform fracs.
+        use_mansion = floor_area_m2 > MANSION_THRESHOLD_M2
 
         _is_victorian = archetype_id == 'victorian_narrow_lot'
 
@@ -1643,7 +2273,11 @@ class FloorplanGenerator:
         # "ground=public, upper=private" split is only enforced for large houses
         # where the expanded programs already mix things correctly.
         if n_floors == 1:
-            if use_large:
+            if use_mansion:
+                combined = SFR_GROUND_MANSION + SFR_UPPER_MANSION
+                total = sum(r["row_frac_d"] for r in combined)
+                row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in combined]
+            elif use_large:
                 # Single story large: all public spaces + all bedrooms on one floor
                 ground = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
                 upper  = SFR_UPPER_LARGE.get(br, [])
@@ -1655,7 +2289,9 @@ class FloorplanGenerator:
 
         elif lvl == 0:
             # Ground floor: public living spaces (kitchen, living, dining)
-            if use_large:
+            if use_mansion:
+                row_program = SFR_GROUND_MANSION
+            elif use_large:
                 row_program = SFR_GROUND_LARGE.get(br, SFR_PROGRAMS[br])
             else:
                 row_program = SFR_GROUND_ROWS[br]
@@ -1663,25 +2299,28 @@ class FloorplanGenerator:
             row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
 
         else:
-            # Upper floors for ALL archetypes:
+            # Upper floors for ALL archetypes and all story counts:
             # - Large floor plate → SFR_UPPER_LARGE (bedrooms + bonus/loft/media)
-            # - Small 2-story → full SFR_PROGRAMS so bedrooms + living share the floor
-            # - Small 3-story → SFR_UPPER_ROWS (bedrooms focused, floor is compact)
-            # Victorian floor 1 also uses full SFR_PROGRAMS so it mirrors real Victorian
-            # layouts where a guest bedroom sits on the main living floor.
-            if use_large:
+            # - Otherwise        → SFR_UPPER_ROWS (landing + bedroom rows)
+            #
+            # Small 2-story and Victorian plans used to take the FULL
+            # SFR_PROGRAMS here, on the theory that bedrooms and living space
+            # should share the floor. But SFR_PROGRAMS rows 0-1 are literally
+            # what SFR_GROUND_ROWS emits, so the upper floor came out as an
+            # exact copy of the ground floor — same room types, same widths,
+            # only the row depths renormalised. That is the single reason
+            # "floor 2 looks identical to floor 1".
+            if use_mansion:
+                row_program = SFR_UPPER_MANSION
+            elif use_large:
                 row_program = SFR_UPPER_LARGE.get(br, SFR_UPPER_ROWS[br])
-            elif n_floors == 2 or _is_victorian:
-                # Two-story or Victorian: upper floor gets the FULL per-bedroom program
-                # (living + kitchen + bedrooms) so rooms are not artificially segregated.
-                row_program = list(SFR_PROGRAMS.get(br, SFR_PROGRAMS[3]))
             else:
                 row_program = SFR_UPPER_ROWS[br]
             total = sum(r["row_frac_d"] for r in row_program)
             row_program = [{**r, "row_frac_d": r["row_frac_d"] / total} for r in row_program]
 
         # One canonical interior boundary — everything must have its center inside this.
-        fp_interior = footprint.buffer(-FP_INSET)
+        fp_interior = footprint.buffer(-FP_INSET, join_style=2)
 
         # Minimum room widths (metres) — enforced per room type to avoid slivers.
         _MIN_W: Dict[str, float] = {
@@ -1721,42 +2360,45 @@ class FloorplanGenerator:
             x_cursor = minx
             for rdef, rw in zip(row["rooms"], adj_widths):
                 rx0, rx1 = x_cursor, x_cursor + rw
-                row_area = rw * row_d
-                cell_shape = Polygon([
-                    [rx0, row_y0], [rx1, row_y0],
-                    [rx1, row_y1], [rx0, row_y1],
-                ])
-                try:
-                    clipped = fp_interior.intersection(cell_shape)
-                    if hasattr(clipped, 'geoms'):
-                        clipped = max(clipped.geoms, key=lambda g: g.area)
-                    # Accept if clipped area ≥ 25% of the cell so partial rooms
-                    # near L/U cut corners still get placed instead of leaving gaps.
-                    if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < max(0.5, row_area * 0.25):
-                        x_cursor += rw
-                        continue
-                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                    cb = clipped.bounds
-                    area = clipped.area * 10.764
-                except Exception:
-                    # Fallback: full rectangle — only if center is inside
-                    cell_cx = (rx0 + rx1) / 2
-                    cell_cz = (row_y0 + row_y1) / 2
-                    if not fp_interior.contains(Point(cell_cx, cell_cz)):
-                        x_cursor += rw
-                        continue
-                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                    cb = (rx0, row_y0, rx1, row_y1)
-                    area = row_area * 10.764
+                # Same fixed-room-count problem as the AI row path: split cells
+                # that exceed their type's ceiling rather than letting a big
+                # plate inflate every room.
+                for (sx0, sy0, sx1, sy1), stype in subdivide_cell(
+                    rx0, row_y0, rx1, row_y1, rdef["type"]
+                ):
+                    sub_area = (sx1 - sx0) * (sy1 - sy0)
+                    cell_shape = Polygon([
+                        [sx0, sy0], [sx1, sy0], [sx1, sy1], [sx0, sy1],
+                    ])
+                    try:
+                        clipped = fp_interior.intersection(cell_shape)
+                        if hasattr(clipped, 'geoms'):
+                            clipped = max(clipped.geoms, key=lambda g: g.area)
+                        # Accept if clipped area >= 25% of the cell so partial
+                        # rooms near L/U cut corners still get placed.
+                        if (clipped.is_empty or not hasattr(clipped, 'exterior')
+                                or clipped.area < max(0.5, sub_area * 0.25)):
+                            continue
+                        poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
+                        cb = clipped.bounds
+                        area = clipped.area * 10.764
+                    except Exception:
+                        if not fp_interior.contains(
+                            Point((sx0 + sx1) / 2, (sy0 + sy1) / 2)
+                        ):
+                            continue
+                        poly = [[sx0, sy0], [sx1, sy0], [sx1, sy1], [sx0, sy1]]
+                        cb = (sx0, sy0, sx1, sy1)
+                        area = sub_area * 10.764
 
-                rooms.append(Room(
-                    id=f"sfr_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                    type=rdef["type"],
-                    unit_id="house",
-                    polygon=poly, level=lvl,
-                    area_sqft=area,
-                ))
-                room_rects.append((cb[0], cb[1], cb[2], cb[3]))
+                    rooms.append(Room(
+                        id=f"sfr_{stype}_{lvl}_{uuid.uuid4().hex[:5]}",
+                        type=stype,
+                        unit_id="house",
+                        polygon=poly, level=lvl,
+                        area_sqft=area,
+                    ))
+                    room_rects.append((cb[0], cb[1], cb[2], cb[3]))
                 x_cursor += rw
             y_cursor += row_d
 
@@ -1813,154 +2455,4 @@ class FloorplanGenerator:
 
         ext_walls = self._place_exterior_walls(footprint, level)
         walls.extend(ext_walls)
-        return rooms, walls
-
-    # ── ADU programs derived from adu_compact.json blueprint analysis ─────────
-    # Row-based program tuples: (type, frac_w, frac_d) — same encoding as SFR.
-    # Bedrooms key: 0=studio, 1=1BR (standard narrow), 2=2BR.
-    # Single-story 1BR variant (>800 sqft) falls through to 1BR since ADU
-    # generator will choose the right proportions from actual footprint size.
-    _ADU_GROUND: Dict[int, List[Dict]] = {
-        0: [  # Studio — single level, 380 sqft ~20x20
-            {"row_frac_d": 0.45, "rooms": [
-                {"type": "living",   "frac_w": 0.75},
-                {"type": "foyer",    "frac_w": 0.25},
-            ]},
-            {"row_frac_d": 0.35, "rooms": [
-                {"type": "kitchen",  "frac_w": 0.55},
-                {"type": "bathroom", "frac_w": 0.45},
-            ]},
-            {"row_frac_d": 0.20, "rooms": [
-                {"type": "living",   "frac_w": 1.0},   # sleeping zone open to living
-            ]},
-        ],
-        1: [  # 1BR/1BA — 2-story 658 sqft, 25x14. Ground: living + kitchen + stair.
-            {"row_frac_d": 0.50, "rooms": [
-                {"type": "living",   "frac_w": 0.75},
-                {"type": "stair",    "frac_w": 0.25},
-            ]},
-            {"row_frac_d": 0.50, "rooms": [
-                {"type": "kitchen",  "frac_w": 0.75},
-                {"type": "stair",    "frac_w": 0.25},
-            ]},
-        ],
-        2: [  # 2BR/2BA — 2-story 1155 sqft, 30x20. Ground: living + kitchen/island + entry + half-bath.
-            {"row_frac_d": 0.55, "rooms": [
-                {"type": "living",   "frac_w": 0.55},
-                {"type": "foyer",    "frac_w": 0.20},
-                {"type": "stair",    "frac_w": 0.25},
-            ]},
-            {"row_frac_d": 0.45, "rooms": [
-                {"type": "kitchen",  "frac_w": 0.60},
-                {"type": "bathroom", "frac_w": 0.20},
-                {"type": "stair",    "frac_w": 0.20},
-            ]},
-        ],
-    }
-
-    _ADU_UPPER: Dict[int, List[Dict]] = {
-        1: [  # 1BR upper: bedroom + bath + closet + stair landing (left spine matches L0)
-            {"row_frac_d": 0.60, "rooms": [
-                {"type": "bedroom",  "frac_w": 0.75},
-                {"type": "stair",    "frac_w": 0.25},
-            ]},
-            {"row_frac_d": 0.40, "rooms": [
-                {"type": "bathroom", "frac_w": 0.50},
-                {"type": "closet",   "frac_w": 0.25},
-                {"type": "hall",     "frac_w": 0.25},
-            ]},
-        ],
-        2: [  # 2BR upper: primary bed + bath, bedroom 2 + bath, hall + stair landing
-            {"row_frac_d": 0.25, "rooms": [
-                {"type": "hall",      "frac_w": 0.75},
-                {"type": "stair",     "frac_w": 0.25},
-            ]},
-            {"row_frac_d": 0.40, "rooms": [
-                {"type": "bedroom",   "frac_w": 0.50},
-                {"type": "bedroom",   "frac_w": 0.50},
-            ]},
-            {"row_frac_d": 0.35, "rooms": [
-                {"type": "bathroom",  "frac_w": 0.40},
-                {"type": "closet",    "frac_w": 0.20},
-                {"type": "bathroom",  "frac_w": 0.40},
-            ]},
-        ],
-    }
-
-    def _layout_adu_floor(
-        self, footprint, bounds, w, d, level: Level,
-        all_levels: List[Level], bedrooms: int,
-        archetype: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[List[Room], List[Wall]]:
-        """ADU room layout: compact rectangle programs from adu_compact.json blueprints."""
-        rooms: List[Room] = []
-        walls: List[Wall] = []
-        lvl = level.index
-        minx, miny = bounds[0], bounds[1]
-        n_floors = len(all_levels)
-
-        # Clamp bedrooms to what the ADU programs support (0=studio, 1=1BR, 2=2BR)
-        br = max(0, min(2, bedrooms))
-
-        if n_floors == 1 or br == 0:
-            # Single-story studio OR single-floor 1BR/2BR: use ground program only
-            row_program = self._ADU_GROUND.get(br, self._ADU_GROUND[1])
-        elif lvl == 0:
-            row_program = self._ADU_GROUND.get(br, self._ADU_GROUND[1])
-        else:
-            row_program = self._ADU_UPPER.get(br, self._ADU_UPPER[1])
-
-        # Normalize fractions so they always sum to 1.0
-        total_d = sum(r["row_frac_d"] for r in row_program)
-        row_program = [{**r, "row_frac_d": r["row_frac_d"] / total_d} for r in row_program]
-
-        fp_interior = footprint.buffer(-FP_INSET)
-        room_rects: List[Tuple[float, float, float, float]] = []
-        y_cursor = miny
-
-        for row in row_program:
-            row_d = d * row["row_frac_d"]
-            row_y0 = y_cursor
-            row_y1 = y_cursor + row_d
-            x_cursor = minx
-            for rdef in row["rooms"]:
-                rw = w * rdef["frac_w"]
-                rx0, rx1 = x_cursor, x_cursor + rw
-                row_area = rw * row_d
-                cell_shape = Polygon([
-                    [rx0, row_y0], [rx1, row_y0],
-                    [rx1, row_y1], [rx0, row_y1],
-                ])
-                try:
-                    clipped = fp_interior.intersection(cell_shape)
-                    if hasattr(clipped, 'geoms'):
-                        clipped = max(clipped.geoms, key=lambda g: g.area)
-                    if clipped.is_empty or not hasattr(clipped, 'exterior') or clipped.area < max(0.5, row_area * 0.25):
-                        x_cursor += rw
-                        continue
-                    poly = [[c[0], c[1]] for c in list(clipped.exterior.coords)[:-1]]
-                    cb = clipped.bounds
-                    area = clipped.area * 10.764
-                except Exception:
-                    cell_cx = (rx0 + rx1) / 2
-                    cell_cy = (row_y0 + row_y1) / 2
-                    if not fp_interior.contains(Point(cell_cx, cell_cy)):
-                        x_cursor += rw
-                        continue
-                    poly = [[rx0, row_y0], [rx1, row_y0], [rx1, row_y1], [rx0, row_y1]]
-                    cb = (rx0, row_y0, rx1, row_y1)
-                    area = row_area * 10.764
-                rooms.append(Room(
-                    id=f"adu_{rdef['type']}_{lvl}_{uuid.uuid4().hex[:5]}",
-                    type=rdef["type"],
-                    unit_id="adu",
-                    polygon=poly, level=lvl,
-                    area_sqft=area,
-                ))
-                room_rects.append((cb[0], cb[1], cb[2], cb[3]))
-                x_cursor += rw
-            y_cursor += row_d
-
-        self._emit_interior_walls(room_rects, footprint, fp_interior, level, walls)
-        walls.extend(self._place_exterior_walls(footprint, level))
         return rooms, walls
