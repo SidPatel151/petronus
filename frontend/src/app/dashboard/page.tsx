@@ -43,10 +43,10 @@ export default function DashboardPage() {
   const [err, setErr] = useState('');
 
   // Auth guard
-  useEffect(() => {
-    if (user === null && token === null) router.replace('/login');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Sign-in is optional: the app is fully usable signed-out, so there is no
+  // redirect to /login here. Signing in only adds saved projects — anything
+  // that needs a token sends the request without one and the backend decides.
+  // (Was: redirect to /login whenever user and token were both null.)
 
   useEffect(() => {
     const headers: any = {};
