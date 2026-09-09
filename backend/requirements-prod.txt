@@ -10,3 +10,10 @@ python-dotenv==1.0.1
 geojson==3.1.0
 numpy==1.26.4
 anthropic>=0.25.0
+
+# auth.py imports `jose` and `bcrypt` directly, and main.py mounts its router,
+# so the app cannot start without these. They were only in requirements.txt,
+# which the Dockerfile does not install — any Docker-based deploy (railway.toml
+# points at the Dockerfile) would crash on startup with ImportError.
+python-jose[cryptography]==3.3.0
+bcrypt==4.1.3

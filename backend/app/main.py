@@ -1,4 +1,5 @@
 import os
+from app.core.config import parse_origins
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import projects, site, generate, exports, chat, auth, blueprint
@@ -14,10 +15,11 @@ app = FastAPI(
 def on_startup():
     init_db()
 
-_cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002")
-# Handle both JSON array format (["url"]) and comma-separated format
-_cors_raw = _cors_raw.strip().strip("[]").replace('"', '').replace("'", "")
-_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+# One parser, shared with Settings — main.py and config.py previously each had
+# their own idea of this variable's format, and they disagreed.
+_cors_origins = parse_origins(
+    os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002")
+)
 
 # Vercel mints a brand-new hostname for every preview deployment
 # (petronus-<hash>-<team>.vercel.app), so an explicit allow-list can only ever
