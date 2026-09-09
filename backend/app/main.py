@@ -19,9 +19,18 @@ _cors_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:30
 _cors_raw = _cors_raw.strip().strip("[]").replace('"', '').replace("'", "")
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
+# Vercel mints a brand-new hostname for every preview deployment
+# (petronus-<hash>-<team>.vercel.app), so an explicit allow-list can only ever
+# cover the one production domain and silently blocks every preview build.
+# Matching the whole *.vercel.app space keeps previews working without having
+# to update an env var per deploy. Set CORS_ALLOW_ORIGIN_REGEX to override,
+# or to "" to disable it and rely on CORS_ORIGINS alone.
+_cors_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", r"https://.*\.vercel\.app")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
