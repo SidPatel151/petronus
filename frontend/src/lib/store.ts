@@ -109,6 +109,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     priority: 'cost',
   },
   jobId: null, jobStatus: 'idle', jobProgress: 0, jobStep: '', buildingModel: null, generationSpec: null,
+  // Auth. The interface declared these four but the store never implemented
+  // them, so `next build` failed type-checking and setAuth/clearAuth were
+  // undefined at runtime on the login and dashboard pages.
+  //
+  // api.ts reads the JWT straight out of localStorage['petronus-auth'] in
+  // zustand/persist's {state:{...}} shape, so the same shape is written here
+  // and API calls stay authenticated across a reload.
+  user: null,
+  token: null,
+  setAuth: (user, token) => {
+    set({ user, token });
+    try {
+      localStorage.setItem('petronus-auth', JSON.stringify({ state: { user, token } }));
+    } catch {}
+  },
+  clearAuth: () => {
+    set({ user: null, token: null });
+    try { localStorage.removeItem('petronus-auth'); } catch {}
+  },
+
   activeLayers: { shell: true, architecture: true, floors: true, structure: false, roof: true, plumbing: true, electrical: true, hvac: true, fire: true, fixtures: true, issues: true, neighbors: true, power_grid: true },
   selectedMassing: 0, selectedIssueId: null,
 
