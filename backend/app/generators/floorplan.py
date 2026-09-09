@@ -905,6 +905,33 @@ def mark_open_walls(rooms: List[Room], walls: List[Wall], archetype_id: str) -> 
             wall.is_open = True
 
 
+
+def stair_footprint_m(floor_height_ft: float, avail_w: float, avail_d: float) -> Tuple[float, float]:
+    """(width, depth) for a stair room that can hold a code-compliant flight.
+
+    Sized from the riser count, not from a fraction of the plate. A fraction
+    gave ~1.3 x 3.4 m, which for a normal 11 ft storey is 18 risers crammed
+    into 3.4 m — 7 inch treads against a 10 inch minimum, i.e. a flight nobody
+    could physically climb. If a straight run won't fit, size for a switchback
+    (two flights around a landing) instead, which is also how a real plan keeps
+    the stair compact.
+    """
+    MIN_TREAD_M, MAX_RISER_M, MIN_FLIGHT_W = 0.254, 0.1905, 0.86
+    rise = max(floor_height_ft, 8.0) * 0.3048
+    risers = max(4, math.ceil(rise / MAX_RISER_M))
+
+    straight_d = risers * MIN_TREAD_M
+    if straight_d <= avail_d * 0.75:
+        width = min(max(1.15, avail_w * 0.15), avail_w * 0.35)
+        return width, min(straight_d, avail_d * 0.75)
+
+    # Switchback: half the risers per flight, plus a landing at the turn.
+    per_flight = math.ceil(risers / 2)
+    depth = per_flight * MIN_TREAD_M + 0.95
+    width = MIN_FLIGHT_W * 2 + 0.10
+    return min(width, avail_w * 0.45), min(depth, avail_d * 0.80)
+
+
 CORRIDOR_WIDTH_M = 1.8
 STAIR_W_M = 3.0
 STAIR_D_M = 5.0
@@ -1436,8 +1463,7 @@ class FloorplanGenerator:
         is_top_floor = (lvl == n_floors - 1)
         if n_floors > 1 and not is_top_floor and "stair" not in {r.type for r in rooms}:
             maxx_sfr  = minx + w
-            stair_w_s = min(w * 0.15, 1.5)
-            stair_d_s = min(d * 0.28, 3.5)
+            stair_w_s, stair_d_s = stair_footprint_m(level.height_ft, w, d)
             stair_loc = ((archetype or {}).get("staircase") or {}).get("location", "rear_right")
             if "left" in stair_loc or "spine" in stair_loc:
                 sr_x0 = minx
@@ -1839,8 +1865,7 @@ class FloorplanGenerator:
         n_floors = len(all_levels)
         if n_floors > 1:
             maxx_sfr = bounds[2]
-            stair_w_sfr = min(w * 0.15, 1.5)
-            stair_d_sfr = min(d * 0.28, 3.5)
+            stair_w_sfr, stair_d_sfr = stair_footprint_m(level.height_ft, w, d)
             sr_x0 = maxx_sfr - stair_w_sfr
             sr_y0 = miny + (d - stair_d_sfr) / 2
             raw_sfr_stair = Polygon([
@@ -2175,8 +2200,7 @@ class FloorplanGenerator:
         if n_floors > 1:
             maxx_sfr = minx + w
             miny_local = bounds[1]
-            stair_w_sfr = min(w * 0.15, 1.5)
-            stair_d_sfr = min(d * 0.28, 3.5)
+            stair_w_sfr, stair_d_sfr = stair_footprint_m(level.height_ft, w, d)
             sr_x0 = maxx_sfr - stair_w_sfr
             sr_y0 = miny_local + (d - stair_d_sfr) / 2
             raw_sfr_stair = Polygon([
@@ -2407,8 +2431,7 @@ class FloorplanGenerator:
         # right edge of the floor plate, centred in depth, on every floor.
         if n_floors > 1:
             maxx_sfr = minx + w
-            stair_w_sfr = min(w * 0.15, 1.5)
-            stair_d_sfr = min(d * 0.28, 3.5)
+            stair_w_sfr, stair_d_sfr = stair_footprint_m(level.height_ft, w, d)
             sr_x0 = maxx_sfr - stair_w_sfr
             sr_y0 = miny + (d - stair_d_sfr) / 2
             raw_sfr_stair = Polygon([

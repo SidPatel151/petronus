@@ -2,6 +2,7 @@
 GenerationOrchestrator
 Ties together all generators in sequence, emitting progress events.
 """
+import math
 import uuid
 import asyncio
 import logging
@@ -657,50 +658,91 @@ class GenerationOrchestrator:
             if stair_w < 0.3 or stair_d < 0.3:
                 continue
 
-            # Run steps along the longer axis; use 60% of the cross-dimension,
-            # centred, so the stair is visually narrow and stays inside the room.
+            # ── Straight run, or a switchback when the room is too short ────
+            # A straight flight needs risers x 10in of run. A typical 11 ft
+            # floor is ~19 risers = 4.8 m, and stair rooms are ~3.4 m deep, so
+            # dividing the room length by the riser count produced 7 in treads
+            # against a 10 in code minimum — a flight nobody could climb. When
+            # the run doesn't fit, fold it into two flights around a landing,
+            # which is what a real plan does to save floor area.
+            MIN_TREAD_M = 0.254        # 10 in, CBC/IRC minimum
+            MAX_RISER_M = 0.1905       # 7.5 in maximum
+            MIN_WIDTH_M = 0.86         # 34 in clear
+
             run_along_z = stair_d >= stair_w
             span = stair_d if run_along_z else stair_w
             cross = stair_w if run_along_z else stair_d
-            tread_w = cross * 0.60        # 60% of room cross-width
-            tread_inset = cross * 0.20    # centred gap on each side
 
-            n_steps = max(4, round(rise_total / 0.18))
+            n_steps = max(4, math.ceil(rise_total / MAX_RISER_M))
             step_rise = rise_total / n_steps
-            step_run = span / n_steps
+            straight_run = n_steps * MIN_TREAD_M
 
-            for s in range(n_steps):
-                s_y_bot = y_bot
-                s_y_top = y_bot + step_rise * (s + 1)
-                if run_along_z:
-                    sz0 = rz0 + step_run * s
-                    sz1 = sz0 + step_run
-                    sx0 = rx0 + tread_inset
-                    sx1 = rx0 + tread_inset + tread_w
-                else:
-                    sx0 = rx0 + step_run * s
-                    sx1 = sx0 + step_run
-                    sz0 = rz0 + tread_inset
-                    sz1 = rz0 + tread_inset + tread_w
+            # Two flights fit side by side only if the room is wide enough.
+            switchback = (
+                straight_run > span
+                and cross >= MIN_WIDTH_M * 2 + 0.08
+            )
 
-                sv = [
-                    [sx0, s_y_bot, sz0], [sx1, s_y_bot, sz0],
-                    [sx1, s_y_bot, sz1], [sx0, s_y_bot, sz1],
-                    [sx0, s_y_top, sz0], [sx1, s_y_top, sz0],
-                    [sx1, s_y_top, sz1], [sx0, s_y_top, sz1],
-                ]
-                sf = [
-                    [4, 5, 6], [4, 6, 7],  # top tread
-                    [0, 1, 5], [0, 5, 4],  # front riser
-                    [0, 4, 7], [0, 7, 3],  # left side
-                    [1, 2, 6], [1, 6, 5],  # right side
-                ]
-                meshes.append({
-                    "element_id": f"stair_{room.id}_step_{s}_{_uuid.uuid4().hex[:4]}",
-                    "element_type": "stair",
-                    "vertices": sv, "faces": sf,
-                    "level": lvl, "color": "#b8996a",
-                })
+            flights = []   # (start_index, count, lateral_offset, direction)
+            if switchback:
+                first = math.ceil(n_steps / 2)
+                flight_w = min((cross - 0.08) / 2, 1.15)
+                landing = min(max(flight_w, 0.9), span * 0.35)
+                run_len = max(span - landing, MIN_TREAD_M * 2)
+                # Cap the tread at a normal 11 in rather than spreading the
+                # flight over the whole room — surplus depth becomes landing.
+                step_run = min(run_len / first, 0.28)
+                run_len = step_run * first
+                tread_w = flight_w
+                flights.append((0, first, 0.0, +1))
+                flights.append((first, n_steps - first, flight_w + 0.08, -1))
+            else:
+                step_run = span / n_steps
+                tread_w = cross * 0.60
+                flights.append((0, n_steps, cross * 0.20, +1))
+                landing = 0.0
+                run_len = span
+
+            for (base_idx, count, lateral, direction) in flights:
+                for k in range(count):
+                    s = base_idx + k
+                    s_y_bot = y_bot
+                    s_y_top = y_bot + step_rise * (s + 1)
+                    # Position along the run; the return flight walks backwards
+                    # from the landing.
+                    if direction > 0:
+                        along0 = step_run * k
+                    else:
+                        along0 = run_len - step_run * (k + 1)
+                    along1 = along0 + step_run
+
+                    if run_along_z:
+                        sz0, sz1 = rz0 + along0, rz0 + along1
+                        sx0 = rx0 + lateral
+                        sx1 = sx0 + tread_w
+                    else:
+                        sx0, sx1 = rx0 + along0, rx0 + along1
+                        sz0 = rz0 + lateral
+                        sz1 = sz0 + tread_w
+
+                    sv = [
+                        [sx0, s_y_bot, sz0], [sx1, s_y_bot, sz0],
+                        [sx1, s_y_bot, sz1], [sx0, s_y_bot, sz1],
+                        [sx0, s_y_top, sz0], [sx1, s_y_top, sz0],
+                        [sx1, s_y_top, sz1], [sx0, s_y_top, sz1],
+                    ]
+                    sf = [
+                        [4, 5, 6], [4, 6, 7],  # top tread
+                        [0, 1, 5], [0, 5, 4],  # front riser
+                        [0, 4, 7], [0, 7, 3],  # left side
+                        [1, 2, 6], [1, 6, 5],  # right side
+                    ]
+                    meshes.append({
+                        "element_id": f"stair_{room.id}_step_{s}_{_uuid.uuid4().hex[:4]}",
+                        "element_type": "stair",
+                        "vertices": sv, "faces": sf,
+                        "level": lvl, "color": "#b8996a",
+                    })
         return meshes
 
     def _generate_interior_door_meshes(self, rooms, walls, levels, spec) -> list:

@@ -288,9 +288,12 @@ class MassingGenerator:
         xs = [p[0] for p in footprint]
         zs = [p[1] for p in footprint]
         short = min(max(xs) - min(xs), max(zs) - min(zs))
-        if short < 8.0:
+        # 8.0 m was above the short side of a typical 50 ft-lot plan (~7.5 m),
+        # so chamfering never fired on the lots people actually build on and
+        # estate plans stayed perfectly rectangular.
+        if short < 5.5:
             return 0.0
-        return min(2.4, max(0.9, short * 0.06))
+        return min(2.4, max(0.7, short * 0.06))
 
     @staticmethod
     def _chamfer_corners(footprint: List, cut: float) -> List:
@@ -532,7 +535,12 @@ class MassingGenerator:
     def _hillside_step_vec(self, grad_x: float, grad_z: float, slope_mag: float):
         """Return (dh_x, dh_z) unit vector pointing downhill, derived from USGS terrain gradient."""
         if slope_mag < 1e-4:
-            return 0.0, 0.0    # no measurable slope — caller should not step
+            # Flat ground, but this archetype is also selected on elevation
+            # alone, so it lands on level sites regularly. Returning no
+            # direction stacked every storey in the same place and produced
+            # three identical boxes. Step back along +z so the form still
+            # terraces and reads as a stepped house.
+            return 0.0, 1.0
         return -grad_x / slope_mag, -grad_z / slope_mag
 
     def _option_hillside_stepped(
@@ -692,7 +700,22 @@ class MassingGenerator:
                 half_w = min(actual_w / 2, (eb[2] - eb[0]) / 2 * 0.95)
             half_d = min(needed_d / 2, (eb[3] - eb[1]) / 2 * 0.95)
         else:
-            half_d = min(td / 2, (eb[3] - eb[1]) / 2 * 0.95)
+            # Solve the brief's aspect ratio AT the target area, then clamp to
+            # the lot and make up any lost width in depth.
+            #
+            # Previously width was clamped to the lot first and the result was
+            # uniformly rescaled to hit the area, which preserves the *clamped*
+            # ratio rather than the intended one. A mid-century brief of
+            # 15.9 x 10.6 (1.5:1 wide) on a narrow lot came out 10.1 x 10.1 —
+            # a perfect square, the opposite of the archetype. Every
+            # wide_shallow archetype collapsed the same way.
+            ratio = (tw / td) if td > 0.1 else 1.0
+            ideal_w = math.sqrt(max(target_fp_area, 1.0) * max(ratio, 0.05))
+            max_half_w = (eb[2] - eb[0]) / 2 * 0.95
+            max_half_d = (eb[3] - eb[1]) / 2 * 0.95
+            half_w = min(ideal_w / 2, max_half_w)
+            needed_d = target_fp_area / max(half_w * 2, 0.1)
+            half_d = min(needed_d / 2, max_half_d)
 
         rect = box(cx - half_w, cz - half_d, cx + half_w, cz + half_d)
         clipped = base.intersection(rect)
